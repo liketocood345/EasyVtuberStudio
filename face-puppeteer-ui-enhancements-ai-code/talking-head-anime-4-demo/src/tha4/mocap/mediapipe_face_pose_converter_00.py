@@ -27,39 +27,32 @@ from tha4.mocap.mediapipe_constants import MOUTH_SMILE_LEFT, MOUTH_SHRUG_UPPER, 
 from tha4.mocap.mediapipe_face_pose import MediaPipeFacePose
 from tha4.mocap.mediapipe_face_pose_converter import MediaPipeFacePoseConverter
 
-
 class EyebrowDownMode(Enum):
     TROUBLED = 1
     ANGRY = 2
     LOWERED = 3
     SERIOUS = 4
 
-
 class WinkMode(Enum):
     NORMAL = 1
     RELAXED = 2
 
-
 def rad_to_deg(rad):
     return rad * 180.0 / math.pi
-
 
 def deg_to_rad(deg):
     return deg * math.pi / 180.0
 
-
 def clamp(x, min_value, max_value):
     return max(min_value, min(max_value, x))
-
 
 def slider_label(name_cn: str, name_en: str, unit_cn: str, unit_en: str) -> str:
     return f"{name_cn} / {name_en} ({unit_cn} / {unit_en})"
 
-
 class FloatSliderControl:
     WHEEL_ARM_DELAY_MS = 500
     STATIONARY_TOLERANCE_PX = 18
-    DEBUG_LOG_PATH = r"f:\aidraw\debug-ef2385.log"
+
     def __init__(self,
                  parent: wx.Window,
                  sizer,
@@ -127,23 +120,6 @@ class FloatSliderControl:
         self.slider.Bind(wx.EVT_TIMER, self._handle_hover_arm_timer, id=self.hover_arm_timer.GetId())
         sizer.Add(self.panel, 0, wx.EXPAND | wx.ALL, 4)
 
-    def _debug_log(self, hypothesis_id: str, location: str, message: str, data: dict):
-        payload = {
-            "sessionId": "ef2385",
-            "runId": "post-fix",
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(time.time() * 1000),
-            "id": f"log_{uuid.uuid4().hex}",
-        }
-        try:
-            with open(self.DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-                f.write(json.dumps(payload, ensure_ascii=False) + os.linesep)
-        except Exception:
-            pass
-
     def _float_to_int(self, value: float) -> int:
         clipped_value = max(self.slider_min, min(self.slider_max, value))
         return int(round((clipped_value - self.slider_min) / self.increment))
@@ -184,22 +160,12 @@ class FloatSliderControl:
         else:
             self.slider.SetBackgroundColour(wx.NullColour)
             self.hover_hint_text.Hide()
-        self._debug_log(
-            "H26",
-            "FloatSliderControl:_set_wheel_armed",
-            "wheel armed state changed",
-            {"armed": bool(self._wheel_armed)})
         self.panel.Layout()
         self.slider.Refresh()
 
     def _handle_slider_mouse_enter(self, event: wx.MouseEvent):
         if self._hovering and (self._wheel_armed or self.hover_arm_timer.IsRunning()):
             self._last_hover_mouse_screen_pos = wx.GetMousePosition()
-            self._debug_log(
-                "H31",
-                "FloatSliderControl:_handle_slider_mouse_enter:ignored-reenter",
-                "re-enter ignored while already hovering",
-                {"armed": bool(self._wheel_armed), "timer_running": bool(self.hover_arm_timer.IsRunning())})
             event.Skip()
             return
         self._pending_leave_check = False
@@ -208,11 +174,6 @@ class FloatSliderControl:
         self._set_wheel_armed(False)
         if not self.hover_arm_timer.IsRunning():
             self.hover_arm_timer.Start(self.WHEEL_ARM_DELAY_MS, oneShot=True)
-        self._debug_log(
-            "H27",
-            "FloatSliderControl:_handle_slider_mouse_enter",
-            "slider mouse enter",
-            {"timer_running": bool(self.hover_arm_timer.IsRunning())})
         event.Skip()
 
     def _handle_slider_mouse_leave(self, event: wx.MouseEvent):
@@ -231,21 +192,11 @@ class FloatSliderControl:
                 return
             if self._is_mouse_stationary_near_last_hover():
                 self._hovering = True
-                self._debug_log(
-                    "H30",
-                    "FloatSliderControl:_handle_slider_mouse_leave:ignored-stationary",
-                    "leave ignored due to stationary tolerance",
-                    {"tolerance_px": int(self.STATIONARY_TOLERANCE_PX)})
                 return
             self._hovering = False
             if self.hover_arm_timer.IsRunning():
                 self.hover_arm_timer.Stop()
             self._set_wheel_armed(False)
-            self._debug_log(
-                "H27",
-                "FloatSliderControl:_handle_slider_mouse_leave",
-                "slider mouse leave confirmed",
-                {"timer_running": bool(self.hover_arm_timer.IsRunning())})
 
         wx.CallLater(80, finalize_leave)
         event.Skip()
@@ -255,19 +206,9 @@ class FloatSliderControl:
             self._hovering = True
             self._last_hover_mouse_screen_pos = wx.GetMousePosition()
             self._set_wheel_armed(True)
-        self._debug_log(
-            "H28",
-            "FloatSliderControl:_handle_hover_arm_timer",
-            "hover arm timer fired",
-            {"hovering": bool(self._hovering), "armed": bool(self._wheel_armed)})
 
     def _handle_slider_mousewheel(self, event: wx.MouseEvent):
         if not self._wheel_armed:
-            self._debug_log(
-                "H29",
-                "FloatSliderControl:_handle_slider_mousewheel:not-armed",
-                "wheel ignored because not armed",
-                {"rotation": int(event.GetWheelRotation())})
             return
         rotation = event.GetWheelRotation()
         if rotation == 0:
@@ -278,11 +219,6 @@ class FloatSliderControl:
         if next_value == self.slider.GetValue():
             return
         self.slider.SetValue(next_value)
-        self._debug_log(
-            "H29",
-            "FloatSliderControl:_handle_slider_mousewheel:applied",
-            "wheel applied to slider",
-            {"rotation": int(rotation), "new_value": int(next_value)})
         self._handle_change(event)
 
     def _handle_change(self, event: wx.Event):
@@ -298,7 +234,6 @@ class FloatSliderControl:
     def SetValue(self, value: float):
         self.slider.SetValue(self._float_to_int(value))
         self._refresh_value_label()
-
 
 class MediaPipeFacePoseConverter00Args:
     def __init__(self,
@@ -450,7 +385,6 @@ class MediaPipeFacePoseConverter00Args:
     def set_audio_mouth_release(self, new_value: float):
         """Seconds to approach closed (~95%); smaller = faster."""
         self.audio_mouth_release = MediaPoseFacePoseConverter00.clamp_audio_mouth_time_sec(new_value)
-
 
 class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
     AUDIO_METER_MIN_DB = -80.0
