@@ -34,6 +34,20 @@ import wx
 
 from external_layer_output_bridge import ExternalLayerOutputBridge
 
+_EXPERIMENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _EXPERIMENT_DIR not in sys.path:
+    sys.path.insert(0, _EXPERIMENT_DIR)
+
+from image_sources.factory import create_image_source, switch_image_source
+from image_sources.base import normalize_image_source_mode
+from tha3_paths import (
+    IMAGE_SOURCE_THA3,
+    IMAGE_SOURCE_THA4,
+    THA3_VARIANT_CHOICES,
+    from_repo_relative,
+    to_repo_relative,
+)
+
 try:
     from absl import logging as absl_logging
     absl_logging.set_verbosity(absl_logging.ERROR)
@@ -41,11 +55,9 @@ try:
 except Exception:
     pass
 
-
 def make_neutral_mediapipe_face_pose() -> MediaPipeFacePose:
     blendshape_params = {name: 0.0 for name in BLENDSHAPE_NAMES}
     return MediaPipeFacePose(blendshape_params, numpy.eye(4))
-
 
 @dataclass
 class FaceScreenMotion:
@@ -53,10 +65,8 @@ class FaceScreenMotion:
     center_y: float
     face_size: float
 
-
 def slider_label(name_cn: str, name_en: str, unit_cn: str, unit_en: str) -> str:
     return f"{name_cn} / {name_en} ({unit_cn} / {unit_en})"
-
 
 class FloatSliderControl:
     LABEL_BOTTOM_MARGIN = 1
@@ -247,7 +257,6 @@ class FloatSliderControl:
         self.slider.SetValue(self._float_to_int(value))
         self._refresh_value_label()
 
-
 class FpsStatistics:
     def __init__(self):
         self.count = 100
@@ -263,7 +272,6 @@ class FpsStatistics:
             return 0.0
         else:
             return sum(self.fps) / len(self.fps)
-
 
 class ValueState:
     def __init__(self, value):
@@ -281,7 +289,6 @@ class ValueState:
 
     def IsEnabled(self) -> bool:
         return self.enabled
-
 
 class SelectionState:
     def __init__(self, selection: int, count: int):
@@ -306,7 +313,6 @@ class SelectionState:
 
     def IsEnabled(self) -> bool:
         return self.enabled
-
 
 class OutputFrame(wx.Frame):
     def __init__(self, owner_main_frame: "MainFrame"):
@@ -394,7 +400,6 @@ class OutputFrame(wx.Frame):
             self.Move(self._drag_start_frame + delta)
         event.Skip()
 
-
 class ControlsFrame(wx.Frame):
     def __init__(self, owner_main_frame: "MainFrame"):
         super().__init__(None, wx.ID_ANY, "THA4 MediaPipe Puppeteer [Full Controls]")
@@ -422,7 +427,6 @@ class ControlsFrame(wx.Frame):
             return
         self.owner_main_frame.Close()
         event.Veto()
-
 
 class WebcamPreviewPopupFrame(wx.Frame):
     POPUP_CLIENT_WIDTH = 640
@@ -491,7 +495,6 @@ class WebcamPreviewPopupFrame(wx.Frame):
         self.Destroy()
         event.Skip()
 
-
 class MainFrame(wx.Frame):
     IMAGE_SIZE = 512
     SOURCE_PREVIEW_SIZE = 192
@@ -512,7 +515,6 @@ class MainFrame(wx.Frame):
     CONTROLS_MAX_CLIENT_HEIGHT = 1400
     COMPACT_MIN_CLIENT_WIDTH = 260
     COMPACT_MIN_CLIENT_HEIGHT = 180
-    DEBUG_LOG_PATH = r"F:\aidraw\debug-5a7b76.log"
     CAPTURE_PROCESS_INTERVAL_MS = 33
     CAPTURE_PREVIEW_INTERVAL_MS = 66
     CAPTURE_IDLE_INTERVAL_MS = 400
@@ -532,7 +534,6 @@ class MainFrame(wx.Frame):
         "Images|*.png;*.jpg;*.jpeg;*.bmp;*.webp;*.tif;*.tiff|"
         "MP4 (*.mp4)|*.mp4|AVI (*.avi)|*.avi|MOV (*.mov)|*.mov|MKV (*.mkv)|*.mkv|"
         "WEBM (*.webm)|*.webm|WMV (*.wmv)|*.wmv|All files (*.*)|*.*")
-    DEBUG_MODE_LOG_PATH = r"F:\aidraw\debug-ef2385.log"
 
     def __init__(self,
                  pose_converter: MediaPoseFacePoseConverter00,
@@ -609,11 +610,17 @@ class MainFrame(wx.Frame):
         self._window_geometry_save_pending = False
         self._hover_help_pending_window: Optional[wx.Window] = None
         self._hover_help_active_window: Optional[wx.Window] = None
-        self._debug_run_id = "run-initial"
         self.last_loaded_model_path: Optional[str] = None
         self.full_controls_expanded = False
         self.controls_frame: Optional[ControlsFrame] = None
         self.persistent_ui_state = self.load_persistent_ui_state()
+        self.image_source_mode = normalize_image_source_mode(
+            self.persistent_ui_state.get("image_source_mode", IMAGE_SOURCE_THA4))
+        tha3_png = self.persistent_ui_state.get("tha3_character_png")
+        self.last_tha3_character_png = tha3_png if isinstance(tha3_png, str) else None
+        self.tha3_model_variant = str(
+            self.persistent_ui_state.get("tha3_model_variant", "separable_half"))
+        self.active_image_source = create_image_source(self.image_source_mode)
         self.apply_mouth_persistent_state_to_args()
         self.SetDoubleBuffered(True)
         self.initialize_headless_control_state()
@@ -624,6 +631,11 @@ class MainFrame(wx.Frame):
         self.restore_compact_frame_geometry()
         self.refresh_model_loaded_ui_state()
         self.create_timers()
+        self.active_image_source.start(self)
+        self.refresh_image_source_ui_visibility()
+        if self.image_source_mode == IMAGE_SOURCE_THA3 and self.last_tha3_character_png:
+            if os.path.isfile(self.last_tha3_character_png):
+                self.active_image_source.load_asset(self, self.last_tha3_character_png)
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.Bind(wx.EVT_SIZE, self.on_compact_geometry_changed)
         self.Bind(wx.EVT_MOVE, self.on_compact_geometry_changed)
@@ -631,44 +643,7 @@ class MainFrame(wx.Frame):
         self.update_source_image_bitmap()
         wx.CallAfter(self.startup_show_full_controls)
 
-    def agent_debug_log(self,
-                        hypothesis_id: str,
-                        location: str,
-                        message: str,
-                        data: Optional[dict] = None):
-        return
-
-    def debug_mode_log(self,
-                       run_id: str,
-                       hypothesis_id: str,
-                       location: str,
-                       message: str,
-                       data: Optional[dict] = None):
-        try:
-            payload = {
-                "sessionId": "ef2385",
-                "runId": run_id,
-                "hypothesisId": hypothesis_id,
-                "location": location,
-                "message": message,
-                "data": data or {},
-                "timestamp": int(time.time() * 1000),
-            }
-            # #region agent log
-            with open(self.DEBUG_MODE_LOG_PATH, "a", encoding="utf-8") as fp:
-                fp.write(json.dumps(payload, ensure_ascii=True) + "\n")
-            # #endregion
-        except Exception:
-            pass
-
     def startup_show_full_controls(self):
-        # #region agent log
-        self.agent_debug_log(
-            "H1",
-            "startup_show_full_controls:entry",
-            "startup_show_full_controls invoked",
-            {"already_shown": self._startup_full_controls_shown})
-        # #endregion
         if self._startup_full_controls_shown:
             return
         self._startup_full_controls_shown = True
@@ -683,20 +658,6 @@ class MainFrame(wx.Frame):
         wx.CallAfter(self.ensure_application_windows_visible)
         self.schedule_refresh_controls_scrolling()
         # Auto camera loading is disabled; user-triggered by model-load buttons.
-        # #region agent log
-        self.agent_debug_log(
-            "H14",
-            "startup_show_full_controls:auto-enumeration-disabled",
-            "auto camera enumeration disabled on startup",
-            {})
-        # #endregion
-        # #region agent log
-        self.agent_debug_log(
-            "H1",
-            "startup_show_full_controls:exit",
-            "startup_show_full_controls scheduled",
-            {"full_controls_expanded": self.full_controls_expanded})
-        # #endregion
 
     def try_startup_auto_connect_camera(self):
         if self._startup_auto_connect_attempted:
@@ -808,6 +769,8 @@ class MainFrame(wx.Frame):
         if getattr(self, "output_frame", None) is not None and self.output_frame:
             self.handle_output_frame_geometry_changed(redraw=False)
         self.save_persistent_ui_state()
+        if hasattr(self, "active_image_source"):
+            self.active_image_source.stop(self)
         if hasattr(self.pose_converter, "shutdown"):
             self.pose_converter.shutdown()
         self.animation_timer.Stop()
@@ -888,21 +851,6 @@ class MainFrame(wx.Frame):
             self.apply_splitter_sash(
                 self.animation_splitter,
                 saved_animation_sash if isinstance(saved_animation_sash, (int, float)) else default_animation_sash)
-            # #region agent log
-            self.debug_mode_log(
-                run_id="pre-fix",
-                hypothesis_id="H20",
-                location="initialize_adjustable_columns:animation-splitter-applied",
-                message="animation splitter sash applied",
-                data={
-                    "saved_animation_sash": saved_animation_sash,
-                    "default_animation_sash": int(default_animation_sash),
-                    "actual_sash": int(self.animation_splitter.GetSashPosition()),
-                    "splitter_client_size": list(self.animation_splitter.GetClientSize()),
-                    "left_size": list(self.model_input_column.GetSize()),
-                    "right_size": list(self.animation_left_panel.GetSize()),
-                })
-            # #endregion
         if hasattr(self, "main_splitter") and self.main_splitter.IsSplit():
             saved_main_sash = self.persistent_ui_state.get("main_splitter_sash")
             if hasattr(self, "right_sidebar"):
@@ -1137,21 +1085,6 @@ class MainFrame(wx.Frame):
 
     def ensure_application_windows_visible(self):
         ensure_start = time.time()
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H19",
-            location="ensure_application_windows_visible:entry",
-            message="enter ensure application windows visible",
-            data={"full_controls_expanded": bool(self.full_controls_expanded)})
-        # #endregion
-        # #region agent log
-        self.agent_debug_log(
-            "H2",
-            "ensure_application_windows_visible:entry",
-            "ensure windows visible start",
-            {"full_controls_expanded": self.full_controls_expanded})
-        # #endregion
         if self.full_controls_expanded:
             self.create_controls_frame()
             if self.controls_frame is None:
@@ -1164,29 +1097,7 @@ class MainFrame(wx.Frame):
                 max(min_controls_size.y, 760))
             self.apply_frame_geometry_from_storage(
                 self.controls_frame, "controls_frame", min_controls_size, default_controls_size)
-            # #region agent log
-            self.agent_debug_log(
-                "H2",
-                "ensure_application_windows_visible:after-geometry",
-                "applied controls geometry",
-                {"controls_pos": [self.controls_frame.GetPosition().x, self.controls_frame.GetPosition().y]})
-            # #endregion
             self.apply_controls_window_size_policy(self.controls_frame)
-            # #region agent log
-            self.debug_mode_log(
-                run_id="pre-fix",
-                hypothesis_id="H19",
-                location="ensure_application_windows_visible:after-controls-size-policy",
-                message="controls geometry applied",
-                data={"elapsed_ms": int((time.time() - ensure_start) * 1000)})
-            # #endregion
-            # #region agent log
-            self.agent_debug_log(
-                "H2",
-                "ensure_application_windows_visible:after-size-policy",
-                "applied controls size policy",
-                {"controls_size": [self.controls_frame.GetClientSize().x, self.controls_frame.GetClientSize().y]})
-            # #endregion
             self.controls_frame.Show(True)
             self.uniconize_window(self.controls_frame)
 
@@ -1208,29 +1119,11 @@ class MainFrame(wx.Frame):
             self.Show(False)
             self.bring_controls_frame_to_front()
             self.schedule_refresh_controls_scrolling()
-            # #region agent log
-            self.debug_mode_log(
-                run_id="pre-fix",
-                hypothesis_id="H19",
-                location="ensure_application_windows_visible:before-full-return",
-                message="full controls branch complete",
-                data={"elapsed_ms": int((time.time() - ensure_start) * 1000)})
-            # #endregion
             if not self.controls_frame.IsShown():
                 # Failsafe: if full controls failed to show, keep compact launcher visible.
                 self.full_controls_expanded = False
                 self.Show(True)
                 self.Raise()
-            # #region agent log
-            self.agent_debug_log(
-                "H2",
-                "ensure_application_windows_visible:full-exit",
-                "ensure windows visible full exit",
-                {
-                    "controls_shown": bool(self.controls_frame and self.controls_frame.IsShown()),
-                    "output_shown": bool(self.output_frame and self.output_frame.IsShown())
-                })
-            # #endregion
             return
 
         min_compact_size = wx.Size(self.COMPACT_MIN_CLIENT_WIDTH, self.COMPACT_MIN_CLIENT_HEIGHT)
@@ -1256,24 +1149,6 @@ class MainFrame(wx.Frame):
             self.uniconize_window(self.output_frame)
         elif self.is_external_layer_output_enabled():
             self.hide_builtin_output_frame()
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H19",
-            location="ensure_application_windows_visible:compact-exit-debug",
-            message="compact branch complete",
-            data={"elapsed_ms": int((time.time() - ensure_start) * 1000)})
-        # #endregion
-        # #region agent log
-        self.agent_debug_log(
-            "H2",
-            "ensure_application_windows_visible:compact-exit",
-            "ensure windows visible compact exit",
-            {
-                "compact_shown": self.IsShown(),
-                "output_shown": bool(self.output_frame and self.output_frame.IsShown())
-            })
-        # #endregion
 
     def apply_client_rect_to_window(self,
                                     window: wx.Window,
@@ -1336,19 +1211,6 @@ class MainFrame(wx.Frame):
                 window.SetClientSize(wx.Size(target_width, target_height))
         finally:
             self._restoring_window_geometry = False
-        # #region agent log
-        self.agent_debug_log(
-            "H2",
-            "apply_controls_window_size_policy:exit",
-            "controls size policy done",
-            {
-                "elapsed_ms": int((time.time() - policy_start) * 1000),
-                "target_width": target_width,
-                "min_width": min_width,
-                "max_width": max_width,
-                "target_height": target_height
-            })
-        # #endregion
 
     def handle_controls_frame_resized(self):
         controls_window = self.get_controls_window()
@@ -1358,18 +1220,6 @@ class MainFrame(wx.Frame):
         self.schedule_refresh_controls_scrolling()
 
     def schedule_refresh_controls_scrolling(self):
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H8",
-            location="schedule_refresh_controls_scrolling:entry",
-            message="schedule refresh requested",
-            data={
-                "scroll_refresh_pending": bool(self._scroll_refresh_pending),
-                "has_animation_panel": hasattr(self, "animation_panel"),
-                "view_start": list(self.animation_panel.GetViewStart()) if hasattr(self, "animation_panel") else None,
-            })
-        # #endregion
         if self._scroll_refresh_pending:
             return
         self._scroll_refresh_pending = True
@@ -1431,7 +1281,10 @@ class MainFrame(wx.Frame):
         """Both windows stay independent top-level frames (no owner/parent link)."""
         if getattr(self, "output_frame", None) is None:
             return
-        self.output_frame.SetOwner(None)
+        # wx.Frame has no SetOwner on all wxPython builds; OutputFrame is already parentless.
+        set_owner = getattr(self.output_frame, "SetOwner", None)
+        if callable(set_owner):
+            set_owner(None)
 
     def bring_controls_frame_to_front(self):
         controls_window = self.get_controls_window()
@@ -1481,22 +1334,6 @@ class MainFrame(wx.Frame):
         self.schedule_refresh_controls_scrolling()
 
     def on_column_splitter_changed(self, event: wx.Event):
-        if hasattr(self, "animation_splitter") and self.animation_splitter.IsSplit() and \
-                hasattr(self, "model_input_column") and hasattr(self, "animation_left_panel"):
-            # #region agent log
-            self.debug_mode_log(
-                run_id="pre-fix",
-                hypothesis_id="H21",
-                location="on_column_splitter_changed:animation-sash-changed",
-                message="animation splitter sash changed",
-                data={
-                    "sash": int(self.animation_splitter.GetSashPosition()),
-                    "splitter_client_size": list(self.animation_splitter.GetClientSize()),
-                    "left_size": list(self.model_input_column.GetSize()),
-                    "left_children": len(self.model_input_column.GetChildren()),
-                    "right_size": list(self.animation_left_panel.GetSize()),
-                })
-            # #endregion
         self.refresh_dynamic_output_status_layout()
         if hasattr(self, "animation_panel"):
             self.schedule_refresh_controls_scrolling()
@@ -1539,14 +1376,6 @@ class MainFrame(wx.Frame):
                     continue
             if control is not None and hasattr(control, "GetValue"):
                 settings[key] = float(control.GetValue())
-        # #region agent log
-        self.debug_mode_log(
-            run_id="slider-persist",
-            hypothesis_id="H-SLIDER-SAVE",
-            location="collect_display_transform_settings",
-            message="collected display transform slider settings",
-            data={"settings": settings})
-        # #endregion
         return settings
 
     def apply_persistent_slider_value_states(self):
@@ -1584,14 +1413,22 @@ class MainFrame(wx.Frame):
             else:
                 control.SetValue(value)
             applied[key] = value
-        # #region agent log
-        self.debug_mode_log(
-            run_id="slider-persist",
-            hypothesis_id="H-SLIDER-APPLY",
-            location="apply_persistent_slider_value_states",
-            message="applied display transform slider settings",
-            data={"applied": applied})
-        # #endregion
+
+    @staticmethod
+    def resolve_persistent_path_fields(data: dict) -> dict:
+        resolved = dict(data)
+        for key in ("last_loaded_model_path", "tha3_character_png"):
+            if key in resolved and isinstance(resolved[key], str):
+                resolved[key] = from_repo_relative(resolved[key])
+        return resolved
+
+    @staticmethod
+    def relativize_persistent_path_fields(data: dict) -> dict:
+        stored = dict(data)
+        for key in ("last_loaded_model_path", "tha3_character_png"):
+            if key in stored and isinstance(stored[key], str):
+                stored[key] = to_repo_relative(stored[key])
+        return stored
 
     def load_persistent_ui_state(self) -> dict:
         file_path = self.get_ui_state_file_path()
@@ -1602,6 +1439,7 @@ class MainFrame(wx.Frame):
                 data = json.load(f)
             if not isinstance(data, dict):
                 return {}
+            data = self.resolve_persistent_path_fields(data)
             return self.sanitize_window_geometry_in_state(data)
         except Exception:
             return {}
@@ -1633,63 +1471,18 @@ class MainFrame(wx.Frame):
         return sanitized
 
     def collect_persistent_ui_state(self) -> dict:
-        # #region agent log
-        self.agent_debug_log(
-            "H9",
-            "collect_persistent_ui_state:entry",
-            "collect persistent ui state entry",
-            {
-                "is_main_thread": wx.IsMainThread(),
-                "controls_build_in_progress": self._controls_build_in_progress,
-            })
-        # #endregion
         animation_splitter_sash = self.persistent_ui_state.get("animation_splitter_sash")
         if hasattr(self, "animation_splitter") and self.animation_splitter.IsSplit():
             animation_splitter_sash = self.animation_splitter.GetSashPosition()
         main_splitter_sash = self.persistent_ui_state.get("main_splitter_sash")
         if hasattr(self, "main_splitter") and self.main_splitter.IsSplit():
             main_splitter_sash = self.main_splitter.GetSashPosition()
-        # #region agent log
-        self.agent_debug_log(
-            "H10",
-            "collect_persistent_ui_state:after-sash",
-            "read splitter sash positions",
-            {"has_main_splitter": hasattr(self, "main_splitter")})
-        # #endregion
-        # #region agent log
-        self.agent_debug_log(
-            "H11",
-            "collect_persistent_ui_state:before-background",
-            "reading output background control",
-            {"caller": self._active_save_caller})
-        # #endregion
         if self._active_save_caller == "process_window_geometry_save":
             output_background_hex = self.normalize_background_hex(
                 self.persistent_ui_state.get("output_background_hex", "#000000"),
                 "#000000")
-            # #region agent log
-            self.agent_debug_log(
-                "H13",
-                "collect_persistent_ui_state:background-from-cache",
-                "used cached output background for geometry-save caller",
-                {})
-            # #endregion
         else:
             output_background_hex = self.get_output_background_hex()
-        # #region agent log
-        self.agent_debug_log(
-            "H11",
-            "collect_persistent_ui_state:after-background",
-            "read output background control",
-            {})
-        # #endregion
-        # #region agent log
-        self.agent_debug_log(
-            "H11",
-            "collect_persistent_ui_state:before-checkboxes",
-            "reading checkbox and interval controls",
-            {})
-        # #endregion
         enable_auto_transform = self.enable_auto_transform_checkbox.GetValue()
         enable_direction_calibration = self.enable_direction_calibration_checkbox.GetValue()
         direction_calibration_interval_seconds = self.auto_direction_calibration_interval_seconds_ctrl.GetValue()
@@ -1698,28 +1491,7 @@ class MainFrame(wx.Frame):
         invert_tilt_mapping = self.invert_tilt_mapping_checkbox.GetValue()
         mirror_output = self.mirror_output_checkbox.GetValue()
         external_layer_output_enabled = self.external_layer_output_checkbox.GetValue()
-        # #region agent log
-        self.agent_debug_log(
-            "H11",
-            "collect_persistent_ui_state:after-checkboxes",
-            "read checkbox and interval controls",
-            {})
-        # #endregion
-        # #region agent log
-        self.agent_debug_log(
-            "H11",
-            "collect_persistent_ui_state:before-mouth-settings",
-            "reading persistent mouth settings",
-            {})
-        # #endregion
         persistent_mouth_settings = self.pose_converter.get_persistent_mouth_settings()
-        # #region agent log
-        self.agent_debug_log(
-            "H11",
-            "collect_persistent_ui_state:after-mouth-settings",
-            "read persistent mouth settings",
-            {})
-        # #endregion
         state = {
             "output_background_hex": output_background_hex,
             "enable_auto_transform": enable_auto_transform,
@@ -1730,65 +1502,25 @@ class MainFrame(wx.Frame):
             "invert_tilt_mapping": invert_tilt_mapping,
             "mirror_output": mirror_output,
             "external_layer_output_enabled": external_layer_output_enabled,
+            "image_source_mode": self.get_image_source_mode(),
+            "tha3_character_png": self.last_tha3_character_png,
+            "tha3_model_variant": self.tha3_model_variant,
             "last_loaded_model_path": self.last_loaded_model_path,
             "animation_splitter_sash": animation_splitter_sash,
             "main_splitter_sash": main_splitter_sash,
             "mouth_settings": persistent_mouth_settings,
             "display_transform_settings": self.collect_display_transform_settings(),
         }
-        # #region agent log
-        self.agent_debug_log(
-            "H11",
-            "collect_persistent_ui_state:after-core-fields",
-            "read core persistent fields",
-            {"keys_count": len(state)})
-        # #endregion
         if getattr(self, "output_frame", None) is not None and self.output_frame:
-            # #region agent log
-            self.agent_debug_log(
-                "H12",
-                "collect_persistent_ui_state:before-output-rect",
-                "collecting output frame rect",
-                {"is_shown": self.output_frame.IsShown()})
-            # #endregion
             state.update(self.collect_window_client_rect(self.output_frame, "output_frame"))
-            # #region agent log
-            self.agent_debug_log(
-                "H12",
-                "collect_persistent_ui_state:after-output-rect",
-                "collected output frame rect",
-                {})
-            # #endregion
         controls_window = self.get_controls_window()
         if controls_window is not None and controls_window.IsShown():
-            # #region agent log
-            self.agent_debug_log(
-                "H12",
-                "collect_persistent_ui_state:before-controls-rect",
-                "collecting controls frame rect",
-                {"is_iconized": controls_window.IsIconized()})
-            # #endregion
             state.update(self.collect_window_client_rect(controls_window, "controls_frame"))
-            # #region agent log
-            self.agent_debug_log(
-                "H12",
-                "collect_persistent_ui_state:after-controls-rect",
-                "collected controls frame rect",
-                {})
-            # #endregion
         if not self.full_controls_expanded and self.IsShown():
             state.update(self.collect_window_client_rect(self, "compact_frame"))
-        # #region agent log
-        self.agent_debug_log(
-            "H9",
-            "collect_persistent_ui_state:exit",
-            "collect persistent ui state exit",
-            {"keys_count": len(state)})
-        # #endregion
         return state
 
     def save_persistent_ui_state(self):
-        save_start = time.time()
         caller_name = "<unknown>"
         try:
             caller_frame = inspect.currentframe()
@@ -1796,62 +1528,22 @@ class MainFrame(wx.Frame):
                 caller_name = caller_frame.f_back.f_code.co_name
         except Exception:
             caller_name = "<error>"
-        # #region agent log
-        self.agent_debug_log(
-            "H9",
-            "save_persistent_ui_state:entry",
-            "save persistent ui state entry",
-            {"caller": caller_name})
-        # #endregion
         if self._controls_build_in_progress:
-            # #region agent log
-            self.agent_debug_log(
-                "H9",
-                "save_persistent_ui_state:skip-build-in-progress",
-                "skip save while controls frame is being built",
-                {})
-            # #endregion
             return
         self._active_save_caller = caller_name
         try:
             data = self.collect_persistent_ui_state()
         finally:
             self._active_save_caller = None
-        # #region agent log
-        self.agent_debug_log(
-            "H9",
-            "save_persistent_ui_state:after-collect",
-            "save persistent ui state after collect",
-            {"data_keys_count": len(data)})
-        # #endregion
         if not data:
             return
         self.persistent_ui_state.update(data)
         try:
-            # #region agent log
-            self.agent_debug_log(
-                "H9",
-                "save_persistent_ui_state:before-write",
-                "save persistent ui state before file write",
-                {})
-            # #endregion
+            disk_state = self.relativize_persistent_path_fields(self.persistent_ui_state)
             with open(self.get_ui_state_file_path(), "w", encoding="utf-8") as f:
-                json.dump(self.persistent_ui_state, f, ensure_ascii=True, indent=2)
-            # #region agent log
-            self.agent_debug_log(
-                "H9",
-                "save_persistent_ui_state:after-write",
-                "save persistent ui state file write complete",
-                {"elapsed_ms": int((time.time() - save_start) * 1000)})
-            # #endregion
+                json.dump(disk_state, f, ensure_ascii=True, indent=2)
         except Exception:
-            # #region agent log
-            self.agent_debug_log(
-                "H9",
-                "save_persistent_ui_state:exception",
-                "save persistent ui state raised exception",
-                {"elapsed_ms": int((time.time() - save_start) * 1000)})
-            # #endregion
+            pass
 
     def apply_persistent_ui_state(self):
         data = self.persistent_ui_state
@@ -1885,9 +1577,22 @@ class MainFrame(wx.Frame):
             self.mirror_output_checkbox.SetValue(bool(data["mirror_output"]))
         if "external_layer_output_enabled" in data:
             self.external_layer_output_checkbox.SetValue(bool(data["external_layer_output_enabled"]))
+        if "image_source_mode" in data:
+            self.image_source_mode = normalize_image_source_mode(data["image_source_mode"])
+        if "tha3_character_png" in data:
+            tha3_png = data["tha3_character_png"]
+            if isinstance(tha3_png, str):
+                self.last_tha3_character_png = from_repo_relative(tha3_png)
+            else:
+                self.last_tha3_character_png = None
+        if "tha3_model_variant" in data:
+            self.tha3_model_variant = str(data["tha3_model_variant"])
         if "last_loaded_model_path" in data:
             last_loaded_model_path = data["last_loaded_model_path"]
-            self.last_loaded_model_path = last_loaded_model_path if isinstance(last_loaded_model_path, str) else None
+            if isinstance(last_loaded_model_path, str):
+                self.last_loaded_model_path = from_repo_relative(last_loaded_model_path)
+            else:
+                self.last_loaded_model_path = None
         self.update_load_model_buttons()
         self.on_display_transform_control_changed()
         wx.CallAfter(self.apply_external_layer_output_visibility)
@@ -1970,30 +1675,6 @@ class MainFrame(wx.Frame):
         self.animation_panel.FitInside()
         self.animation_panel.Refresh()
         view_start_after = self.animation_panel.GetViewStart()
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H9",
-            location="refresh_controls_scrolling:view-start-delta",
-            message="view start before/after FitInside",
-            data={
-                "before": list(view_start_before),
-                "after": list(view_start_after),
-                "virtual_size": list(self.animation_panel.GetVirtualSize()),
-                "client_size": list(self.animation_panel.GetClientSize()),
-            })
-        # #endregion
-        # #region agent log
-        self.agent_debug_log(
-            "H2",
-            "refresh_controls_scrolling:exit",
-            "refresh controls scrolling done",
-            {
-                "elapsed_ms": int((time.time() - scroll_start) * 1000),
-                "virtual_size": list(self.animation_panel.GetVirtualSize()),
-                "client_size": list(self.animation_panel.GetClientSize())
-            })
-        # #endregion
 
     def ensure_result_bitmap_size(self):
         width, height = self.get_output_canvas_size()
@@ -2046,24 +1727,8 @@ class MainFrame(wx.Frame):
 
             self.pose_converter.ui_state_changed_callback = self.save_persistent_ui_state
             model_input_children_before = len(self.model_input_column.GetChildren())
-            # #region agent log
-            self.debug_mode_log(
-                run_id="pre-fix",
-                hypothesis_id="H12",
-                location="create_animation_panel:before-init-pose-converter-panel",
-                message="before pose converter panel init",
-                data={"children_before": model_input_children_before})
-            # #endregion
             self.pose_converter.init_pose_converter_panel(self.model_input_column, current_pose_supplier)
             model_input_children_after = len(self.model_input_column.GetChildren())
-            # #region agent log
-            self.debug_mode_log(
-                run_id="pre-fix",
-                hypothesis_id="H12",
-                location="create_animation_panel:after-init-pose-converter-panel",
-                message="after pose converter panel init",
-                data={"children_after": model_input_children_after})
-            # #endregion
             mouth_settings = self.persistent_ui_state.get("mouth_settings")
             if isinstance(mouth_settings, dict):
                 self.pose_converter.apply_persistent_mouth_settings(mouth_settings)
@@ -2179,8 +1844,6 @@ class MainFrame(wx.Frame):
             self.auto_transform_status_text = wx.StaticText(self.animation_left_panel, label="")
             self.animation_left_panel_sizer.Add(self.auto_transform_status_text, wx.SizerFlags().Expand().Border())
 
-            self.fps_text = wx.StaticText(self.animation_left_panel, label="")
-            self.animation_left_panel_sizer.Add(self.fps_text, wx.SizerFlags().Expand().Border())
             self.animation_left_panel_sizer.Fit(self.animation_left_panel)
             self.refresh_auto_transform_status("READY")
             self.refresh_scale_curve_status()
@@ -2191,48 +1854,9 @@ class MainFrame(wx.Frame):
                 self.model_input_column,
                 self.animation_left_panel,
                 sashPosition=max(260, self.model_input_column.GetBestSize().x))
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H22",
-            location="create_animation_panel:after-split",
-            message="animation panel split created",
-            data={
-                "is_split": bool(self.animation_splitter.IsSplit()),
-                "sash": int(self.animation_splitter.GetSashPosition()) if self.animation_splitter.IsSplit() else -1,
-                "splitter_client_size": list(self.animation_splitter.GetClientSize()),
-                "left_best_size": list(self.model_input_column.GetBestSize()),
-                "left_size": list(self.model_input_column.GetSize()),
-                "left_children": len(self.model_input_column.GetChildren()),
-                "right_size": list(self.animation_left_panel.GetSize()),
-            })
-        # #endregion
 
         # Do NOT fit scrolled window to content; otherwise vertical scrollbars never appear.
         self.animation_panel.SetMinSize(wx.Size(480, 320))
-        # #region agent log
-        self.agent_debug_log(
-            "H17",
-            "create_animation_panel:keep-scrollable-size",
-            "kept scrolled window smaller than content",
-            {})
-        # #endregion
-        # #region agent log
-        wx.CallAfter(
-            lambda: self.debug_mode_log(
-                run_id="pre-fix",
-                hypothesis_id="H23",
-                location="create_animation_panel:callafter-layout-snapshot",
-                message="post-layout animation panel snapshot",
-                data={
-                    "animation_panel_client_size": list(self.animation_panel.GetClientSize()),
-                    "splitter_client_size": list(self.animation_splitter.GetClientSize()),
-                    "is_split": bool(self.animation_splitter.IsSplit()),
-                    "sash": int(self.animation_splitter.GetSashPosition()) if self.animation_splitter.IsSplit() else -1,
-                    "left_size": list(self.model_input_column.GetSize()),
-                    "right_size": list(self.animation_left_panel.GetSize()),
-                }))
-        # #endregion
         wx.CallAfter(self.refresh_controls_scrolling)
 
     def on_animation_panel_mousewheel_logged(self, event: wx.MouseEvent):
@@ -2249,42 +1873,7 @@ class MainFrame(wx.Frame):
                 slider_event = wx.CommandEvent(wx.EVT_SLIDER.typeId, event_object.GetId())
                 slider_event.SetEventObject(event_object)
                 wx.PostEvent(event_object.GetEventHandler(), slider_event)
-            # #region agent log
-            self.debug_mode_log(
-                run_id="post-fix",
-                hypothesis_id="H24",
-                location="on_animation_panel_mousewheel_logged:slider-adjust",
-                message="mouse wheel adjusted slider directly",
-                data={
-                    "rotation": int(event.GetWheelRotation()),
-                    "steps": int(wheel_steps),
-                    "line_size": int(line_size),
-                    "old_value": int(old_value),
-                    "new_value": int(new_value),
-                })
-            # #endregion
             return
-        if hasattr(self, "animation_panel"):
-            # #region agent log
-            self.debug_mode_log(
-                run_id="post-fix",
-                hypothesis_id="H10",
-                location="on_animation_panel_mousewheel_logged:entry",
-                message="animation panel mousewheel event",
-                data={
-                    "rotation": int(event.GetWheelRotation()),
-                    "view_start": list(self.animation_panel.GetViewStart()),
-                    "sizer_children": self.animation_panel_sizer.GetItemCount() if hasattr(self, "animation_panel_sizer") else -1,
-                    "event_object_type": type(event_object).__name__ if event_object is not None else "None",
-                })
-            # #endregion
-            wx.CallAfter(
-                lambda: self.debug_mode_log(
-                    run_id="post-fix",
-                    hypothesis_id="H10",
-                    location="on_animation_panel_mousewheel_logged:after",
-                    message="animation panel mousewheel after event loop",
-                    data={"view_start": list(self.animation_panel.GetViewStart())}))
         event.Skip()
 
     def create_compact_launcher_panel(self, parent):
@@ -2294,15 +1883,15 @@ class MainFrame(wx.Frame):
         self.compact_launcher_panel.SetAutoLayout(1)
         self.compact_launcher_panel.SetDoubleBuffered(True)
 
-        self.quick_load_last_model_button = wx.Button(
-            self.compact_launcher_panel, wx.ID_ANY, "加载上次模型 / Load Last Model")
-        self.quick_load_last_model_button.Bind(wx.EVT_BUTTON, self.load_last_model)
-        compact_launcher_sizer.Add(self.quick_load_last_model_button, 0, wx.EXPAND | wx.ALL, 6)
-
         self.quick_calibrate_head_orientation_button = wx.Button(
             self.compact_launcher_panel, wx.ID_ANY, "校正头部朝向 / Calibrate Head Orientation")
         self.quick_calibrate_head_orientation_button.Bind(wx.EVT_BUTTON, self.calibrate_head_orientation_quick)
         compact_launcher_sizer.Add(self.quick_calibrate_head_orientation_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+        self.quick_calibrate_scale_button = wx.Button(
+            self.compact_launcher_panel, wx.ID_ANY, "自动缩放校准 / Auto Scale Calibration")
+        self.quick_calibrate_scale_button.Bind(wx.EVT_BUTTON, self.calibrate_scale_clicked)
+        compact_launcher_sizer.Add(self.quick_calibrate_scale_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
 
         self.toggle_full_controls_button = wx.Button(
             self.compact_launcher_panel, wx.ID_ANY, "切换到完整调参窗 / Open Full Controls")
@@ -2335,44 +1924,11 @@ class MainFrame(wx.Frame):
         self.SetMinClientSize(self._compact_default_client_size)
 
     def create_controls_frame(self):
-        # #region agent log
-        self.agent_debug_log(
-            "H5",
-            "create_controls_frame:entry",
-            "create controls frame entry",
-            {"already_exists": self.controls_frame is not None})
-        # #endregion
         if self.controls_frame is not None:
-            # #region agent log
-            self.debug_mode_log(
-                run_id="pre-fix",
-                hypothesis_id="H11",
-                location="create_controls_frame:already-exists-return",
-                message="skip controls frame creation (already exists)",
-                data={
-                    "controls_frame_id": id(self.controls_frame),
-                    "is_shown": bool(self.controls_frame.IsShown()),
-                })
-            # #endregion
             return
 
         self._controls_build_in_progress = True
         self.controls_frame = ControlsFrame(self)
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H11",
-            location="create_controls_frame:new-frame-created",
-            message="new controls frame created",
-            data={"controls_frame_id": id(self.controls_frame)})
-        # #endregion
-        # #region agent log
-        self.agent_debug_log(
-            "H5",
-            "create_controls_frame:after-frame",
-            "controls frame object created",
-            {})
-        # #endregion
         try:
             self.main_sizer = wx.BoxSizer(wx.VERTICAL)
             self.controls_frame.SetSizer(self.main_sizer)
@@ -2389,13 +1945,31 @@ class MainFrame(wx.Frame):
             self.switch_to_compact_button.Bind(wx.EVT_BUTTON, self.switch_to_compact_clicked)
             controls_header_sizer.Add(self.switch_to_compact_button, 0, wx.EXPAND)
 
+            self.load_last_tha3_png_button = wx.Button(
+                controls_header_panel,
+                wx.ID_ANY,
+                "以 THA3 加载上次立绘 / Load Last THA3 PNG")
+            self.load_last_tha3_png_button.Bind(wx.EVT_BUTTON, self.load_last_tha3_character_png)
+            controls_header_sizer.Add(self.load_last_tha3_png_button, 0, wx.EXPAND | wx.LEFT, 6)
+
+            self.load_tha3_other_png_button = wx.Button(
+                controls_header_panel,
+                wx.ID_ANY,
+                "以 THA3 加载其他立绘 / Load Other THA3 PNG")
+            self.load_tha3_other_png_button.Bind(wx.EVT_BUTTON, self.load_tha3_character_png)
+            controls_header_sizer.Add(self.load_tha3_other_png_button, 0, wx.EXPAND | wx.LEFT, 6)
+
             self.load_last_model_button = wx.Button(
-                controls_header_panel, wx.ID_ANY, "加载上次模型 / Load Last Model")
+                controls_header_panel,
+                wx.ID_ANY,
+                "加载上次 THA4 Student / Load Last THA4 Student")
             self.load_last_model_button.Bind(wx.EVT_BUTTON, self.load_last_model)
             controls_header_sizer.Add(self.load_last_model_button, 0, wx.EXPAND | wx.LEFT, 6)
 
             self.load_model_button = wx.Button(
-                controls_header_panel, wx.ID_ANY, "加载其他模型 / Load Another Model")
+                controls_header_panel,
+                wx.ID_ANY,
+                "加载其他 THA4 Student 模型 / Load Other THA4 Student Model")
             self.load_model_button.Bind(wx.EVT_BUTTON, self.load_model)
             controls_header_sizer.Add(self.load_model_button, 0, wx.EXPAND | wx.LEFT, 6)
             self.update_load_model_buttons()
@@ -2409,13 +1983,6 @@ class MainFrame(wx.Frame):
             self.main_sizer.Add(self.main_splitter, wx.SizerFlags(1).Expand().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 5))
 
             self.create_animation_panel(self.main_splitter)
-            # #region agent log
-            self.agent_debug_log(
-                "H5",
-                "create_controls_frame:after-animation-panel",
-                "animation panel created",
-                {})
-            # #endregion
 
             self.right_sidebar = wx.Panel(self.main_splitter)
             self.right_sidebar_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -2424,23 +1991,9 @@ class MainFrame(wx.Frame):
             self.right_sidebar.SetDoubleBuffered(True)
 
             self.create_capture_panel(self.right_sidebar)
-            # #region agent log
-            self.agent_debug_log(
-                "H5",
-                "create_controls_frame:after-capture-panel",
-                "capture panel created",
-                {})
-            # #endregion
             self.right_sidebar_sizer.Add(self.capture_panel, wx.SizerFlags(0).Expand())
 
             self.create_postprocess_panel(self.right_sidebar)
-            # #region agent log
-            self.agent_debug_log(
-                "H5",
-                "create_controls_frame:after-postprocess-panel",
-                "postprocess panel created",
-                {})
-            # #endregion
             self.right_sidebar_sizer.Add(self.postprocess_panel, wx.SizerFlags(0).Expand().Border(wx.TOP, 6))
             self.right_sidebar_sizer.Fit(self.right_sidebar)
 
@@ -2451,60 +2004,17 @@ class MainFrame(wx.Frame):
                     sashPosition=max(720, self.animation_panel.GetBestSize().x))
 
             self.main_sizer.Fit(self.controls_frame)
-            # #region agent log
-            self.agent_debug_log(
-                "H5",
-                "create_controls_frame:after-fit",
-                "main sizer fit completed",
-                {"client_size": [self.controls_frame.GetClientSize().x, self.controls_frame.GetClientSize().y]})
-            # #endregion
             self.refresh_model_loaded_ui_state()
             self.on_display_transform_control_changed()
             try:
                 self.update_source_image_bitmap()
-            except Exception as exc:
-                # #region agent log
-                self.agent_debug_log(
-                    "H15",
-                    "create_controls_frame:update-source-exception",
-                    "update source image bitmap failed during controls build",
-                    {"error_type": type(exc).__name__, "error": str(exc)})
-                # #endregion
+            except Exception:
+                pass
             if hasattr(self, "webcam_capture_panel"):
                 self.webcam_capture_panel.Refresh(False)
-            # #region agent log
-            self.debug_mode_log(
-                run_id="pre-fix",
-                hypothesis_id="H1",
-                location="create_controls_frame:before-hover-bindings",
-                message="about to setup hover help bindings",
-                data={"has_controls_frame": self.controls_frame is not None})
-            # #endregion
-            # #region agent log
-            self.debug_mode_log(
-                run_id="pre-fix",
-                hypothesis_id="H1",
-                location="create_controls_frame:after-hover-bindings",
-                message="hover help bindings setup complete",
-                data={})
-            # #endregion
             wx.CallAfter(self.initialize_adjustable_columns)
-        # #region agent log
-            self.agent_debug_log(
-                "H5",
-                "create_controls_frame:exit",
-                "create controls frame exit",
-                {})
-            # #endregion
         finally:
             self._controls_build_in_progress = False
-            # #region agent log
-            self.agent_debug_log(
-                "H9",
-                "create_controls_frame:build-flag-cleared",
-                "controls build in progress flag cleared",
-                {})
-            # #endregion
 
     def create_capture_panel(self, parent):
         self.capture_panel = wx.Panel(parent, style=wx.RAISED_BORDER)
@@ -2513,14 +2023,29 @@ class MainFrame(wx.Frame):
         self.capture_panel.SetAutoLayout(1)
         self.capture_panel.SetDoubleBuffered(True)
 
+        self.source_preview_column = wx.Panel(self.capture_panel)
+        source_preview_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.source_preview_column.SetSizer(source_preview_sizer)
+        self.source_preview_column.SetAutoLayout(1)
+        self.source_preview_column.SetDoubleBuffered(True)
+        # Keep source preview + FPS area stable to avoid panel squeezing.
+        self.source_preview_column.SetMinSize(
+            wx.Size(MainFrame.SOURCE_PREVIEW_SIZE + 12, MainFrame.SOURCE_PREVIEW_SIZE + 52)
+        )
+
         self.source_image_panel = wx.Panel(
-            self.capture_panel,
+            self.source_preview_column,
             size=(MainFrame.SOURCE_PREVIEW_SIZE, MainFrame.SOURCE_PREVIEW_SIZE),
             style=wx.SIMPLE_BORDER)
         self.source_image_panel.SetDoubleBuffered(True)
         self.source_image_panel.Bind(wx.EVT_PAINT, self.paint_source_image_panel)
         self.source_image_panel.Bind(wx.EVT_ERASE_BACKGROUND, self.on_erase_background)
-        self.capture_panel_sizer.Add(self.source_image_panel, wx.SizerFlags(0).FixedMinSize().Border(wx.ALL, 5))
+        source_preview_sizer.Add(self.source_image_panel, wx.SizerFlags(0).FixedMinSize().Border(wx.ALL, 5))
+
+        self.fps_text = wx.StaticText(self.source_preview_column, label="FPS\n--")
+        source_preview_sizer.Add(self.fps_text, wx.SizerFlags(0).Expand().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 5))
+
+        self.capture_panel_sizer.Add(self.source_preview_column, wx.SizerFlags(0).Border(wx.ALL, 5))
 
         self.webcam_container = wx.Panel(
             self.capture_panel,
@@ -2586,23 +2111,8 @@ class MainFrame(wx.Frame):
 
         # Aggressive startup path: skip automatic camera enumeration entirely.
         # User can trigger device scan manually via "Refresh Devices".
-        # #region agent log
-        self.agent_debug_log(
-            "H14",
-            "create_capture_panel:skip-startup-enumeration",
-            "skipped startup camera enumeration",
-            {})
-        # #endregion
 
     def setup_hover_help_bindings(self):
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H2",
-            location="setup_hover_help_bindings:entry",
-            message="enter setup hover help bindings",
-            data={"controls_frame_none": self.controls_frame is None})
-        # #endregion
         if self.controls_frame is None:
             return
         self.hover_help_timer = wx.Timer(self.controls_frame)
@@ -2622,36 +2132,9 @@ class MainFrame(wx.Frame):
         self.hover_help_popup.SetSizer(wx.BoxSizer(wx.VERTICAL))
         self.hover_help_popup.GetSizer().Add(popup_panel, 1, wx.EXPAND)
         self.hover_help_popup.Hide()
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H2",
-            location="setup_hover_help_bindings:popup-created",
-            message="hover popup and timer created",
-            data={})
-        # #endregion
         bind_start = time.time()
         control_count = self.count_controls_recursive(self.controls_frame)
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H5",
-            location="setup_hover_help_bindings:before-bind-recursive",
-            message="starting recursive hover binding",
-            data={"control_count": control_count})
-        # #endregion
         self.bind_hover_help_recursive(self.controls_frame)
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H5",
-            location="setup_hover_help_bindings:after-bind-recursive",
-            message="finished recursive hover binding",
-            data={
-                "control_count": control_count,
-                "elapsed_ms": int((time.time() - bind_start) * 1000),
-            })
-        # #endregion
 
     def count_controls_recursive(self, window: Optional[wx.Window]) -> int:
         if window is None:
@@ -2712,14 +2195,6 @@ class MainFrame(wx.Frame):
         return bool(control.GetValue())
 
     def on_hover_help_toggle_changed(self, event: wx.Event):
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H3",
-            location="on_hover_help_toggle_changed:entry",
-            message="hover help toggle changed",
-            data={"enabled": self.is_hover_help_enabled()})
-        # #endregion
         if not self.is_hover_help_enabled():
             self._hover_help_pending_window = None
             self._hover_help_active_window = None
@@ -3055,13 +2530,6 @@ class MainFrame(wx.Frame):
         return label
 
     def connect_default_video_source(self):
-        # #region agent log
-        self.agent_debug_log(
-            "H4",
-            "connect_default_video_source:entry",
-            "connect default video source called",
-            {})
-        # #endregion
         if self.video_source_choice is None or self.video_source_choice.GetCount() == 0:
             return
         camera_labels = [
@@ -3217,28 +2685,9 @@ class MainFrame(wx.Frame):
 
     def refresh_video_source_choice_async(self, connect_after: bool = False, trigger_source: str = "manual"):
         refresh_start = time.time()
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H17",
-            location="refresh_video_source_choice_async:entry",
-            message="video source async refresh requested",
-            data={
-                "connect_after": bool(connect_after),
-                "trigger_source": str(trigger_source),
-                "enumeration_in_progress": bool(self._video_enumeration_in_progress),
-            })
-        # #endregion
         if self._video_enumeration_in_progress:
             return
         normalized_trigger = "auto" if str(trigger_source).lower() == "auto" else "manual"
-        # #region agent log
-        self.agent_debug_log(
-            "H3",
-            "refresh_video_source_choice_async:start",
-            "camera enumeration started",
-            {"connect_after": connect_after, "trigger_source": normalized_trigger})
-        # #endregion
         self._video_enumeration_in_progress = True
         if normalized_trigger == "auto":
             self.update_video_source_status_text("自动加载摄像头中... / Auto loading camera...")
@@ -3247,17 +2696,6 @@ class MainFrame(wx.Frame):
 
         def worker():
             discovered = self.enumerate_camera_sources()
-            # #region agent log
-            self.debug_mode_log(
-                run_id="pre-fix",
-                hypothesis_id="H17",
-                location="refresh_video_source_choice_async:worker-finished",
-                message="camera enumeration worker finished",
-                data={
-                    "camera_count": len(discovered),
-                    "elapsed_ms": int((time.time() - refresh_start) * 1000),
-                })
-            # #endregion
             wx.CallAfter(self._apply_video_source_choices, discovered, connect_after, normalized_trigger)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -3267,17 +2705,6 @@ class MainFrame(wx.Frame):
                                     connect_after: bool,
                                     trigger_source: str = "manual"):
         self._video_enumeration_in_progress = False
-        # #region agent log
-        self.agent_debug_log(
-            "H3",
-            "_apply_video_source_choices:entry",
-            "camera enumeration completed",
-            {
-                "camera_count": len(discovered_cameras),
-                "connect_after": connect_after,
-                "trigger_source": trigger_source,
-            })
-        # #endregion
         if self.video_source_choice is None:
             return
 
@@ -3305,19 +2732,6 @@ class MainFrame(wx.Frame):
         choices.append("Video file... / 视频文件...")
         self.video_source_choice_map["Video file... / 视频文件..."] = ("file", None, None)
         duplicate_count = len(choices) - len(set(choices))
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H13",
-            location="_apply_video_source_choices:before-setitems",
-            message="video source choices prepared",
-            data={
-                "camera_count": len(discovered_cameras),
-                "choices_count": len(choices),
-                "duplicate_count": duplicate_count,
-                "trigger_source": trigger_source,
-            })
-        # #endregion
 
         self.video_source_choice.SetItems(choices)
         if previous_selection in choices:
@@ -3379,17 +2793,6 @@ class MainFrame(wx.Frame):
                                  api_preference: Optional[int] = None,
                                  avoid_dshow_fallback: bool = False):
         capture_start_time = time.time()
-        # #region agent log
-        self.agent_debug_log(
-            "H4",
-            "set_video_capture_camera:start",
-            "set video capture camera started",
-            {
-                "cam_index": cam_index,
-                "api_preference": api_preference,
-                "avoid_dshow_fallback": avoid_dshow_fallback
-            })
-        # #endregion
         self.release_video_capture()
         self.video_source_kind = "camera"
         self._image_file_path = None
@@ -3425,17 +2828,6 @@ class MainFrame(wx.Frame):
                     self.update_video_source_status_text(
                         f"已连接 / Connected: index {cam_index}, api {backend_api}")
                     self.schedule_active_capture_timer()
-                    # #region agent log
-                    self.agent_debug_log(
-                        "H4",
-                        "set_video_capture_camera:success",
-                        "set video capture camera success",
-                        {
-                            "cam_index": cam_index,
-                            "backend_api": backend_api,
-                            "elapsed_ms": int((time.time() - capture_start_time) * 1000)
-                        })
-                    # #endregion
                     return
 
                 capture.release()
@@ -3453,17 +2845,6 @@ class MainFrame(wx.Frame):
             f"Camera {cam_index} not readable / 摄像头 {cam_index} 无法读取")
         self.update_video_source_status_text(self.video_capture_status_message)
         self.schedule_idle_capture_timer()
-        # #region agent log
-        self.agent_debug_log(
-            "H4",
-            "set_video_capture_camera:failed",
-            "set video capture camera failed",
-            {
-                "cam_index": cam_index,
-                "elapsed_ms": int((time.time() - capture_start_time) * 1000),
-                "last_error": self.video_capture_status_message
-            })
-        # #endregion
 
     def set_video_capture_file(self, file_path: str):
         try:
@@ -3546,20 +2927,30 @@ class MainFrame(wx.Frame):
         mirror_output = self.mirror_output_checkbox.GetValue()
         external_layer_output_enabled = self.external_layer_output_checkbox.GetValue()
         antialias_strength = self.antialias_strength_spin.GetValue()
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H4",
-            location="create_postprocess_panel:state-read",
-            message="postprocess panel initial state read",
-            data={
-                "external_layer_output_enabled": bool(external_layer_output_enabled),
-            })
-        # #endregion
 
         postprocess_text = wx.StaticText(
             self.postprocess_panel, label="--- 后处理和其他 / Postprocess & Other ---", style=wx.ALIGN_CENTER)
         self.postprocess_panel_sizer.Add(postprocess_text, 0, wx.EXPAND)
+
+        self.tha3_model_variant_label = wx.StaticText(
+            self.postprocess_panel, label="THA3 模型变体 / THA3 Model Variant")
+        self.postprocess_panel_sizer.Add(
+            self.tha3_model_variant_label,
+            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
+
+        variant_labels = [label for _, label in THA3_VARIANT_CHOICES]
+        variant_index = 0
+        for index, (variant_id, _) in enumerate(THA3_VARIANT_CHOICES):
+            if variant_id == self.tha3_model_variant:
+                variant_index = index
+                break
+        self.tha3_model_variant_choice = wx.Choice(
+            self.postprocess_panel, choices=variant_labels)
+        self.tha3_model_variant_choice.SetSelection(variant_index)
+        self.tha3_model_variant_choice.Bind(wx.EVT_CHOICE, self.on_tha3_model_variant_changed)
+        self.postprocess_panel_sizer.Add(
+            self.tha3_model_variant_choice,
+            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
 
         self.enable_direction_calibration_checkbox = wx.CheckBox(
             self.postprocess_panel,
@@ -3611,6 +3002,14 @@ class MainFrame(wx.Frame):
         self.postprocess_panel_sizer.Add(
             self.enable_scale_calibration_checkbox,
             wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
+
+        self.calibrate_scale_button = wx.Button(
+            self.postprocess_panel,
+            label="自动缩放校准 / Auto Scale Calibration")
+        self.calibrate_scale_button.Bind(wx.EVT_BUTTON, self.calibrate_scale_clicked)
+        self.postprocess_panel_sizer.Add(
+            self.calibrate_scale_button,
+            wx.SizerFlags().Expand().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
 
         self.scale_calibration_interval_panel = wx.Panel(self.postprocess_panel)
         scale_calibration_interval_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -3700,6 +3099,7 @@ class MainFrame(wx.Frame):
 
         self.postprocess_panel_sizer.Fit(self.postprocess_panel)
         self.apply_external_layer_output_visibility()
+        wx.CallAfter(self.refresh_image_source_ui_visibility)
 
     def paint_webcam_capture_panel(self, event: wx.Event):
         wx.BufferedPaintDC(self.webcam_capture_panel, self.webcam_capture_bitmap)
@@ -3752,60 +3152,21 @@ class MainFrame(wx.Frame):
     def update_load_model_buttons(self):
         if hasattr(self, "load_last_model_button"):
             self.load_last_model_button.Enable(bool(self.last_loaded_model_path))
-        if hasattr(self, "quick_load_last_model_button"):
-            self.quick_load_last_model_button.Enable(bool(self.last_loaded_model_path))
+        tha3_last_ready = bool(self.last_tha3_character_png) and os.path.isfile(self.last_tha3_character_png)
+        if hasattr(self, "load_last_tha3_png_button"):
+            self.load_last_tha3_png_button.Enable(tha3_last_ready)
 
     def show_full_controls_window(self):
         show_start_time = time.time()
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H16",
-            location="show_full_controls_window:entry",
-            message="show full controls requested",
-            data={
-                "has_controls_frame": self.controls_frame is not None,
-                "full_controls_expanded": bool(self.full_controls_expanded),
-            })
-        # #endregion
-        # #region agent log
-        self.agent_debug_log(
-            "H1",
-            "show_full_controls_window:entry",
-            "show full controls requested",
-            {"restoring_geometry": self._restoring_window_geometry})
-        # #endregion
         if not self._restoring_window_geometry:
             self.save_persistent_ui_state()
         self.reload_persistent_ui_state_from_disk()
         self.apply_mouth_persistent_state_to_args()
         self.apply_persistent_slider_value_states()
         self.create_controls_frame()
-        # #region agent log
-        self.agent_debug_log(
-            "H1",
-            "show_full_controls_window:after-create",
-            "controls frame created",
-            {"has_controls_frame": self.controls_frame is not None})
-        # #endregion
         self.full_controls_expanded = True
         self.refresh_model_loaded_ui_state()
         self.ensure_application_windows_visible()
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H6",
-            location="show_full_controls_window:after-ensure-visible",
-            message="ensure_application_windows_visible complete",
-            data={"elapsed_ms": int((time.time() - show_start_time) * 1000)})
-        # #endregion
-        # #region agent log
-        self.agent_debug_log(
-            "H1",
-            "show_full_controls_window:after-ensure-visible",
-            "ensure windows visible returned",
-            {"controls_shown": bool(self.controls_frame and self.controls_frame.IsShown())})
-        # #endregion
         if not self.is_external_layer_output_enabled():
             self.ensure_output_frame()
         else:
@@ -3818,21 +3179,6 @@ class MainFrame(wx.Frame):
         wx.CallAfter(self.initialize_adjustable_columns)
         wx.CallAfter(lambda: self.adapt_main_window_to_controls(initial=not self._controls_geometry_restored))
         self.schedule_refresh_controls_scrolling()
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H7",
-            location="show_full_controls_window:exit-performance",
-            message="full controls startup path finished",
-            data={"elapsed_ms": int((time.time() - show_start_time) * 1000)})
-        # #endregion
-        # #region agent log
-        self.agent_debug_log(
-            "H1",
-            "show_full_controls_window:exit",
-            "show full controls scheduling complete",
-            {"elapsed_ms": int((time.time() - show_start_time) * 1000)})
-        # #endregion
 
     def show_compact_launcher(self):
         if not self._restoring_window_geometry:
@@ -3871,8 +3217,98 @@ class MainFrame(wx.Frame):
             self.draw_cached_result_image(self.last_banner_text)
         self.save_persistent_ui_state()
 
+    def calibrate_scale_clicked(self, event: wx.Event):
+        if self.latest_face_screen_motion is None:
+            self.refresh_auto_transform_status("NO FACE")
+            event.Skip()
+            return
+
+        time_now = time.time()
+        self.update_neutral_face_size(self.latest_face_screen_motion)
+        self.last_scale_calibration_time = time_now
+        self.refresh_scale_curve_status()
+        self.request_scale_curve_repaint(force=True)
+        self.update_display_transform_state(snap_to_target=not self.enable_auto_transform_checkbox.GetValue())
+        self.refresh_auto_transform_status("READY" if self.enable_auto_transform_checkbox.GetValue() else "OFF")
+        if self.last_output_wx_image is not None:
+            self.draw_cached_result_image(self.last_banner_text)
+        self.save_persistent_ui_state()
+        event.Skip()
+
     def is_model_loaded(self) -> bool:
+        if self.get_image_source_mode() == IMAGE_SOURCE_THA3:
+            return self.active_image_source.is_ready(self)
         return self.poser is not None and self.torch_source_image is not None and self.wx_source_image is not None
+
+    def get_image_source_mode(self) -> str:
+        return normalize_image_source_mode(getattr(self, "image_source_mode", IMAGE_SOURCE_THA4))
+
+    def refresh_image_source_ui_visibility(self):
+        spec = self.active_image_source.get_load_ui_spec()
+        if hasattr(self, "tha3_model_variant_choice"):
+            self.tha3_model_variant_choice.Show(spec.show_tha3_variant)
+        if hasattr(self, "tha3_model_variant_label"):
+            self.tha3_model_variant_label.Show(spec.show_tha3_variant)
+        if hasattr(self, "controls_frame") and self.controls_frame is not None:
+            self.controls_frame.Layout()
+        self.update_load_model_buttons()
+
+    def on_tha3_model_variant_changed(self, event: wx.Event):
+        if not hasattr(self, "tha3_model_variant_choice"):
+            event.Skip()
+            return
+        self.tha3_model_variant = THA3_VARIANT_CHOICES[self.tha3_model_variant_choice.GetSelection()][0]
+        self.save_persistent_ui_state()
+        if self.get_image_source_mode() == IMAGE_SOURCE_THA3 and self.last_tha3_character_png:
+            switch_image_source(self, IMAGE_SOURCE_THA3)
+            if os.path.isfile(self.last_tha3_character_png):
+                self.active_image_source.load_asset(self, self.last_tha3_character_png)
+        event.Skip()
+
+    def load_tha3_character_png(self, event: wx.Event):
+        images_root = os.path.join(_EXPERIMENT_DIR, "..", "..", "vendor", "easyvtuber", "data_images")
+        if not os.path.isdir(images_root):
+            images_root = r"F:\EasyVtuber\EasyVtuber_v0.8.1\EasyVtuber_v0.8.1\data\images"
+        file_dialog = wx.FileDialog(
+            self.get_dialog_parent(),
+            "Choose THA3 character PNG (512x512 RGBA)",
+            images_root if os.path.isdir(images_root) else "",
+            "",
+            "PNG files (*.png)|*.png",
+            wx.FD_OPEN)
+        if file_dialog.ShowModal() == wx.ID_OK:
+            png_path = os.path.join(file_dialog.GetDirectory(), file_dialog.GetFilename())
+            if self.get_image_source_mode() != IMAGE_SOURCE_THA3:
+                switch_image_source(self, IMAGE_SOURCE_THA3)
+            self.active_image_source.load_asset(self, png_path)
+            self.update_load_model_buttons()
+        file_dialog.Destroy()
+        event.Skip()
+
+    def load_last_tha3_character_png(self, event: wx.Event):
+        self.refresh_video_source_choice_async(connect_after=True, trigger_source="manual")
+        if not self.last_tha3_character_png:
+            return
+        if not os.path.isfile(self.last_tha3_character_png):
+            invalid_path = self.last_tha3_character_png
+            self.last_tha3_character_png = None
+            self.update_load_model_buttons()
+            self.save_persistent_ui_state()
+            message_dialog = wx.MessageDialog(
+                self.get_dialog_parent(),
+                "上次 THA3 立绘路径已失效，请重新选择：\n%s\n\nLast THA3 PNG path is no longer valid."
+                % invalid_path,
+                "Load Last THA3 PNG",
+                wx.OK | wx.ICON_WARNING)
+            message_dialog.ShowModal()
+            message_dialog.Destroy()
+            event.Skip()
+            return
+        if self.get_image_source_mode() != IMAGE_SOURCE_THA3:
+            switch_image_source(self, IMAGE_SOURCE_THA3)
+        self.active_image_source.load_asset(self, self.last_tha3_character_png)
+        self.update_load_model_buttons()
+        event.Skip()
 
     def get_dialog_parent(self) -> wx.Window:
         if self.controls_frame is not None and self.controls_frame.IsShown():
@@ -3880,13 +3316,6 @@ class MainFrame(wx.Frame):
         return self
 
     def refresh_model_loaded_ui_state(self):
-        # #region agent log
-        self.agent_debug_log(
-            "H6",
-            "refresh_model_loaded_ui_state:entry",
-            "refresh model loaded ui state entry",
-            {"is_model_loaded": self.is_model_loaded()})
-        # #endregion
         if getattr(self.pose_converter, "panel", None) is not None:
             if hasattr(self.pose_converter, "set_panel_enabled"):
                 self.pose_converter.set_panel_enabled(True)
@@ -3905,13 +3334,6 @@ class MainFrame(wx.Frame):
         if getattr(self, "refresh_video_sources_button", None) is not None:
             self.refresh_video_sources_button.Enable(True)
         self.update_load_model_buttons()
-        # #region agent log
-        self.agent_debug_log(
-            "H6",
-            "refresh_model_loaded_ui_state:exit",
-            "refresh model loaded ui state exit",
-            {})
-        # #endregion
 
     def on_output_background_changed(self, event: wx.Event):
         self.last_background_choice = ""
@@ -3931,65 +3353,16 @@ class MainFrame(wx.Frame):
 
     def on_display_transform_control_changed(self, event: Optional[wx.Event] = None):
         control_change_start = time.time()
-        # #region agent log
-        self.agent_debug_log(
-            "H5",
-            "on_display_transform_control_changed:entry",
-            "display transform control changed entry",
-            {})
-        # #endregion
         if hasattr(self, "direction_calibration_interval_panel"):
             self.direction_calibration_interval_panel.Enable(self.enable_direction_calibration_checkbox.GetValue())
         if hasattr(self, "scale_calibration_interval_panel"):
             self.scale_calibration_interval_panel.Enable(self.enable_scale_calibration_checkbox.GetValue())
-        # #region agent log
-        self.agent_debug_log(
-            "H7",
-            "on_display_transform_control_changed:after-enable-panels",
-            "enabled calibration interval panels",
-            {})
-        # #endregion
         self.save_persistent_ui_state()
-        # #region agent log
-        self.agent_debug_log(
-            "H7",
-            "on_display_transform_control_changed:after-save-state",
-            "saved persistent ui state",
-            {})
-        # #endregion
         self.update_display_transform_state(snap_to_target=not self.enable_auto_transform_checkbox.GetValue())
-        # #region agent log
-        self.agent_debug_log(
-            "H7",
-            "on_display_transform_control_changed:after-update-display-transform",
-            "updated display transform state",
-            {})
-        # #endregion
         self.refresh_scale_curve_status()
-        # #region agent log
-        self.agent_debug_log(
-            "H7",
-            "on_display_transform_control_changed:after-refresh-scale-status",
-            "refreshed scale curve status",
-            {})
-        # #endregion
         self.request_scale_curve_repaint(force=True)
-        # #region agent log
-        self.agent_debug_log(
-            "H7",
-            "on_display_transform_control_changed:after-request-repaint",
-            "requested scale curve repaint",
-            {})
-        # #endregion
         if self.last_output_wx_image is not None:
             self.draw_cached_result_image(self.last_banner_text)
-        # #region agent log
-        self.agent_debug_log(
-            "H5",
-            "on_display_transform_control_changed:exit",
-            "display transform control changed exit",
-            {"elapsed_ms": int((time.time() - control_change_start) * 1000)})
-        # #endregion
 
     def calibrate_neutral_clicked(self, event: wx.Event):
         if self.latest_face_screen_motion is None:
@@ -4281,13 +3654,6 @@ class MainFrame(wx.Frame):
         return adjusted_pose
 
     def update_display_transform_state(self, snap_to_target: bool = False) -> bool:
-        # #region agent log
-        self.agent_debug_log(
-            "H8",
-            "update_display_transform_state:entry",
-            "update display transform state entry",
-            {"snap_to_target": snap_to_target})
-        # #endregion
         enabled = self.enable_auto_transform_checkbox.GetValue()
         old_offset_x = self.display_offset_x
         old_offset_y = self.display_offset_y
@@ -4351,13 +3717,6 @@ class MainFrame(wx.Frame):
             or abs(self.display_offset_y - old_offset_y) > 0.25 \
             or abs(self.display_scale - old_scale) > 0.002 \
             or abs(self.display_rotation_deg - old_rotation_deg) > 0.05
-        # #region agent log
-        self.agent_debug_log(
-            "H8",
-            "update_display_transform_state:exit",
-            "update display transform state exit",
-            {"changed": changed, "mode": mode})
-        # #endregion
 
         return changed
 
@@ -4446,13 +3805,6 @@ class MainFrame(wx.Frame):
 
     def update_source_image_bitmap(self):
         source_bitmap_start = time.time()
-        # #region agent log
-        self.agent_debug_log(
-            "H5",
-            "update_source_image_bitmap:entry",
-            "update source image bitmap entry",
-            {"has_source_image": self.wx_source_image is not None})
-        # #endregion
         if hasattr(self, "source_image_panel"):
             source_panel_size = self.source_image_panel.GetClientSize()
             width = max(1, source_panel_size.x)
@@ -4476,13 +3828,6 @@ class MainFrame(wx.Frame):
         del dc
         if hasattr(self, "source_image_panel"):
             self.source_image_panel.Refresh(False)
-        # #region agent log
-        self.agent_debug_log(
-            "H5",
-            "update_source_image_bitmap:exit",
-            "update source image bitmap exit",
-            {"elapsed_ms": int((time.time() - source_bitmap_start) * 1000)})
-        # #endregion
 
     def draw_nothing_yet_string(self, dc, message: str = "Nothing yet!"):
         canvas_width, canvas_height = dc.GetSize()
@@ -4724,13 +4069,7 @@ class MainFrame(wx.Frame):
         if hasattr(self, "fps_text"):
             self.set_wrapped_static_text_if_changed(self.fps_text, "预览 / Preview\nNo face input")
 
-    def update_result_image_bitmap(self, event: Optional[wx.Event] = None):
-        self.ensure_result_bitmap_size()
-        if getattr(self.pose_converter, "refresh_audio_input_runtime", None) is not None:
-            # Before a model is loaded, skip high-frequency audio UI refresh to avoid
-            # relayout churn on the model-input column that breaks hover-to-wheel arming.
-            if self.is_model_loaded() and (self.poser is None or self.mediapipe_face_pose is None):
-                self.pose_converter.refresh_audio_input_runtime(time.time())
+    def tick_tha4_student_source(self) -> Optional[str]:
         if self.poser is None:
             self.initialize_output_bitmap()
             dc = wx.MemoryDC()
@@ -4739,13 +4078,13 @@ class MainFrame(wx.Frame):
             dc.SelectObject(wx.NullBitmap)
             if getattr(self, "output_frame", None) is not None:
                 self.output_frame.result_image_panel.Refresh(False)
-            return
+            return "no_model"
 
         display_transform_changed = self.update_display_transform_state()
         if self.mediapipe_face_pose is None:
             if display_transform_changed and self.last_output_wx_image is not None:
                 self.draw_cached_result_image(self.last_banner_text)
-            return
+            return "no_face"
 
         current_pose = self.pose_converter.convert(self.mediapipe_face_pose)
         current_pose = self.apply_negative_tilt_limit_to_pose(current_pose)
@@ -4757,28 +4096,39 @@ class MainFrame(wx.Frame):
             dc.SelectObject(wx.NullBitmap)
             if getattr(self, "output_frame", None) is not None:
                 self.output_frame.result_image_panel.Refresh(False)
-            return
+            return "no_model"
 
         pose_changed = self.last_pose is None or self.last_pose != current_pose
         background_changed = self.last_background_choice != self.get_output_background_signature()
         banner_changed = self.last_banner_text is not None
-        rendered_pose = False
 
         if pose_changed or self.last_output_wx_image is None or background_changed:
             self.last_pose = current_pose
             self.render_pose_to_result_bitmap(current_pose)
-            rendered_pose = True
-        elif display_transform_changed or banner_changed:
+            return "rendered"
+        if display_transform_changed or banner_changed:
             self.draw_cached_result_image(None)
-        else:
-            return
+            return "cached"
+        return "unchanged"
 
-        if rendered_pose:
+    def update_result_image_bitmap(self, event: Optional[wx.Event] = None):
+        self.ensure_result_bitmap_size()
+        if getattr(self.pose_converter, "refresh_audio_input_runtime", None) is not None:
+            if self.is_model_loaded() and self.get_image_source_mode() == IMAGE_SOURCE_THA4 and (
+                    self.poser is None or self.mediapipe_face_pose is None):
+                self.pose_converter.refresh_audio_input_runtime(time.time())
+
+        tick_result = self.active_image_source.tick(self)
+
+        if tick_result == "rendered" and self.is_model_loaded():
             time_now = time.time_ns()
             if self.last_update_time is not None:
                 elapsed_time = time_now - self.last_update_time
                 fps = 1.0 / (elapsed_time / 10 ** 9)
-                if self.torch_source_image is not None:
+                if self.get_image_source_mode() == IMAGE_SOURCE_THA4:
+                    if self.torch_source_image is not None:
+                        self.fps_statistics.add_fps(fps)
+                elif self.active_image_source.is_ready(self):
                     self.fps_statistics.add_fps(fps)
                 if hasattr(self, "fps_text"):
                     self.set_wrapped_static_text_if_changed(
@@ -4786,15 +4136,9 @@ class MainFrame(wx.Frame):
             self.last_update_time = time_now
 
     def load_model_from_path(self, character_model_json_file_name: str) -> bool:
+        if self.get_image_source_mode() != IMAGE_SOURCE_THA4:
+            switch_image_source(self, IMAGE_SOURCE_THA4)
         load_start = time.time()
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H15",
-            location="load_model_from_path:entry",
-            message="model load started",
-            data={"path": character_model_json_file_name})
-        # #endregion
         latest_face_screen_motion = None if self.latest_face_screen_motion is None else FaceScreenMotion(
             center_x=self.latest_face_screen_motion.center_x,
             center_y=self.latest_face_screen_motion.center_y,
@@ -4841,24 +4185,8 @@ class MainFrame(wx.Frame):
                 self.source_image_panel.Update()
             if getattr(self, "output_frame", None) is not None and self.output_frame:
                 self.output_frame.result_image_panel.Update()
-            # #region agent log
-            self.debug_mode_log(
-                run_id="pre-fix",
-                hypothesis_id="H15",
-                location="load_model_from_path:success",
-                message="model load finished successfully",
-                data={"elapsed_ms": int((time.time() - load_start) * 1000)})
-            # #endregion
             return True
         except Exception:
-            # #region agent log
-            self.debug_mode_log(
-                run_id="pre-fix",
-                hypothesis_id="H15",
-                location="load_model_from_path:exception",
-                message="model load raised exception",
-                data={"elapsed_ms": int((time.time() - load_start) * 1000)})
-            # #endregion
             self.refresh_model_loaded_ui_state()
             message_dialog = wx.MessageDialog(
                 self.get_dialog_parent(), "Could not load character model " + character_model_json_file_name, "Poser", wx.OK)
@@ -4867,14 +4195,6 @@ class MainFrame(wx.Frame):
             return False
 
     def load_model(self, event: wx.Event):
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H14",
-            location="load_model:entry",
-            message="load another model clicked",
-            data={})
-        # #endregion
         self.refresh_video_source_choice_async(connect_after=True, trigger_source="manual")
         dir_name = "data/character_models"
         file_dialog = wx.FileDialog(self.get_dialog_parent(), "Choose a model", dir_name, "", "*.yaml", wx.FD_OPEN)
@@ -4884,14 +4204,6 @@ class MainFrame(wx.Frame):
         file_dialog.Destroy()
 
     def load_last_model(self, event: wx.Event):
-        # #region agent log
-        self.debug_mode_log(
-            run_id="pre-fix",
-            hypothesis_id="H14",
-            location="load_last_model:entry",
-            message="load last model clicked",
-            data={"has_last_model_path": bool(self.last_loaded_model_path)})
-        # #endregion
         self.refresh_video_source_choice_async(connect_after=True, trigger_source="manual")
         if not self.last_loaded_model_path:
             return
@@ -4909,7 +4221,6 @@ class MainFrame(wx.Frame):
             message_dialog.Destroy()
             return
         self.load_model_from_path(self.last_loaded_model_path)
-
 
 if __name__ == "__main__":
     try:

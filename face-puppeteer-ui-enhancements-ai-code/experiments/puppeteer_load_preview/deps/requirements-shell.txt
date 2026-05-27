@@ -1,0 +1,15 @@
+# Load Preview shared shell — camera pose (MediaPipe), wx UI, THA4 Student inference.
+# Target venv: talking-head-anime-4-demo/venv  (Python 3.10.x)
+#
+# Base torch/wx/tha4 src: install via poetry pyproject.toml first.
+# This file pins packages that break easily when THA3 deps are added.
+
+mediapipe==0.10.9
+protobuf==3.20.3
+wxPython>=4.2.1,<4.3
+opencv-python>=4.8.1,<5
+numpy>=1.26,<2
+scipy>=1.12,<2
+Pillow>=9.4,<10
+omegaconf>=2.3,<3
+einops>=0.6,<1
