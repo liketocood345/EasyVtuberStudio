@@ -5,8 +5,8 @@ param([switch]$Fork)
 $shortcutPath = "C:\Users\WXH\Desktop\run_load_preview_puppeteer.bat - 快捷方式.lnk"
 
 if ($Fork) {
-    $batPath = "E:\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\run_load_preview_puppeteer.bat"
-    $workDir = "E:\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview"
+    $batPath = "E:\tha4fork\run_load_preview_puppeteer.bat"
+    $workDir = "E:\tha4fork"
     $description = "THA4 Load Preview (fork)"
 } else {
     $batPath = "E:\THA4_bundle_bai_custom\experiments\puppeteer_load_preview\run_load_preview_puppeteer.bat"

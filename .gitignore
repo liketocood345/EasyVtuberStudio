@@ -3,6 +3,7 @@
 
 # Log file
 *.log
+run_load_preview_runtime*.log
 
 # BlueJ files
 *.ctxt
@@ -50,6 +51,9 @@ temp/
 */*/bin/
 
 venv/*
+
+# THA3 ONNX bundle (large; populate via deps/tha3/populate_tha3_bundle.ps1)
+deps/tha3/models/**/*.onnx
 
 # io dump to ABCI tasks
 *.o*

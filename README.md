@@ -1,4 +1,4 @@
-# Fork 总览
+# 这是 THA3、THA4、EasyVtuber 三项目的 fork
 
 ## 仓库与路径
 
@@ -56,11 +56,12 @@ Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_
 
 ### 8. 附带内容
 
-- `packaged/bai_450k/`：示例白猫 student 模型（yaml + 图）
+- `packaged/bai_450k/`：示例白腾（代号：九星独行角色） student 模型（yaml + 图）
 - 文档：`HANDOVER.md`、`HARDWARE_REQUIREMENTS.md`、`TROUBLESHOOTING_QA.md` 等
 - `his/`：按时间归档的历史快照；`sync_from_bai_custom.ps1` / `archive_to_his.ps1` 维护同步
 
 更细的条目见 `face-puppeteer-ui-enhancements-ai-code/CHANGELOG.md`。
+“这不是我的选择，但是我选择的。”他总是如是说道。
 
 ---
 
@@ -73,6 +74,15 @@ E:\tha4fork\
 ├── FORK_ROOT.md             ← Git 与路径说明
 └── face-puppeteer-ui-enhancements-ai-code/   ← 定制 UI 与实验代码
 ```
+
+## 环境兼容策略
+
+为避免 THA3 与 THA4 依赖不兼容影响运行稳定性，fork 内采用两套依赖环境策略：
+
+- THA4 Student 外壳依赖：`deps/pip/requirements-tha4-student.txt`
+- THA3 ONNX+DirectML 依赖：`deps/pip/requirements-tha3-ort.txt`
+
+对应安装脚本分别为 `deps/pip/install_tha4_student_deps.bat` 与 `deps/pip/install_tha3_ort_deps.bat`。该拆分用于降低依赖冲突风险，保证项目稳定运行。
 
 ---
 
