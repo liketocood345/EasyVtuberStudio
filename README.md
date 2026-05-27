@@ -61,6 +61,7 @@ Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_
 - `his/`：按时间归档的历史快照；`sync_from_bai_custom.ps1` / `archive_to_his.ps1` 维护同步
 
 更细的条目见 `face-puppeteer-ui-enhancements-ai-code/CHANGELOG.md`。
+
 “这不是我的选择，但是我选择的。”他总是如是说道。
 
 ---
@@ -72,6 +73,7 @@ E:\tha4fork\
 ├── README.md                ← 本文件（Fork 总览，GitHub 首页展示）
 ├── READMEfrom-main.md       ← 上游 THA4 demo 原说明
 ├── FORK_ROOT.md             ← Git 与路径说明
+├── 》》》》start《《《《.bat    ← 一键启动入口（转发到 run_load_preview_puppeteer.bat）
 └── face-puppeteer-ui-enhancements-ai-code/   ← 定制 UI 与实验代码
 ```
 
@@ -92,8 +94,7 @@ E:\tha4fork\
 |------|------|
 | `5bfecb5` | 新增 `face-puppeteer-ui-enhancements-ai-code/` 与 `FORK_ROOT.md` |
 
-在线浏览定制包：  
-https://github.com/liketocood345/talking-head-anime-4-demo/tree/main/face-puppeteer-ui-enhancements-ai-code
+
 
 ---
 
