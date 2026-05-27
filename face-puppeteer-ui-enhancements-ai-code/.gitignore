@@ -1,0 +1,16 @@
+# Runtime / local state
+**/load_preview_ui_state.json
+**/run_*_runtime.log
+**/__pycache__/
+**/*.pyc
+.venv/
+venv/
+
+# Large training artifacts (keep packaged model yaml only in repo)
+packaged/**/checkpoint/
+*.pt
+*.ckpt
+
+# OS
+Thumbs.db
+Desktop.ini
