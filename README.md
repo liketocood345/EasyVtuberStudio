@@ -1,3 +1,5 @@
+[English Guide for Native English Speakers](README-EN.md)
+
 # 这是 THA3、THA4、EasyVtuber 三项目的 fork
 
 **新 Agent 请先读 [HANDOVER.md](HANDOVER.md)。**

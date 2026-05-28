@@ -7,23 +7,26 @@ Fork staging repository for THA4 MediaPipe puppeteer UI work.
 ## Layout
 
 ```
-face-puppeteer-ui-enhancements-ai-code/
+E:\tha4fork/
 ├── README.md
-├── CHANGELOG.md
-├── HARDWARE_REQUIREMENTS.md                # 硬件需求（单独 / 与 OBS·直播助手同开）
-├── TROUBLESHOOTING_QA.md                   # 排障 Q&A + 易误解的正常表现
-├── BACKUP.md                               # backup/update rules
+├── README-detail.md
+├── READMEfrom-main.md
+├── FORK_ROOT.md
 ├── HANDOVER.md
-├── archive_to_his.ps1                      # root → his/yyyy-MM-dd_HH-mm-ss/
-├── sync_from_bai_custom.ps1
-├── experiments/puppeteer_load_preview/
-├── talking-head-anime-4-demo/src/tha4/mocap/...
-├── packaged/bai_450k/
-└── his/
-    ├── README.md
-    ├── CHANGELOG.md
-    ├── 2026-05-27/                         # legacy (day only)
-    └── 2026-05-27_14-30-45/                # example (to the second)
+├── CHANGELOG.md
+├── TROUBLESHOOTING_QA.md
+├── HARDWARE_REQUIREMENTS.md
+├── BACKUP.md
+├── run.bat
+├── run_load_preview_puppeteer.bat
+├── 》》》》start《《《《.bat
+├── face-puppeteer-ui-enhancements-ai-code/ # 定制 UI 与实验脚本集合
+├── src/
+├── docs/
+├── deps/
+├── data/
+├── tools/
+└── venv/
 ```
 
 ## 更新与备份规则
@@ -37,11 +40,6 @@ face-puppeteer-ui-enhancements-ai-code/
 | 推荐顺序 | `archive_to_his.ps1` → `sync_from_bai_custom.ps1` |
 
 详细步骤与恢复说明见 **[BACKUP.md](BACKUP.md)**。
-
-```bat
-powershell -ExecutionPolicy Bypass -File E:\face-puppeteer-ui-enhancements-ai-code\archive_to_his.ps1
-powershell -ExecutionPolicy Bypass -File E:\face-puppeteer-ui-enhancements-ai-code\sync_from_bai_custom.ps1
-```
 
 ## 硬件需求
 

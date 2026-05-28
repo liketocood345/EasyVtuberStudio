@@ -8,9 +8,11 @@ $BundleRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $BundleRoot ".." "..")).Path
 
 if (-not $SourceRoot) {
+    $repoParent = (Resolve-Path (Join-Path $RepoRoot "..")).Path
     $candidates = @(
-        "F:\EasyVtuber\EasyVtuber_v0.8.1\EasyVtuber_v0.8.1",
-        "E:\EasyVtuber\EasyVtuber_v0.8.1\EasyVtuber_v0.8.1"
+        (Join-Path $repoParent "EasyVtuber\EasyVtuber_v0.8.1\EasyVtuber_v0.8.1"),
+        (Join-Path $repoParent "EasyVtuber"),
+        (Join-Path $RepoRoot "external\EasyVtuber\EasyVtuber_v0.8.1\EasyVtuber_v0.8.1")
     )
     foreach ($c in $candidates) {
         if (Test-Path (Join-Path $c "tha3")) {
