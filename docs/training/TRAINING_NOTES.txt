@@ -1,0 +1,30 @@
+bai custom body training — 450k milestone package
+=================================================
+
+Packaged: manual script from THA4_bundle_bai_custom
+Train prefix: E:\THA4_bundle\distill_outputs\bai (junction)
+
+Weights
+-------
+face_morpher.pt  <= face_morpher/checkpoint/0010  (1,000,000 steps, unchanged)
+body_morpher.pt   <= body_morpher/checkpoint/0045  (450,000 steps, custom schedule)
+character.png     <= data/images/bai.png
+
+Custom body schedule (THA4_bundle_bai_custom distiller_config)
+-------------------------------------------------------------
+Phase 1 upper 450k: low color_change (0.4), low blended (0.5) — anti eye gray smear
+Phase 2 upper 650k: (not run in this package)
+Phase 3 upper 800k: (not run in this package)
+Checkpoint interval: 10,000 examples
+
+Next steps if eyes still smear in puppeteer
+------------------------------------------
+- Compare older body: package_compare_body_ckpt.ps1 (0001/0002/0003)
+- Continue: run_body_train.bat to 800k, repack with BodyCheckpoint 0080
+- Limit pose range in manual poser / puppeteer
+
+Load in demo
+------------
+cd E:\THA4_bundle_bai_custom\talking-head-anime-4-demo
+bin\run.bat src\tha4\app\character_model_manual_poser.py
+Load Model -> E:\THA4_bundle_bai_custom\packaged\bai_450k\character_model\character_model.yaml

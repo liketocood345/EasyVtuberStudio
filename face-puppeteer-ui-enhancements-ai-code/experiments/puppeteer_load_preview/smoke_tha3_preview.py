@@ -11,19 +11,26 @@ EXPERIMENT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(EXPERIMENT_DIR))
 
 from tha3_engine import Tha3Engine
-from tha3_paths import find_repo_root, get_demo_src_path, get_ezvtuber_images_root
+from tha3_paths import get_ezvtuber_images_root
 from tha3_pose_adapter import neutral_tha3_pose
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    default_png = get_ezvtuber_images_root() / "lambda_00.png"
-    parser.add_argument("--png", default=str(default_png), help="512x512 RGBA character PNG")
+    parser.add_argument(
+        "--png",
+        default=str(get_ezvtuber_images_root() / "lambda_00.png"),
+        help="512x512 RGBA character PNG",
+    )
     parser.add_argument("--variant", default="separable_half")
-    parser.add_argument("--out", default=str(EXPERIMENT_DIR / "smoke_tha3_output.png"))
+    parser.add_argument(
+        "--out",
+        default=str(EXPERIMENT_DIR / "smoke_tha3_output.png"),
+    )
     args = parser.parse_args()
 
-    sys.path.insert(0, str(get_demo_src_path(find_repo_root(EXPERIMENT_DIR))))
+    demo_src = Path(r"E:\THA4_bundle_bai_custom\talking-head-anime-4-demo\src")
+    sys.path.insert(0, str(demo_src))
     from tha4.mocap.mediapipe_face_pose_converter_00 import MediaPoseFacePoseConverter00
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -39,7 +46,7 @@ def main() -> int:
         print("smoke_tha3_failed", engine.last_error or "render returned None")
         return 1
 
-    wx_image.SaveFile(args.out, wx.BitmapType(wx.BITMAP_TYPE_PNG))
+    wx_image.SaveFile(args.out, wx.BITMAP_TYPE_PNG)
     print("smoke_tha3_ok", args.out, "device=", device, "backend=", engine._backend_kind)
     return 0
 

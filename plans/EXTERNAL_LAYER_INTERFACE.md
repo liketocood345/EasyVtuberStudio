@@ -1,7 +1,7 @@
 # 外挂图层系统对接口说明
 
-> 从活跃仓库 `E:\THA4_bundle_bai_custom` 整理，对应实现见 `external_layer_output_bridge.py`。  
-> 总计划见 [layer-runtime-replan_3a393fc1.plan.md](layer-runtime-replan_3a393fc1.plan.md)；交接索引见 [HANDOVER.md](HANDOVER.md) §7。
+> 研发主仓 `E:\tha4fork-develop`。实现见 `face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/external_layer_output_bridge.py`。  
+> 总计划见 [layer-runtime-replan_3a393fc1.plan.md](layer-runtime-replan_3a393fc1.plan.md)；交接见 [../HANDOVER.md](../HANDOVER.md) §7。
 
 ## 1. 用途
 

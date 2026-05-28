@@ -1,20 +1,22 @@
 # 这是 THA3、THA4、EasyVtuber 三项目的 fork
 
+**新 Agent 请先读 [HANDOVER.md](HANDOVER.md)。**
+
 ## 仓库与路径
 
 | 项 | 说明 |
 |----|------|
-| 本地总库 | `E:\tha4fork` |
-| **研发同步仓库** | `E:\tha4fork-develop`（本目录；计划文档与活跃开发同步） |
+| **研发主仓（本目录）** | `E:\tha4fork-develop` — 日常开发、计划、Git 推送 |
+| 发布总库 | `E:\tha4fork`（稳定后再合并） |
 | Fork 远程 | https://github.com/liketocood345/EasyVtuber-with-THA3-THA4 |
 | 官方上游 | https://github.com/pkhungurn/talking-head-anime-4-demo |
-| 活跃开发 | `E:\THA4_bundle_bai_custom`（改完再同步进总库） |
 | 定制代码包 | `face-puppeteer-ui-enhancements-ai-code/` |
-| 计划与对接文档 | [plans/](plans/)（从活跃仓库提取） |
+| **新 Agent 入口** | **[HANDOVER.md](HANDOVER.md)** |
+| 计划与对接 | [plans/](plans/) |
 
 Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_ROOT.md)。
 
-计划文档同步：在仓库根执行 `sync_plans_from_bai_custom.ps1`（来源 `E:\THA4_bundle_bai_custom`）。
+> ~~`E:\THA4_bundle_bai_custom`~~ 已废弃，内容已迁入本仓（见 HANDOVER 附录）。
 
 ---
 
@@ -108,7 +110,7 @@ E:\tha4fork-develop\
 
 ## 日常流程
 
-1. 在 `E:\THA4_bundle_bai_custom` 开发、跑 `run_load_preview_puppeteer.bat` 验证  
-2. 需要留档时：在定制包目录运行 `archive_to_his.ps1`，再 `sync_from_bai_custom.ps1`  
-3. 将更新后的 `face-puppeteer-ui-enhancements-ai-code` 拷入或同步到 `E:\tha4fork`  
-4. `git add` → `commit` → `git push origin main`
+1. 在 **`E:\tha4fork-develop`** 开发；启动：`》》》》start《《《《.bat`  
+2. 新 Agent 先读 [HANDOVER.md](HANDOVER.md)  
+3. 需要留档时：在 `face-puppeteer-ui-enhancements-ai-code` 运行 `archive_to_his.ps1`  
+4. 稳定后合并到 `E:\tha4fork` 发布总库 → `git push origin main`

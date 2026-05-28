@@ -1,17 +1,17 @@
 # Desktop shortcut for Load Preview puppeteer.
-# Default: active dev (bai_custom). Pass -Fork to point at fork repo instead.
-param([switch]$Fork)
+# Default: tha4fork-develop. Pass -PublishFork to point at E:\tha4fork instead.
+param([switch]$PublishFork)
 
 $shortcutPath = "C:\Users\WXH\Desktop\run_load_preview_puppeteer.bat - 快捷方式.lnk"
 
-if ($Fork) {
+if ($PublishFork) {
     $batPath = "E:\tha4fork\run_load_preview_puppeteer.bat"
     $workDir = "E:\tha4fork"
-    $description = "THA4 Load Preview (fork)"
+    $description = "THA4 Load Preview (publish fork)"
 } else {
-    $batPath = "E:\THA4_bundle_bai_custom\experiments\puppeteer_load_preview\run_load_preview_puppeteer.bat"
-    $workDir = "E:\THA4_bundle_bai_custom\experiments\puppeteer_load_preview"
-    $description = "THA4 Load Preview (bai_custom active dev)"
+    $batPath = "E:\tha4fork-develop\》》》》start《《《《.bat"
+    $workDir = "E:\tha4fork-develop"
+    $description = "THA4 Load Preview (tha4fork-develop)"
 }
 
 $shell = New-Object -ComObject WScript.Shell

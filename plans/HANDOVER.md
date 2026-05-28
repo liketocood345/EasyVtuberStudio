@@ -1,250 +1,230 @@
-# Project Handover: Face Puppeteer UI Enhancements (AI Code Draft)
+# 项目交接说明（新 Agent 主入口）
 
-## 1) Goal
-Deliver an “EasyVtuber-like” face-driven puppeteering UI (MediaPipe -> THA4 pose + post-render display transforms), with improved UX and reduced UI disruption:
+> **请从本文件开始阅读。** 本仓库 `E:\tha4fork-develop` 是 THA3 / THA4 / EasyVtuber 集成的**唯一研发主仓**（原 `E:\THA4_bundle_bai_custom` 内容已迁入，可删除旧目录）。  
+> 远程：https://github.com/liketocood345/EasyVtuber-with-THA3-THA4
 
-- Compact startup UI (3 buttons + hint text).
-- Full controls window created lazily on first open.
-- Character output stays responsive via a separate borderless output window.
-- Mouth input mode: face capture vs audio-driven (mic / system loopback) with oscilloscope.
-- Breathing reactive logic.
-- Nonlinear scale curve visualization + controls.
-- Tilt/rotation mapping controls and mirror as a final independent step.
+---
 
-This folder is a draft “fork repository staging area” prepared under `E:\`.
+## 0) 新 Agent 5 分钟上手
 
-## 1.1) Fork 总库（Git 主仓库）
+### 0.1 仓库角色
 
-| 项 | 值 |
-|----|-----|
-| 本地路径 | `E:\tha4fork` |
-| Fork 远程 | https://github.com/liketocood345/talking-head-anime-4-demo |
-| 上游官方 | https://github.com/pkhungurn/talking-head-anime-4-demo |
+| 路径 | 用途 |
+|------|------|
+| **`E:\tha4fork-develop`** | **日常开发与 Git 提交（本仓）** |
+| `E:\tha4fork` | 对外发布总库（稳定后再合并，勿与 develop 混用） |
+| ~~`E:\THA4_bundle_bai_custom`~~ | **已废弃**，内容已迁入本仓 |
 
-本地已配置：`origin` → fork，`upstream` → 官方。说明见 `E:\tha4fork\FORK_ROOT.md`。
-
-当前定制运行/实验仍在 `E:\THA4_bundle_bai_custom\`；与总库同步时需将改动合并进 `E:\tha4fork` 后再 push。
-
-## 2) Target (fork draft) location
-**`E:\face-puppeteer-ui-enhancements-ai-code\`**
-
-Key paths in this draft:
-- `README.md` (this draft summary)
-- `experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py`
-- `experiments\puppeteer_load_preview\README.txt`
-- `experiments\puppeteer_load_preview\run_load_preview_puppeteer.bat`
-- `experiments\puppeteer_load_preview\smoke_load_preview.py` (if present)
-- `talking-head-anime-4-demo\src\tha4\mocap\mediapipe_face_pose_converter_00.py`
-- `packaged\bai_450k\...` (bai packaged model)
-
-## 3) Source / working area (original files modified)
-All code changes were made in the current working environment under `E:\THA4_bundle_bai_custom\`:
-
-- `E:\THA4_bundle_bai_custom\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py`
-- `E:\THA4_bundle_bai_custom\talking-head-anime-4-demo\src\tha4\mocap\mediapipe_face_pose_converter_00.py`
-
-Then the modified files and model package were copied into the draft fork folder above.
-
-## 4) Backup / “revert” strategy
-Because this workspace is not guaranteed to be a git repo, the safest revert points are:
-
-1. **Draft copy (recommended comparison/revert base)**  
-   Compare current working files to:
-   - `E:\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py`
-   - `E:\face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo\src\tha4\mocap\mediapipe_face_pose_converter_00.py`
-
-2. **Original source files**  
-   Original locations remain in `E:\THA4_bundle_bai_custom\...`.
-
-If you need the *pre-change* versions, check whether the repo has prior backups (e.g. `.orig` files) or consult your prior snapshots; no new `.bak` files were created specifically in this handover step beyond the draft copy.
-
-## 5) Change log (high-level)
-### 5.1 Compact launcher + lazy “full controls” window
-Implemented in:
-`character_model_mediapipe_puppeteer_load_preview.py`
-
-New/changed UI entry flow:
-- Startup shows **only 3 buttons**:
-  - `load_last_model` (“加载上次模型 / Load Last Model”)
-  - quick calibrate head orientation (“校正头部朝向 / Calibrate Head Orientation”)
-  - `toggle_full_controls_button` (“切换到完整调参窗 / Open Full Controls”)
-- A hint text is added under the 3rd button:
-  - `加载新模型请点展开完整 / To load a new model, open full controls`
-- Full controls window is created lazily on first open:
-  - Class introduced: `ControlsFrame`
-  - Method introduced: `create_controls_frame()`
-  - Switch methods:
-    - `show_full_controls_window()`
-    - `show_compact_launcher()`
-
-Important: the capture loop and output update timers continue running; only UI controls are created/visible after expansion.
-
-### 5.2 UI decoupling: “no controls yet” runtime safety
-When full controls are not created yet:
-- Some logic must not assume wx widgets exist.
-- Therefore “headless-safe” stubs were introduced for values:
-  - `ValueState` with `GetValue()`, `SetValue()`, `Enable()`, `IsEnabled()`
-  - `SelectionState` with `GetSelection()`, `SetSelection()`, `GetCount()`, `Enable()`, `IsEnabled()`
-
-Guards were added before touching wx widgets:
-- `refresh_auto_transform_status()`: early return if `auto_transform_status_text` missing.
-- `refresh_scale_curve_status()`: early return if `scale_curve_status_text` missing.
-- `render_default_pose_load_preview()`: only updates `fps_text` if it exists.
-- `update_capture_panel()`: refresh webcam panel only if created.
-
-Rotation labels:
-- `rotation_labels` / `rotation_value_labels` dicts are initialized unconditionally.
-- Updates to `rotation_value_labels[HEAD_X|HEAD_Y|HEAD_Z]` are guarded by membership checks.
-
-Dialogs parent selection:
-- `get_dialog_parent()` chooses `controls_frame` if visible; otherwise uses main frame.
-
-### 5.3 Mouth/Breathing collapsible style & audio device name fixes
-Implemented in:
-`mediapipe_face_pose_converter_00.py`
-
-Corrections included:
-- Ensured the intended style consistency between “Breathing” and “Mouth Input” sections (no accidental style inversion).
-- Audio status now includes the actual device name:
-  - `self.audio_device_name` initialized
-  - `get_audio_stream_settings()` returns both `status_message` and `device_name`
-  - `refresh_audio_mouth_status_text()` includes `设备 / Device: ...`
-
-Also:
-- `set_panel_enabled()` now enables/disables the correct breathing container (`breathing_panel`), matching the reverted breathing UI style.
-
-## 6) Key identifiers / variables (for new agent)
-### 6.1 Main UI controller script
-File: `experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py`
-
-Main added types:
-- `class ValueState`
-- `class SelectionState`
-- `class ControlsFrame(wx.Frame)`
-
-Main added/used members:
-- `self.controls_frame` (lazy full controls window instance)
-- `self.compact_launcher_panel`
-- `self.full_controls_expanded` (bool)
-- Buttons:
-  - `quick_load_last_model_button`
-  - `quick_calibrate_head_orientation_button`
-  - `toggle_full_controls_button`
-- Switch methods:
-  - `show_full_controls_window()`
-  - `show_compact_launcher()`
-
-Headless safety members:
-- `self.rotation_labels`
-- `self.rotation_value_labels`
-
-### 6.2 Pose converter script (Breathing/Mouth + audio)
-File: `talking-head-anime-4-demo\src\tha4\mocap\mediapipe_face_pose_converter_00.py`
-
-Main added/updated members:
-- `self.audio_device_name`
-
-Main methods touched:
-- `get_audio_stream_settings()`
-- `ensure_audio_stream_state()`
-- `refresh_audio_mouth_status_text()`
-- `set_panel_enabled()`
-
-## 7) External layer output toggle (built-in output window hide)
-
-Implemented in `experiments\puppeteer_load_preview\` (2026-05-27):
-
-| Item | Location |
-|------|----------|
-| UI checkbox | Postprocess panel: **向外挂图层系统输出 / Output to External Layer System** |
-| Persistence key | `load_preview_ui_state.json` → `external_layer_output_enabled` (bool) |
-| Bridge module | `external_layer_output_bridge.py` |
-| Main integration | `character_model_mediapipe_puppeteer_load_preview.py` |
-
-### Behavior
-
-- **Unchecked (default):** built-in borderless `OutputFrame` is created/shown as before; OBS should capture **THA4 Output / 输出**.
-- **Checked:** built-in `OutputFrame` is hidden (`Show(False)`); rendering still runs into `result_image_bitmap` in memory.
-- Clicking controls no longer calls `Raise()` on the hidden output window.
-- Saved `output_frame_*` geometry is still collected when the frame object exists, but the window stays hidden while external mode is on.
-
-### Bridge directory (reserved for external compositor)
-
-Next to `load_preview_ui_state.json`:
-
-```
-experiments\puppeteer_load_preview\external_layer_output\
-  contract.json   # frame size / format contract (written when mode enabled)
-  status.json     # per-frame metadata (sequence, transforms, background; updated each draw)
-```
-
-`ExternalLayerOutputBridge.publish_composite_frame()` currently writes **metadata only** (`frame_rgba_path` and `layer_state_path` are `null` placeholders).
-
-### External compositor integration checklist (not implemented here)
-
-1. Poll or watch `status.json` for `frame_sequence` changes.
-2. Read `contract.json` once for canvas size (`width` / `height`, default 768×768).
-3. Future: read RGBA from `frame_rgba_path` or shared memory field added to `status.json`.
-4. Future: read layer manifest from `layer_state_path` when `basic_layers_state` / `advanced_layers_state` exist.
-5. OBS / capture target becomes the **external compositor window**, not THA4 Output.
-
-### Related plan
-
-See `plans/layer-runtime-replan_3a393fc1.plan.md`（或同目录副本）todos `L0-external-output-toggle` and `L0-external-output-bridge`；对接字段见 `plans/EXTERNAL_LAYER_INTERFACE.md`。
-
-## 8) Dual image source modes (THA3 / THA4 Student)
-
-Implemented in `experiments\puppeteer_load_preview\` (2026-05-28):
-
-| Item | Location |
-|------|----------|
-| Architecture | `image_sources/` — `Tha4StudentSource` / `Tha3Source` black boxes |
-| THA3 engine | `tha3_engine.py` (PyTorch `.pt` or ONNX+DirectML) |
-| Mode UI | Postprocess panel: **图像来源 / Image Source** radio + THA3 PNG loader |
-| Persistence | `image_source_mode`, `tha3_character_png`, `tha3_model_variant` |
-| Vendor junctions | `setup_tha3_vendor.ps1` → `vendor\easyvtuber\` |
-| Per-source deps | `deps\` — `requirements-tha4-student.txt`, `requirements-tha3-ort.txt`, install `.bat` |
-| Docs | `THA3_INTEGRATION.md`, `deps\README.md` |
-
-### Behavior
-
-- Only **one** source runs at a time; switching calls `stop()` on the old source before `start()` on the new one.
-- **THA4 Student:** existing yaml + distilled model path (unchanged semantics).
-- **THA3:** 512×512 RGBA PNG + model variant; no distillation required; heavier runtime.
-- Shared shell: `draw_result_wx_image()`, output window, display transforms, external layer bridge.
-
-### Verification
+### 0.2 一键启动
 
 ```bat
-cd E:\THA4_bundle_bai_custom\talking-head-anime-4-demo
+cd /d E:\tha4fork-develop
+》》》》start《《《《.bat
+```
+
+等价于根目录 `run_load_preview_puppeteer.bat`（自动解析 `face-puppeteer-ui-enhancements-ai-code` 与 `venv`）。
+
+### 0.3 主代码路径（本仓）
+
+| 用途 | 相对路径 |
+|------|----------|
+| 主 UI / 合成 | `face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/character_model_mediapipe_puppeteer_load_preview.py` |
+| 外挂 bridge | `.../external_layer_output_bridge.py` |
+| 面捕 / 呼吸 / 嘴部 | `face-puppeteer-ui-enhancements-ai-code/talking-head-anime-4-demo/src/tha4/mocap/mediapipe_face_pose_converter_00.py` |
+| UI 状态 | `.../puppeteer_load_preview/load_preview_ui_state.json` |
+| 外挂运行时 JSON | `.../puppeteer_load_preview/external_layer_output/{contract,status}.json` |
+| THA3 依赖与资产 | 仓库根 `deps/tha3/`、`deps/pip/` |
+| 环境安装 | `deps/pip/install_all_image_source_deps.bat` |
+
+### 0.4 延伸阅读（按需）
+
+| 文档 | 何时读 |
+|------|--------|
+| [plans/layer-runtime-replan_3a393fc1.plan.md](plans/layer-runtime-replan_3a393fc1.plan.md) | 做多图层 / L1–L3 功能前（先读「交接摘要」「当前代码现实」） |
+| [plans/EXTERNAL_LAYER_INTERFACE.md](plans/EXTERNAL_LAYER_INTERFACE.md) | 做外挂合成器对接 |
+| [face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/THA3_INTEGRATION.md](face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/THA3_INTEGRATION.md) | THA3 立绘黑盒 |
+| [face-puppeteer-ui-enhancements-ai-code/TROUBLESHOOTING_QA.md](face-puppeteer-ui-enhancements-ai-code/TROUBLESHOOTING_QA.md) | 排障 |
+| [face-puppeteer-ui-enhancements-ai-code/HARDWARE_REQUIREMENTS.md](face-puppeteer-ui-enhancements-ai-code/HARDWARE_REQUIREMENTS.md) | 硬件 |
+| [docs/training/README_BAI_CUSTOM.txt](docs/training/README_BAI_CUSTOM.txt) | body 续训 / 打包白猫 student（历史流程） |
+| [docs/camfix/CAMERA_CHANGES_SUMMARY.md](docs/camfix/CAMERA_CHANGES_SUMMARY.md) | 摄像头/DroidCam 改动摘要 |
+| [README.md](README.md) | Fork 总览、双环境策略 |
+
+### 0.5 当前进度（2026-05-28）
+
+**已完成**
+
+- 紧凑启动窗 + 懒加载完整调参窗（§5–6）
+- 外挂输出 L0：`contract.json` / `status.json` 元数据（§7）
+- THA3 / THA4 Student 双图像源（§8）
+- 双 pip 环境：`deps/pip/requirements-tha4-student.txt` 与 `requirements-tha3-ort.txt`
+
+**下一步（勿跳层）**
+
+| 优先级 | Todo | 说明 |
+|--------|------|------|
+| 高 | `L0-external-output-rgba-export` | 写出 `frame_rgba_path` |
+| 高 | `L1-define-basic-layer-state` | **尚无** `basic_layers_state` |
+| 中 | `L1-*` | 五层几何/UI/合成（见计划第一层） |
+| 低 | L2 / L3 | L1 验收通过前不要开 |
+
+**常见误判：** 计划中的五层/不限层多为**未来目标**；当前 `draw_result_wx_image()` 仍是**整图**平移/缩放/旋转，没有图层级状态机。
+
+### 0.6 提交前自检
+
+- [ ] 改动路径是否都在 `E:\tha4fork-develop` 下
+- [ ] 外挂模式：`status.json` 的 `frame_sequence` 是否递增
+- [ ] THA3 ↔ THA4 切换是否 `stop()` 旧源
+- [ ] 图层改动是否仅在 L1 范围
+
+---
+
+## 1) 项目目标
+
+在官方 THA4 `character_model_mediapipe_puppeteer` 基础上，提供 **MediaPipe 面捕 + 可调显示变换 + wx 调参 UI**（EasyVtuber 风格），主入口：
+
+`character_model_mediapipe_puppeteer_load_preview.py`
+
+能力概要：紧凑启动窗、懒加载完整窗、独立无边框输出窗、呼吸/嘴部（面捕或音频）、非线性缩放曲线、倾斜/镜像后处理、外挂图层桥接、THA3/THA4 双图像源。
+
+---
+
+## 2) 目录结构（本仓）
+
+```
+E:\tha4fork-develop\
+├── HANDOVER.md                 ← 本文件（主入口）
+├── README.md                   ← Fork 总览（GitHub 首页类说明）
+├── 》》》》start《《《《.bat       ← 一键启动
+├── run_load_preview_puppeteer.bat
+├── plans/                      ← 计划与外挂接口说明
+├── deps/                       ← THA3 打包资产 + pip 双环境脚本
+├── docs/training/              ← 白猫 body 续训脚本与说明（归档）
+├── docs/camfix/
+├── scripts/probe_cameras.bat
+└── face-puppeteer-ui-enhancements-ai-code/
+    ├── HANDOVER.md             ← 与本文件同步的副本
+    ├── TROUBLESHOOTING_QA.md
+    └── experiments/puppeteer_load_preview/   ← 实验主目录
+```
+
+---
+
+## 3) 环境与依赖
+
+- Python 3.10.x，`venv` 通常在 `face-puppeteer-ui-enhancements-ai-code/talking-head-anime-4-demo/venv` 或仓库根 `venv`
+- **两套依赖**（避免 THA3/THA4 冲突）：
+  - `deps/pip/install_tha4_student_deps.bat`
+  - `deps/pip/install_tha3_ort_deps.bat`
+  - 或 `install_all_image_source_deps.bat`
+- THA3 ONNX 大包：`deps/tha3/populate_tha3_bundle.ps1`（首次）
+
+---
+
+## 4) 已实现功能索引
+
+| 章节 | 内容 |
+|------|------|
+| §5 | 紧凑启动 + 懒加载完整窗 |
+| §6 | 关键类名与变量 |
+| §7 | 外挂图层输出（bridge、`contract`/`status`） |
+| §8 | THA3 / THA4 Student 双图像源 |
+| §9 | 已知限制与推荐后续 |
+| §10 | 快速验收步骤 |
+
+---
+
+## 5) 紧凑启动 + 懒加载完整窗
+
+实现文件：`character_model_mediapipe_puppeteer_load_preview.py`
+
+- 启动仅 3 按钮：加载上次模型、校正头部朝向、打开完整调参窗
+- 完整窗 `ControlsFrame` 首次打开时懒创建
+- 捕获循环与输出定时器始终运行；仅控件可见性变化
+- `ValueState` / `SelectionState`：完整窗未创建时的占位，避免访问不存在的 wx 控件
+
+---
+
+## 6) 关键标识（新 Agent 查代码用）
+
+### 6.1 主脚本 `character_model_mediapipe_puppeteer_load_preview.py`
+
+- `ControlsFrame`、`create_controls_frame()`
+- `show_full_controls_window()` / `show_compact_launcher()`
+- `draw_result_wx_image()` — **最终合成入口**（图层功能将接在此处）
+- `create_postprocess_panel()` — 后处理 / 外挂 / 图像来源
+- `load_persistent_ui_state()` / `collect_persistent_ui_state()` — 持久化入口
+
+### 6.2 `mediapipe_face_pose_converter_00.py`
+
+- 呼吸 / 嘴部 UI、`audio_device_name`、音频设备状态文案
+
+---
+
+## 7) 外挂图层输出
+
+| 项 | 位置 |
+|----|------|
+| UI | 后处理区：**向外挂图层系统输出** |
+| 持久化 | `external_layer_output_enabled` |
+| 模块 | `external_layer_output_bridge.py` |
+| 运行时目录 | `external_layer_output/contract.json`、`status.json` |
+
+行为：勾选后隐藏内置 `OutputFrame`，仍内存渲染；`publish_composite_frame()` 当前仅写元数据（`frame_rgba_path`、`layer_state_path` 为 `null`）。
+
+**对接说明：** [plans/EXTERNAL_LAYER_INTERFACE.md](plans/EXTERNAL_LAYER_INTERFACE.md)  
+**计划 todo：** `L0-external-output-*`、`L1` 合成后补像素与图层清单
+
+---
+
+## 8) THA3 / THA4 Student 双图像源
+
+| 项 | 位置 |
+|----|------|
+| 架构 | `image_sources/`（`Tha4StudentSource` / `Tha3Source`） |
+| 引擎 | `tha3_engine.py`、`tha3_pose_adapter.py` |
+| 文档 | `experiments/puppeteer_load_preview/THA3_INTEGRATION.md` |
+
+切换图像源时对旧源 `stop()` 再 `start()` 新源。外壳共用 `draw_result_wx_image()` 与外挂 bridge。
+
+验收：
+
+```bat
+cd /d E:\tha4fork-develop\face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo
 set PYTHONPATH=%cd%\src
 venv\Scripts\python.exe ..\experiments\puppeteer_load_preview\smoke_tha3_preview.py
 venv\Scripts\python.exe ..\experiments\puppeteer_load_preview\smoke_load_preview.py
 ```
 
-## 9) Known limitations / TODOs (recommended next work)
-1. **Performance optimization still incomplete**: compact/full window switching hides UI, but the capture loop and detection still run continuously. If you want real reductions in camera preview + UI draw cost, you must gate `update_capture_panel()` rendering and/or skip `mediapipe` detection when compact mode is active.
-2. Verify “full controls created lazily” behavior with real user flows:
-   - start -> load last model -> expand full controls
-3. If you later merge this into the main repo, ensure no duplicate class stubs (`ValueState` / `SelectionState`) conflict with existing naming conventions.
+---
 
-## 10) Quick verification steps
-1. Run the experimental preview script.
-2. Confirm initial UI shows only 3 buttons + hint text.
-3. Click “Open Full Controls”:
-   - full controls window should appear (lazily created).
-4. Click “Switch to Compact”:
-   - full window hides, compact window stays.
-5. Load `bai_450k` model:
-   - neutral pose preview appears immediately after load.
-6. In mouth audio mode:
-   - audio status should show “Device / 设备: ...”.
-7. External layer output:
-   - Open full controls → Postprocess panel → enable **Output to External Layer System**.
-   - Built-in **THA4 Output / 输出** window should disappear.
-   - After loading a model, confirm `experiments\puppeteer_load_preview\external_layer_output\status.json` updates `frame_sequence`.
-   - Uncheck the option; built-in output window should return.
-8. Dual image source:
-   - Postprocess → select **THA3 立绘即用** → **Load THA3 PNG** → face capture should animate.
-   - Switch back to **THA4 Student** → load bai yaml → previous THA4 path still works.
+## 9) 已知限制 / 推荐后续
 
+1. 紧凑/完整窗切换未降低 MediaPipe 与预览绘制开销（需 gate `update_capture_panel` 等）。
+2. 图层级能力未实现：见 `plans/layer-runtime-replan_3a393fc1.plan.md` L1 起。
+3. 外挂 L0 待补：RGBA 导出、图层 state 快照、外挂心跳 UI。
+
+---
+
+## 10) 快速验收
+
+1. `》》》》start《《《《.bat` → 仅见 3 按钮 + 提示。
+2. 打开完整窗 → 控件懒加载出现。
+3. 加载模型 → 默认姿态预览。
+4. 外挂输出勾选 → 内置输出窗隐藏，`external_layer_output/status.json` 中 `frame_sequence` 递增。
+5. THA3 立绘加载 → 面捕驱动；切回 THA4 Student 仍正常。
+
+---
+
+## 附录：自 bai_custom 迁入清单
+
+若你曾使用 `E:\THA4_bundle_bai_custom`，对应关系：
+
+| 旧路径 | 新路径 |
+|--------|--------|
+| `experiments\puppeteer_load_preview\` | `face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\` |
+| 根目录 `HANDOVER.md` / `layer-runtime-replan_*.plan.md` | `HANDOVER.md` / `plans\` |
+| `README_BAI_CUSTOM.txt`、训练 bat/ps1 | `docs\training\` |
+| `camfix\` 说明 | `docs\camfix\` |
+| `scripts\probe_cameras.bat` | `scripts\` |
+
+一次性补拷（源目录仍存在时）：`migrate_from_bai_custom.ps1`

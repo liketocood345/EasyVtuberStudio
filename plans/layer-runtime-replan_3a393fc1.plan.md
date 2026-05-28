@@ -267,7 +267,7 @@ flowchart TB
 
 ## 新 agent 上手顺序
 如果换一个新 agent 继续实现，建议严格按这个阅读/动手顺序进入：
-1. 先读 [E:\\THA4_bundle_bai_custom\\experiments\\puppeteer_load_preview\\character_model_mediapipe_puppeteer_load_preview.py](E:\\THA4_bundle_bai_custom\\experiments\\puppeteer_load_preview\\character_model_mediapipe_puppeteer_load_preview.py) 中的：
+1. 先读 [E:\\tha4fork-develop\\face-puppeteer-ui-enhancements-ai-code\\experiments\\puppeteer_load_preview\\character_model_mediapipe_puppeteer_load_preview.py](E:\\tha4fork-develop\\face-puppeteer-ui-enhancements-ai-code\\experiments\\puppeteer_load_preview\\character_model_mediapipe_puppeteer_load_preview.py) 中的：
    - `create_postprocess_panel()`
    - `update_source_image_bitmap()` / `paint_source_image_panel()`
    - `draw_result_wx_image()`
@@ -302,7 +302,7 @@ flowchart TB
 - 新增简单透视变形：四角透视 + 角点锁定，基础 5 层与不限层都支持
 
 ## 结合项目现状后的判断
-当前代码基础集中在 [E:\THA4_bundle_bai_custom\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py](E:\THA4_bundle_bai_custom\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py)，但真实现状和之前抽象计划有一个关键差异：
+当前代码基础集中在 [E:\tha4fork-develop\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py](E:\tha4fork-develop\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py)，但真实现状和之前抽象计划有一个关键差异：
 - 目前只有整模型级别的运行时状态，没有现成的图层状态模型
 - `source_image_panel` 现在只画原始立绘，尚未承担图层叠加编辑
 - `draw_result_wx_image()` 现在只做整图缩放/旋转/平移，是最终合成入口，但还没有图层级合成链
@@ -312,8 +312,8 @@ flowchart TB
 
 ## 关键接入点
 主要变更文件：
-- [E:\THA4_bundle_bai_custom\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py](E:\THA4_bundle_bai_custom\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py)
-- [E:\THA4_bundle_bai_custom\experiments\puppeteer_load_preview\README.txt](E:\THA4_bundle_bai_custom\experiments\puppeteer_load_preview\README.txt)
+- [E:\tha4fork-develop\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py](E:\tha4fork-develop\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py)
+- [E:\tha4fork-develop\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\README.txt](E:\tha4fork-develop\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\README.txt)
 
 优先复用的现有函数：
 - `update_source_image_bitmap()` / `paint_source_image_panel()`：立绘预览与图层编辑叠加入口
@@ -385,7 +385,7 @@ UI 偏好额外结构：
 > **交付节奏以「三层实施节奏」为准。** 下面 1–7 步描述的是技术依赖顺序；实际动手时，第一层只做五层相关子集，第二层再引入 `advanced_layers_state` 与不限层 UI，第三层再补 GIF/透视/复杂显隐/WebSocket 等细分能力。
 
 ### 1. 先落运行时图层状态骨架（第一层先落 `basic_layers_state`；`advanced_layers_state` 延至第二层）
-在 [E:\THA4_bundle_bai_custom\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py](E:\THA4_bundle_bai_custom\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py) 中先建立：
+在 [E:\tha4fork-develop\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py](E:\tha4fork-develop\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py) 中先建立：
 - `basic_layers_state`
 - `advanced_layers_state`
 - 当前模式切换字段
