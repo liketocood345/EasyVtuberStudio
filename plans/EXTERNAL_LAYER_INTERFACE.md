@@ -61,9 +61,20 @@ experiments/puppeteer_load_preview/external_layer_output/
 | `display_offset_x` / `display_offset_y` | float | 显示平移 |
 | `display_rotation_deg` | float | 显示旋转（度） |
 | `banner_text` | string \| null | 可选横幅 |
-| `anchor_payload` | object | 人脸锚定（latest/neutral center、face_size、roll、标定时间等） |
+| `anchor_payload` | object | 见下表 |
 | `frame_rgba_path` | string \| null | **预留**：RGBA 文件路径 |
 | `layer_state_path` | string \| null | **预留**：图层状态快照路径 |
+
+### `anchor_payload` 子字段
+
+| 字段 | 说明 |
+|------|------|
+| `latest_face_anchor` | `{ center_x, center_y, face_size }` 或 `null` |
+| `neutral_face_anchor` | 标定中性姿态锚点，结构同上 |
+| `latest_head_roll_deg` | 当前头部 roll（度） |
+| `neutral_head_roll_deg` | 中性 roll（度） |
+| `last_direction_calibration_time` | 最近一次朝向标定时间戳 |
+| `last_scale_calibration_time` | 最近一次缩放标定时间戳 |
 
 ## 6. 外挂合成器对接流程（当前可用）
 
@@ -81,7 +92,36 @@ experiments/puppeteer_load_preview/external_layer_output/
 - `L0-external-output-layer-state-export`：`layer_state_path` 写入 `basic_layers_state` / `advanced_layers_state`
 - L1 五层合成完成后，外挂可消费完整图层清单
 
-## 8. 验收清单
+## 8. 示例片段（便于对接调试）
+
+`contract.json`（示意）：
+
+```json
+{
+  "contract_version": 1,
+  "pixel_format": "rgba8",
+  "width": 768,
+  "height": 768,
+  "coordinate_space": "output_canvas_bottom_center_anchor",
+  "anchor_payload_version": 1
+}
+```
+
+`status.json`（示意；`frame_rgba_path` / `layer_state_path` 当前为 `null`）：
+
+```json
+{
+  "enabled": true,
+  "frame_sequence": 42,
+  "width": 768,
+  "height": 768,
+  "display_scale": 1.0,
+  "frame_rgba_path": null,
+  "layer_state_path": null
+}
+```
+
+## 9. 验收清单
 
 1. 勾选外挂输出后，内置 **THA4 Output / 输出** 窗不再显示。
 2. 取消勾选后内置输出窗恢复。
