@@ -5,12 +5,16 @@
 | 项 | 说明 |
 |----|------|
 | 本地总库 | `E:\tha4fork` |
-| Fork 远程 | https://github.com/liketocood345/talking-head-anime-4-demo |
+| **研发同步仓库** | `E:\tha4fork-develop`（本目录；计划文档与活跃开发同步） |
+| Fork 远程 | https://github.com/liketocood345/EasyVtuber-with-THA3-THA4 |
 | 官方上游 | https://github.com/pkhungurn/talking-head-anime-4-demo |
 | 活跃开发 | `E:\THA4_bundle_bai_custom`（改完再同步进总库） |
 | 定制代码包 | `face-puppeteer-ui-enhancements-ai-code/` |
+| 计划与对接文档 | [plans/](plans/)（从活跃仓库提取） |
 
 Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_ROOT.md)。
+
+计划文档同步：在仓库根执行 `sync_plans_from_bai_custom.ps1`（来源 `E:\THA4_bundle_bai_custom`）。
 
 ---
 
@@ -69,8 +73,12 @@ Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_
 ## 总库目录结构（当前）
 
 ```
-E:\tha4fork\
-├── README.md                ← 本文件（Fork 总览，GitHub 首页展示）
+E:\tha4fork-develop\
+├── README.md                ← 本文件（Fork 总览）
+├── plans/                   ← 计划与外挂图层对接说明（从 bai_custom 同步）
+│   ├── layer-runtime-replan_3a393fc1.plan.md
+│   ├── HANDOVER.md
+│   └── EXTERNAL_LAYER_INTERFACE.md
 ├── READMEfrom-main.md       ← 上游 THA4 demo 原说明
 ├── FORK_ROOT.md             ← Git 与路径说明
 ├── 》》》》start《《《《.bat    ← 一键启动入口（转发到 run_load_preview_puppeteer.bat）

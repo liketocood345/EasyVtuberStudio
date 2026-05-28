@@ -190,7 +190,7 @@ experiments\puppeteer_load_preview\external_layer_output\
 
 ### Related plan
 
-See repo root `plans/layer-runtime-replan_3a393fc1.plan.md` todos `L0-external-output-toggle` and `L0-external-output-bridge`；对接字段见 `plans/EXTERNAL_LAYER_INTERFACE.md`。
+See `plans/layer-runtime-replan_3a393fc1.plan.md`（或同目录副本）todos `L0-external-output-toggle` and `L0-external-output-bridge`；对接字段见 `plans/EXTERNAL_LAYER_INTERFACE.md`。
 
 ## 8) Dual image source modes (THA3 / THA4 Student)
 

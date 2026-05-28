@@ -1,0 +1,89 @@
+# 外挂图层系统对接口说明
+
+> 从活跃仓库 `E:\THA4_bundle_bai_custom` 整理，对应实现见 `external_layer_output_bridge.py`。  
+> 总计划见 [layer-runtime-replan_3a393fc1.plan.md](layer-runtime-replan_3a393fc1.plan.md)；交接索引见 [HANDOVER.md](HANDOVER.md) §7。
+
+## 1. 用途
+
+Load Preview 在勾选 **向外挂图层系统输出** 后：
+
+- 隐藏内置 `OutputFrame`（避免双预览窗抢操作）
+- 在本地目录写入 **契约文件** 与 **每帧状态**，供外挂合成器轮询
+- 当前阶段仅写 **元数据**；RGBA 像素与图层清单路径为预留字段（`null`）
+
+## 2. 目录与文件
+
+与 `load_preview_ui_state.json` 同级：
+
+```
+experiments/puppeteer_load_preview/external_layer_output/
+  contract.json    # 启用外挂模式时写入/更新
+  status.json      # 每帧 draw 后更新（frame_sequence 递增）
+```
+
+代码路径（develop 仓库内）：
+
+`face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/external_layer_output_bridge.py`
+
+## 3. UI 与持久化
+
+| 项 | 值 |
+|----|-----|
+| 勾选文案 | 向外挂图层系统输出（隐藏内置输出窗）/ Output to External Layer System |
+| 面板 | 后处理区 `create_postprocess_panel()` |
+| 持久化键 | `load_preview_ui_state.json` → `external_layer_output_enabled` (bool) |
+
+## 4. `contract.json` 字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `contract_version` | int | 当前为 `1` |
+| `pixel_format` | string | `"rgba8"` |
+| `width` / `height` | int | 锁定输出画布尺寸 |
+| `coordinate_space` | string | `"output_canvas_bottom_center_anchor"` |
+| `anchor_payload_version` | int | 锚定元数据版本 |
+| `notes` | string | 人类可读说明（含像素导出未接线提示） |
+
+外挂进程应在启动时读一次；尺寸变更后 THA4 会重写该文件。
+
+## 5. `status.json` 字段（每帧）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `enabled` | bool | 恒为 `true`（仅在外挂模式 publish 时写入） |
+| `contract_version` | int | 与 contract 一致 |
+| `frame_sequence` | int | 单调递增，用于检测新帧 |
+| `timestamp_ms` | int | Unix 毫秒时间戳 |
+| `width` / `height` | int | 当前帧画布 |
+| `background_hex` | string | 输出背景色 |
+| `mirror_output` | bool | 是否镜像 |
+| `display_scale` | float | 显示缩放 |
+| `display_offset_x` / `display_offset_y` | float | 显示平移 |
+| `display_rotation_deg` | float | 显示旋转（度） |
+| `banner_text` | string \| null | 可选横幅 |
+| `anchor_payload` | object | 人脸锚定（latest/neutral center、face_size、roll、标定时间等） |
+| `frame_rgba_path` | string \| null | **预留**：RGBA 文件路径 |
+| `layer_state_path` | string \| null | **预留**：图层状态快照路径 |
+
+## 6. 外挂合成器对接流程（当前可用）
+
+1. 用户在外挂 THA4 中勾选外挂输出并加载模型。
+2. 轮询或监听 `status.json` 的 `frame_sequence` 变化。
+3. 首次读取 `contract.json` 获取画布尺寸与坐标约定。
+4. 使用 `display_*`、`mirror_output`、`background_hex`、`anchor_payload` 对齐合成几何（像素文件尚未导出时仅能同步变换元数据）。
+5. OBS / 采集目标为 **外挂合成器窗口**，而非 THA4 内置输出窗。
+
+## 7. 待实现（计划 todo）
+
+见 `layer-runtime-replan_3a393fc1.plan.md`：
+
+- `L0-external-output-rgba-export`：`frame_rgba_path` 写入真实 RGBA
+- `L0-external-output-layer-state-export`：`layer_state_path` 写入 `basic_layers_state` / `advanced_layers_state`
+- L1 五层合成完成后，外挂可消费完整图层清单
+
+## 8. 验收清单
+
+1. 勾选外挂输出后，内置 **THA4 Output / 输出** 窗不再显示。
+2. 取消勾选后内置输出窗恢复。
+3. 加载模型后 `status.json` 中 `frame_sequence` 持续递增。
+4. `contract.json` 中 `width`/`height` 与 UI 锁定输出尺寸一致。
