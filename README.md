@@ -1,3 +1,5 @@
+[首次部署（GitHub ZIP 下载后） / First-time Deploy](DEPLOY.md)
+
 [English Guide for Native English Speakers](README-EN.md)
 
 # 这是 THA3、THA4、EasyVtuber 三项目的 fork
@@ -8,12 +10,13 @@
 
 | 项 | 说明 |
 |----|------|
-| **研发主仓（本目录）** | `E:\tha4fork-develop` — 日常开发、计划、Git 推送 |
-| 发布总库 | `E:\tha4fork`（稳定后再合并） |
+| **发布总库（本目录）** | `E:\tha4fork` — GitHub 推送、对外发布 |
+| 研发主仓 | `E:\tha4fork-develop` — 日常开发，稳定后合并到本目录 |
 | Fork 远程 | https://github.com/liketocood345/EasyVtuber-with-THA3-THA4 |
 | 官方上游 | https://github.com/pkhungurn/talking-head-anime-4-demo |
 | 定制代码包 | `face-puppeteer-ui-enhancements-ai-code/` |
 | **新 Agent 入口** | **[HANDOVER.md](HANDOVER.md)** |
+| **首次部署（ZIP 下载）** | **[DEPLOY.md](DEPLOY.md)** |
 | 计划与对接 | [plans/](plans/) |
 
 Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_ROOT.md)。
@@ -21,6 +24,8 @@ Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_
 > ~~`E:\THA4_bundle_bai_custom`~~ 已废弃，内容已迁入本仓（见 HANDOVER 附录）。
 
 ---
+骚年，想玩虚拟皮套直播但没钱定制自己的角色？你的显卡该出场了！
+
 
 ## 相对 THA4 原版做了什么（简要）
 
@@ -28,7 +33,7 @@ Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_
 
 ### 1. 界面与窗口
 
-- 紧凑启动窗（3 按钮）+ 完整调参窗懒加载、可来回切换
+- **默认完整调参窗**启动（`startup_show_full_controls`）；可选 **精简小窗**（3 快捷按钮）与完整窗来回切换
 - 角色输出独立无边框窗口，可拖动画布，几何与状态可持久化
 - 控件分栏：模型传入 / 输出动态增强 / 后处理；竖滑块、分割条位置记忆
 
@@ -36,6 +41,7 @@ Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_
 
 - 人脸跟踪驱动自动平移、缩放（可关）
 - 非线性缩放曲线 + 预览；倾斜映射旋转、镜像作为最后一步
+- **输出动态增强校准**：刷新缩放基准并将角色左右归中（不改垂直基准，避免上漂）；支持周期自动校准与平滑过渡
 - 可调后处理抗锯齿
 
 ### 3. 模型与持久化
@@ -50,8 +56,9 @@ Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_
 
 ### 5. 摄像头与视频源
 
+- **窗口捕获**：从 DroidCam 等客户端预览窗抓帧（OBS 式）；与摄像头共用下拉源，记忆上次窗口；**加载模型后**自动连接时窗口捕获优先
 - 设备下拉、DirectShow 枚举、多索引/多后端探测
-- DroidCam 优先 MSMF；后台打开摄像头；支持视频/图片文件源
+- DroidCam 虚拟摄像头仍可用；后台打开；支持视频/图片文件源
 
 ### 6. 外挂图层输出（预留）
 
@@ -65,8 +72,8 @@ Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_
 ### 8. 附带内容
 
 - `packaged/bai_450k/`：示例白腾（代号：九星独行角色） student 模型（yaml + 图）
-- 文档：`HANDOVER.md`、`HARDWARE_REQUIREMENTS.md`、`TROUBLESHOOTING_QA.md` 等
-- `his/`：按时间归档的历史快照；`sync_from_bai_custom.ps1` / `archive_to_his.ps1` 维护同步
+- 文档：`HANDOVER.md`、`HARDWARE_REQUIREMENTS.md`、`TROUBLESHOOTING_QA.md`、`docs/DOC_INDEX.md` 等
+- `his/`：按时间归档的历史快照；`archive_to_his.ps1` 留档（~~`sync_from_bai_custom.ps1`~~ 已废弃，develop → fork 手动合并）
 
 更细的条目见 `face-puppeteer-ui-enhancements-ai-code/CHANGELOG.md`。
 
@@ -77,14 +84,14 @@ Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_
 ## 总库目录结构（当前）
 
 ```
-E:\tha4fork-develop\
-├── README.md                ← 本文件（Fork 总览）
-├── plans/                   ← 计划与外挂图层对接说明（从 bai_custom 同步）
-│   ├── layer-runtime-replan_3a393fc1.plan.md
-│   ├── HANDOVER.md
-│   └── EXTERNAL_LAYER_INTERFACE.md
-├── READMEfrom-main.md       ← 上游 THA4 demo 原说明
+E:\tha4fork\
+├── README.md                ← 本文件（Fork 总览，GitHub 首页展示）
+├── docs/DOC_INDEX.md        ← 全部 Markdown 索引（最全）
+├── plans/                   ← 计划与外挂图层对接说明
+├── HANDOVER.md              ← 新 Agent 入口
 ├── FORK_ROOT.md             ← Git 与路径说明
+├── TROUBLESHOOTING_QA.md    ← 排障 Q&A（最全）
+├── DEPLOY.md                ← 首次部署（GitHub ZIP）
 ├── 》》》》start《《《《.bat    ← 一键启动入口（转发到 run_load_preview_puppeteer.bat）
 └── face-puppeteer-ui-enhancements-ai-code/   ← 定制 UI 与实验代码
 ```
@@ -104,7 +111,8 @@ E:\tha4fork-develop\
 
 | 提交 | 说明 |
 |------|------|
-| `5bfecb5` | 新增 `face-puppeteer-ui-enhancements-ai-code/` 与 `FORK_ROOT.md` |
+| （待 push） | 文档交叉合并：fork 为 Markdown 权威副本；窗口捕获、输出动态增强校准等 |
+| `e107413` | DroidCam 相关说明与 QA 更新 |
 
 
 
@@ -112,7 +120,8 @@ E:\tha4fork-develop\
 
 ## 日常流程
 
-1. 在 **`E:\tha4fork-develop`** 开发；启动：`》》》》start《《《《.bat`  
-2. 新 Agent 先读 [HANDOVER.md](HANDOVER.md)  
-3. 需要留档时：在 `face-puppeteer-ui-enhancements-ai-code` 运行 `archive_to_his.ps1`  
-4. 稳定后合并到 `E:\tha4fork` 发布总库 → `git push origin main`
+1. 在 **`E:\tha4fork`** 运行：`》》》》start《《《《.bat`（或 `run_load_preview_puppeteer.bat`）  
+2. 日常开发在 **`E:\tha4fork-develop`**，稳定后合并到本目录再 push  
+3. 新 Agent 先读 [HANDOVER.md](HANDOVER.md)  
+4. 需要留档时：在 `face-puppeteer-ui-enhancements-ai-code` 运行 `archive_to_his.ps1`  
+5. `git add` → `commit` → `git push origin main`

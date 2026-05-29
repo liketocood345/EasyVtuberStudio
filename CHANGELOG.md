@@ -2,9 +2,25 @@
 
 相对于 THA4 原版 `character_model_mediapipe_puppeteer.py`（固定 `VideoCapture(0)`、无视频源选择、单窗口布局）。
 
-**活跃开发：** `E:\THA4_bundle_bai_custom\`  
-**本 fork 根目录：** 与 bai_custom 同步的副本  
-**历史快照：** `his/2026-05-27/`
+**活跃开发：** `E:\tha4fork-develop\`  
+**本 fork 根目录：** 对外发布总库（文档权威副本）  
+**代码包历史快照：** `face-puppeteer-ui-enhancements-ai-code/his/`
+
+---
+
+## 当前版本（fork 根目录，2026-05-29）
+
+### 视频源与显示（2026-05-29）
+
+| # | 改动 |
+|---|------|
+| W1 | **窗口捕获**视频源：OBS 式抓取 DroidCam 预览窗；与摄像头共用下拉；记忆窗口；**加载模型后**自动连接时优先窗口捕获 |
+| W2 | **输出动态增强校准**：刷新缩放基准 + 水平归中（不改垂直基准）；开启自动移动缩放时平滑过渡 |
+| W3 | THA3 变体与「标定朝向」分子面板，缓解窄侧栏重叠 |
+| W4 | 音频驱动嘴型界面注明「有少量延时」 |
+| W5 | 移除调试脚手架（`agent_debug` 等） |
+| W6 | **默认启动完整调参窗**（`startup_show_full_controls`）；精简小窗改为可选（3 快捷校准按钮 + 打开完整窗） |
+| W7 | 启动时不自动连视频源；**加载模型后**再 `refresh_and_autoload`（窗口捕获优先） |
 
 ---
 
@@ -14,7 +30,7 @@
 
 | # | 改动 |
 |---|------|
-| 1 | 紧凑启动窗：仅 3 按钮 + 提示「加载新模型请点展开完整 / To load a new model, open full controls」 |
+| 1 | （2026-05-28 及更早）紧凑启动窗：3 按钮 + 提示；**2026-05-29 起默认改为完整调参窗**（见上方 W6） |
 | 2 | 完整调参窗 `ControlsFrame` **懒加载**，首次点击「Open Full Controls」才创建 |
 | 3 | 紧凑窗 ↔ 完整窗可切换（`show_compact_launcher` / `show_full_controls_window`） |
 | 4 | 未创建完整 UI 前用 `ValueState` / `SelectionState` 保证逻辑可运行（headless-safe） |
@@ -81,15 +97,15 @@
 
 | # | 结论 |
 |---|------|
-| A | **DroidCam 无画面/选源闪退**：隔离测试（`bai_custom\camfix\`）表明主要为 **DroidCam 客户端/虚拟摄像头配置** 问题，不单是 THA4 UI |
-| B | 本机 OpenCV 对 DroidCam 用 `CAP_DSHOW`+索引易异常；MSMF 更安全 |
-| C | camfix 仅摄像头区升级见 `E:\THA4_bundle_bai_custom\camfix\` |
+| A | **DroidCam 无画面/选源闪退**：隔离测试表明主要为 **DroidCam 客户端/虚拟摄像头配置** 问题，不单是 THA4 UI；摘要见 [docs/camfix/CAMERA_CHANGES_SUMMARY.md](docs/camfix/CAMERA_CHANGES_SUMMARY.md) |
+| B | 本机 OpenCV 对 DroidCam 用 `CAP_DSHOW`+索引易异常；MSMF 更安全；**推荐窗口捕获**绕行 |
+| C | camfix 历史脚本已归档；当前优先 **窗口捕获** + 本文档第二节 |
 
 ---
 
 ## 历史快照 `his/2026-05-27/`
 
-该目录保存 **fork 首次打包草稿**（重组前的根目录副本），改动列表与上表「当前版本」在打包时基本一致，但未包含此后在 `bai_custom` 上继续做的摄像头细化与 camfix 调查文档。
+该目录保存 **fork 首次打包草稿**（重组前的根目录副本），改动列表与上表「2026-05-28 同步」在打包时基本一致，但未包含此后在 develop 上继续做的摄像头细化与 camfix 调查文档。
 
 详见同目录下旧版 `README.md`、`HANDOVER.md`。
 
@@ -107,6 +123,6 @@
 
 ## 后续归档约定
 
-每次备份将 fork 根目录移入 **`his/yyyy-MM-dd_HH-mm-ss/`**（本地时间，精确到秒），再从 `bai_custom` 同步新版本。流程见 [BACKUP.md](BACKUP.md)；可运行 `archive_to_his.ps1`。
+每次备份将 **`face-puppeteer-ui-enhancements-ai-code/`** 内容移入 **`his/yyyy-MM-dd_HH-mm-ss/`**（本地时间，精确到秒）。develop → fork 手动合并；流程见 [BACKUP.md](BACKUP.md)；可运行 `face-puppeteer-ui-enhancements-ai-code\archive_to_his.ps1`。
 
 旧目录 `his/2026-05-27/` 为仅日期命名的首份快照，之后归档一律带时分秒。

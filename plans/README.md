@@ -9,4 +9,4 @@
 | [EXTERNAL_LAYER_INTERFACE.md](EXTERNAL_LAYER_INTERFACE.md) | 外挂 `contract.json` / `status.json` 对接 |
 | [AGENT_ONBOARDING.md](AGENT_ONBOARDING.md) | 已合并进根 HANDOVER §0；保留作快捷索引 |
 
-本目录路径均已按 **`E:\tha4fork-develop`** 书写（不再依赖 `THA4_bundle_bai_custom`）。
+本目录路径均已按 **`E:\tha4fork`（发布）** 与 **`E:\tha4fork-develop`（研发）** 书写；~~`THA4_bundle_bai_custom`~~ 已废弃。

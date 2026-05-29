@@ -1,7 +1,10 @@
-# 项目交接说明（新 Agent 主入口）
+# 项目交接说明（新 Agent / 维护者主入口）
 
-> **请从本文件开始阅读。** 本仓库 `E:\tha4fork-develop` 是 THA3 / THA4 / EasyVtuber 集成的**唯一研发主仓**（原 `E:\THA4_bundle_bai_custom` 内容已迁入，可删除旧目录）。  
-> 远程：https://github.com/liketocood345/EasyVtuber-with-THA3-THA4
+> **文档权威副本在 fork 发布总库 `E:\tha4fork`（本文件）。**  
+> 代码日常开发在 **`E:\tha4fork-develop`**，稳定后合并到 fork 再 push。  
+> ~~`E:\THA4_bundle_bai_custom`~~ 已废弃。  
+> 远程：https://github.com/liketocood345/EasyVtuber-with-THA3-THA4  
+> **文档总索引：** [docs/DOC_INDEX.md](docs/DOC_INDEX.md)
 
 ---
 
@@ -11,18 +14,27 @@
 
 | 路径 | 用途 |
 |------|------|
-| **`E:\tha4fork-develop`** | **日常开发与 Git 提交（本仓）** |
-| `E:\tha4fork` | 对外发布总库（稳定后再合并，勿与 develop 混用） |
-| ~~`E:\THA4_bundle_bai_custom`~~ | **已废弃**，内容已迁入本仓 |
+| **`E:\tha4fork`** | **发布总库（本文件所在仓库）**：定制客户部署、GitHub 文档、push |
+| **`E:\tha4fork-develop`** | 研发主仓：日常改代码，稳定后合并到 fork |
+| ~~`E:\THA4_bundle_bai_custom`~~ | **已废弃** |
 
 ### 0.2 一键启动
+
+**定制部署 / 发布验收（fork）：**
+
+```bat
+cd /d E:\tha4fork
+》》》》start《《《《.bat
+```
+
+**日常开发（develop）：**
 
 ```bat
 cd /d E:\tha4fork-develop
 》》》》start《《《《.bat
 ```
 
-等价于根目录 `run_load_preview_puppeteer.bat`（自动解析 `face-puppeteer-ui-enhancements-ai-code` 与 `venv`）。
+两者均等价于各自根目录的 `run_load_preview_puppeteer.bat`（自动解析 `face-puppeteer-ui-enhancements-ai-code` 与 `venv`）。
 
 ### 0.3 主代码路径（本仓）
 
@@ -42,21 +54,25 @@ cd /d E:\tha4fork-develop
 |------|--------|
 | [plans/layer-runtime-replan_3a393fc1.plan.md](plans/layer-runtime-replan_3a393fc1.plan.md) | 做多图层 / L1–L3 功能前（先读「交接摘要」「当前代码现实」） |
 | [plans/EXTERNAL_LAYER_INTERFACE.md](plans/EXTERNAL_LAYER_INTERFACE.md) | 做外挂合成器对接 |
-| [face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/THA3_INTEGRATION.md](face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/THA3_INTEGRATION.md) | THA3 立绘黑盒 |
-| [face-puppeteer-ui-enhancements-ai-code/TROUBLESHOOTING_QA.md](face-puppeteer-ui-enhancements-ai-code/TROUBLESHOOTING_QA.md) | 排障 |
-| [face-puppeteer-ui-enhancements-ai-code/HARDWARE_REQUIREMENTS.md](face-puppeteer-ui-enhancements-ai-code/HARDWARE_REQUIREMENTS.md) | 硬件 |
+| [experiments/puppeteer_load_preview/THA3_INTEGRATION.md](face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/THA3_INTEGRATION.md) | THA3 立绘黑盒、`deps/tha3` |
+| [DEPLOY.md](DEPLOY.md) | **首次部署**：GitHub ZIP → 第一次正常启动 |
+| [TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md) | **排障（最全）** |
+| [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md) | 硬件 |
+| [docs/DOC_INDEX.md](docs/DOC_INDEX.md) | 全部 Markdown 索引 |
 | [docs/training/README_BAI_CUSTOM.txt](docs/training/README_BAI_CUSTOM.txt) | body 续训 / 打包白猫 student（历史流程） |
 | [docs/camfix/CAMERA_CHANGES_SUMMARY.md](docs/camfix/CAMERA_CHANGES_SUMMARY.md) | 摄像头/DroidCam 改动摘要 |
 | [README.md](README.md) | Fork 总览、双环境策略 |
 
-### 0.5 当前进度（2026-05-28）
+### 0.5 当前进度（2026-05-29）
 
 **已完成**
 
-- 紧凑启动窗 + 懒加载完整调参窗（§5–6）
+- **默认完整调参窗**启动 + 可选精简小窗（§5–6）
 - 外挂输出 L0：`contract.json` / `status.json` 元数据（§7）
 - THA3 / THA4 Student 双图像源（§8）
 - 双 pip 环境：`deps/pip/requirements-tha4-student.txt` 与 `requirements-tha3-ort.txt`
+- **窗口捕获**视频源（DroidCam 预览窗绕行）、**输出动态增强校准**（缩放 + 左右归中）
+- **默认启动完整调参窗**（精简小窗可选）；加载模型后自动连视频源（窗口捕获优先）
 
 **下一步（勿跳层）**
 
@@ -71,7 +87,7 @@ cd /d E:\tha4fork-develop
 
 ### 0.6 提交前自检
 
-- [ ] 改动路径是否都在 `E:\tha4fork-develop` 下
+- [ ] 改动是否落在正确仓库（**发布**改 `E:\tha4fork`，**研发**改 `E:\tha4fork-develop`）
 - [ ] 外挂模式：`status.json` 的 `frame_sequence` 是否递增
 - [ ] THA3 ↔ THA4 切换是否 `stop()` 旧源
 - [ ] 图层改动是否仅在 L1 范围
@@ -84,17 +100,19 @@ cd /d E:\tha4fork-develop
 
 `character_model_mediapipe_puppeteer_load_preview.py`
 
-能力概要：紧凑启动窗、懒加载完整窗、独立无边框输出窗、呼吸/嘴部（面捕或音频）、非线性缩放曲线、倾斜/镜像后处理、外挂图层桥接、THA3/THA4 双图像源。
+能力概要：默认完整调参窗、可选精简小窗、独立无边框输出窗、呼吸/嘴部（面捕或音频）、非线性缩放曲线、倾斜/镜像后处理、外挂图层桥接、THA3/THA4 双图像源。
 
 ---
 
-## 2) 目录结构（本仓）
+## 2) 目录结构（本仓 = fork 发布总库）
 
 ```
-E:\tha4fork-develop\
+E:\tha4fork\
 ├── HANDOVER.md                 ← 本文件（主入口）
-├── README.md                   ← Fork 总览（GitHub 首页类说明）
-├── 》》》》start《《《《.bat       ← 一键启动
+├── README.md                   ← Fork 总览（GitHub 首页）
+├── TROUBLESHOOTING_QA.md       ← 排障（最全，权威副本）
+├── docs/DOC_INDEX.md           ← 全部 Markdown 索引
+├── 》》》》start《《《《.bat       ← 定制部署一键启动
 ├── run_load_preview_puppeteer.bat
 ├── plans/                      ← 计划与外挂接口说明
 ├── deps/                       ← THA3 打包资产 + pip 双环境脚本
@@ -102,10 +120,12 @@ E:\tha4fork-develop\
 ├── docs/camfix/
 ├── scripts/probe_cameras.bat
 └── face-puppeteer-ui-enhancements-ai-code/
-    ├── HANDOVER.md             ← 与本文件同步的副本
-    ├── TROUBLESHOOTING_QA.md
+    ├── HANDOVER.md             ← 重定向 stub → 根 HANDOVER.md
+    ├── TROUBLESHOOTING_QA.md   ← 重定向 stub → 根 TROUBLESHOOTING_QA.md
     └── experiments/puppeteer_load_preview/   ← 实验主目录
 ```
+
+研发主仓 **`E:\tha4fork-develop`** 目录布局与上表相同（无 GitHub 发布文档时以 fork 根文档为准）。
 
 ---
 
@@ -124,7 +144,7 @@ E:\tha4fork-develop\
 
 | 章节 | 内容 |
 |------|------|
-| §5 | 紧凑启动 + 懒加载完整窗 |
+| §5 | 完整调参窗 + 可选精简小窗 |
 | §6 | 关键类名与变量 |
 | §7 | 外挂图层输出（bridge、`contract`/`status`） |
 | §8 | THA3 / THA4 Student 双图像源 |
@@ -133,14 +153,16 @@ E:\tha4fork-develop\
 
 ---
 
-## 5) 紧凑启动 + 懒加载完整窗
+## 5) 完整调参窗 + 可选精简小窗
 
 实现文件：`character_model_mediapipe_puppeteer_load_preview.py`
 
-- 启动仅 3 按钮：加载上次模型、校正头部朝向、打开完整调参窗
-- 完整窗 `ControlsFrame` 首次打开时懒创建
+- **启动默认**：`startup_show_full_controls()` → 展开完整调参窗并确保输出窗（外挂模式除外）
+- **精简小窗**（可选）：3 快捷按钮 — 校正头部朝向、输出动态增强校准、切换到完整调参窗；加载新模型需在完整窗操作
+- 完整窗 `ControlsFrame` 首次需要时懒创建；精简 ↔ 完整可切换（`show_compact_launcher` / `show_full_controls_window`）
 - 捕获循环与输出定时器始终运行；仅控件可见性变化
 - `ValueState` / `SelectionState`：完整窗未创建时的占位，避免访问不存在的 wx 控件
+- **视频源**：启动时不自动连摄像头；**Load Other / Load Last 加载模型** 时调用 `refresh_and_autoload_video_source()`（窗口捕获优先）
 
 ---
 
@@ -186,14 +208,16 @@ E:\tha4fork-develop\
 
 切换图像源时对旧源 `stop()` 再 `start()` 新源。外壳共用 `draw_result_wx_image()` 与外挂 bridge。
 
-验收：
+验收（在 **实际运行的仓库** 下执行，fork 或 develop 均可）：
 
 ```bat
-cd /d E:\tha4fork-develop\face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo
+cd /d E:\tha4fork\face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo
 set PYTHONPATH=%cd%\src
 venv\Scripts\python.exe ..\experiments\puppeteer_load_preview\smoke_tha3_preview.py
 venv\Scripts\python.exe ..\experiments\puppeteer_load_preview\smoke_load_preview.py
 ```
+
+（develop 将路径中的 `tha4fork` 换为 `tha4fork-develop` 即可。）
 
 ---
 
@@ -207,9 +231,9 @@ venv\Scripts\python.exe ..\experiments\puppeteer_load_preview\smoke_load_preview
 
 ## 10) 快速验收
 
-1. `》》》》start《《《《.bat` → 仅见 3 按钮 + 提示。
-2. 打开完整窗 → 控件懒加载出现。
-3. 加载模型 → 默认姿态预览。
+1. `》》》》start《《《《.bat` → **默认完整调参窗** + 输出窗（非仅 3 按钮精简窗）。
+2. 精简小窗 ↔ 完整窗切换正常（完整窗内「切换到精简小窗」）。
+3. 加载模型 → 默认姿态预览；视频源列表刷新并尝试自动连接。
 4. 外挂输出勾选 → 内置输出窗隐藏，`external_layer_output/status.json` 中 `frame_sequence` 递增。
 5. THA3 立绘加载 → 面捕驱动；切回 THA4 Student 仍正常。
 

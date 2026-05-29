@@ -52,6 +52,9 @@ temp/
 
 venv/*
 
+# CodeGraph 本地索引（开发用 MCP，勿提交）
+.codegraph/
+
 # THA3 ONNX bundle (large; populate via deps/tha3/populate_tha3_bundle.ps1)
 deps/tha3/models/**/*.onnx
 

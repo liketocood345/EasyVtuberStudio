@@ -26,4 +26,4 @@ powershell -ExecutionPolicy Bypass -File deps\tha3\populate_tha3_bundle.ps1
 deps\pip\install_all_image_source_deps.bat
 ```
 
-`venv` 默认位于 `talking-head-anime-4-demo\venv`（相对仓库根）。
+`venv` 默认位于 `face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo\venv`（相对仓库根；亦兼容根目录 `talking-head-anime-4-demo\venv`）。

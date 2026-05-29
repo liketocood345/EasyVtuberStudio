@@ -17,7 +17,7 @@ if (-not $ShortcutPath) {
 }
 
 if (-not $ActiveDevRoot) {
-    $ActiveDevRoot = Join-Path $RepoParent "THA4_bundle_bai_custom"
+    $ActiveDevRoot = Join-Path $RepoParent "tha4fork-develop"
 }
 
 if ($PublishFork) { $Fork = $true }

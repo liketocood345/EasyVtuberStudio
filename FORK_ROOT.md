@@ -1,4 +1,6 @@
-# Git 与本地路径说明
+# Git 与本地路径说明（发布总库 `E:\tha4fork`）
+
+本文件位于 **fork 发布总库** 根目录。日常开发在 **`E:\tha4fork-develop`**，稳定后合并到本目录再 push。
 
 ## 远程
 
@@ -11,15 +13,16 @@
 
 | 路径 | 角色 |
 |------|------|
-| **`E:\tha4fork-develop`** | **研发主仓**（实验代码、`plans/`、`deps/`、本文件所在仓库） |
-| `E:\tha4fork` | 对外发布总库（README 首页；稳定后从 develop 合并） |
+| **`E:\tha4fork`** | **对外发布总库**（本仓库；定制客户部署、GitHub 首页文档） |
+| **`E:\tha4fork-develop`** | 研发主仓（功能先行，合并到 fork 后发布） |
+| ~~`E:\THA4_bundle_bai_custom`~~ | 已废弃 |
 
-新 Agent 请读 **`E:\tha4fork-develop\HANDOVER.md`**。
+文档权威副本：**本目录**下 [TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md)、[HANDOVER.md](HANDOVER.md) 等；完整索引见 [docs/DOC_INDEX.md](docs/DOC_INDEX.md)。
 
-## 常用命令（develop 主仓）
+## 常用命令（发布总库）
 
 ```bat
-cd /d E:\tha4fork-develop
+cd /d E:\tha4fork
 git pull origin main
 git add -A
 git commit -m "your message"
@@ -33,11 +36,23 @@ git fetch upstream
 git merge upstream/main
 ```
 
-## 已知问题记录（2026-05-28）
+## 启动（定制部署）
 
-### 摄像头兼容性（DroidCam）
+```bat
+cd /d E:\tha4fork
+》》》》start《《《《.bat
+```
 
-- 现象：在本项目中选择 `DroidCam Video` 时，可能出现“摄像头已打开但画面无效”或 OpenCV DSHOW 相关异常日志。
-- 已观察到的典型报错：`cv::VideoCapture::open VIDEOIO(DSHOW): raised unknown C++ exception!`
-- 结论：当前阶段不再强制要求必须兼容特定虚拟视频源（尤其是 DroidCam）。该问题先作为已知兼容性缺陷保留，后续再专项处理。
-- 临时策略：优先使用系统/USB 实体摄像头或其他在本机已验证稳定的视频源继续开发与验收。
+等价于 `run_load_preview_puppeteer.bat`（自动解析 `face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo` 与 `venv`）。
+
+## 已知问题与策略（2026-05-29）
+
+### DroidCam / 虚拟摄像头
+
+- 虚拟摄像头项（「DroidCam Video」）常出现占位画面、黑帧、比例异常；**不再**为异常虚拟流做兼容补丁。
+- **推荐**：视频源使用 **窗口捕获**，抓取 DroidCam **电脑端预览窗**（见 [TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md) 第二节）。
+- 彻底退出 DroidCam 用户态进程：可选 `E:\doridcam-oprate\Stop-DroidCam.bat`（用户脚本，非本仓库必需）。
+
+### 持久化路径
+
+- `load_preview_ui_state.json` 中模型/立绘路径无效时，重启**不会**自动修复；见 [TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md) 第九节。

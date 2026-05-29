@@ -291,10 +291,10 @@ flowchart LR
 
 ## 9. 文档维护
 
-- **活跃开发目录：** `E:\THA4_bundle_bai_custom\`  
-- **本文件位置（fork）：** `HARDWARE_REQUIREMENTS.md`  
+- **活跃开发目录：** `E:\tha4fork-develop\`  
+- **本文件位置（fork 权威副本）：** `HARDWARE_REQUIREMENTS.md`  
 - 重大功能变更（分辨率默认、AA 算法、CUDA 可选等）后应更新第 4、7、8 节。  
-- 若需与 `bai_custom` 同步评估结论，由维护者决定是否在备份 fork 时一并复制本文件。
+- develop 与 fork 内容应保持一致；以 **fork 根目录** 为对外发布副本。
 
 ---
 

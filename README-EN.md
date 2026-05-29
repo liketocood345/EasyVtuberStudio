@@ -29,23 +29,26 @@ This project is already packaged and ready for direct use in its current reposit
 
 ## What This Repo Is
 
-- Main local repo path: `E:\tha4fork`
-- Upstream base project: [pkhungurn/talking-head-anime-4-demo](https://github.com/pkhungurn/talking-head-anime-4-demo)
-- Fork remote (owner): [liketocood345/EasyVtuber-with-THA3-THA4](https://github.com/liketocood345/EasyVtuber-with-THA3-THA4)
+- **Release repo (this tree):** `E:\tha4fork` — deployment, GitHub push, **canonical documentation**
+- **Active development:** `E:\tha4fork-develop` — daily coding; merge to fork when stable
+- Upstream base: [pkhungurn/talking-head-anime-4-demo](https://github.com/pkhungurn/talking-head-anime-4-demo)
+- Fork remote: [liketocood345/EasyVtuber-with-THA3-THA4](https://github.com/liketocood345/EasyVtuber-with-THA3-THA4)
 
 ## Quick Pointers
 
 - Chinese main overview: [README.md](README.md)
+- **Full doc index:** [docs/DOC_INDEX.md](docs/DOC_INDEX.md)
+- **First-time deploy (GitHub ZIP):** [DEPLOY.md](DEPLOY.md)
 - Detailed project notes: [README-detail.md](README-detail.md)
-- Troubleshooting FAQ: [TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md)
+- Troubleshooting FAQ (most complete): [TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md)
 - Handover document: [HANDOVER.md](HANDOVER.md)
 - Change history: [CHANGELOG.md](CHANGELOG.md)
 
 ## Current Direction
 
-- Active development and experiments are synchronized into this fork.
-- Camera compatibility with some virtual camera stacks can vary by backend/driver.
-- Documentation in this repository is treated as the operational source for project status and process.
+- Window capture video source (OBS-style, for DroidCam preview window bypass)
+- Output dynamic enhancement calibration (scale baseline + horizontal recenter)
+- Documentation in **`E:\tha4fork`** is the operational source of truth
 
 ## Encoding and Language Note
 

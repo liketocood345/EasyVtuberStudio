@@ -1,168 +1,150 @@
-# Face Puppeteer UI Enhancements (Fork)
+# Face Puppeteer UI Enhancements — 详细说明
 
-Fork staging repository for THA4 MediaPipe puppeteer UI work.  
-**Active source of truth:** `E:\THA4_bundle_bai_custom\`  
-**This folder:** distributable copy + history archive.
+> **文档权威副本在 fork 发布总库 `E:\tha4fork`（本文件）。**  
+> 日常代码开发在 **`E:\tha4fork-develop`**，稳定后合并到 fork 再 push。  
+> 完整 Markdown 索引：[docs/DOC_INDEX.md](docs/DOC_INDEX.md)
+
+> **从 GitHub ZIP 首次部署请读 [DEPLOY.md](DEPLOY.md)。**  
+> 完整 Markdown 索引见 [docs/DOC_INDEX.md](docs/DOC_INDEX.md)
 
 ## Layout
 
 ```
 E:\tha4fork/
-├── README.md
-├── README-detail.md
-├── READMEfrom-main.md
-├── FORK_ROOT.md
-├── HANDOVER.md
-├── CHANGELOG.md
-├── TROUBLESHOOTING_QA.md
+├── README.md                    ← GitHub 首页总览
+├── README-detail.md             ← 本文件
+├── README-EN.md
+├── READMEfrom-main.md           ← 上游 THA4 demo 原 README
+├── HANDOVER.md                  ← Agent / 维护者主入口
+├── FORK_ROOT.md                 ← Git 远程与路径
+├── TROUBLESHOOTING_QA.md        ← 排障（最全）
 ├── HARDWARE_REQUIREMENTS.md
+├── CHANGELOG.md
 ├── BACKUP.md
-├── run.bat
-├── run_load_preview_puppeteer.bat
+├── docs/                        ← 上游模块说明、camfix、training
+├── deps/                        ← pip 双环境 + THA3 资产
+├── plans/                       ← 多图层计划、外挂接口
 ├── 》》》》start《《《《.bat
-├── face-puppeteer-ui-enhancements-ai-code/ # 定制 UI 与实验脚本集合
-├── src/
-├── docs/
-├── deps/
-├── data/
-├── tools/
-└── venv/
+├── run_load_preview_puppeteer.bat
+└── face-puppeteer-ui-enhancements-ai-code/
+    ├── experiments/puppeteer_load_preview/   ← Load Preview 主脚本
+    ├── talking-head-anime-4-demo/            ← THA4 src + venv
+    ├── his/                                  ← 代码包历史快照
+    └── packaged/bai_450k/                    ← 示例 student 模型
 ```
+
+## 仓库分工
+
+| 路径 | 角色 |
+|------|------|
+| **`E:\tha4fork`** | 对外发布、定制客户部署、GitHub push、**文档最全** |
+| **`E:\tha4fork-develop`** | 日常改代码；功能可能领先 fork |
+| ~~`E:\THA4_bundle_bai_custom`~~ | 已废弃 |
+
+## 启动
+
+**发布 / 定制环境（fork）：**
+
+```bat
+cd /d E:\tha4fork
+》》》》start《《《《.bat
+```
+
+**研发（develop）：**
+
+```bat
+cd /d E:\tha4fork-develop
+》》》》start《《《《.bat
+```
+
+等价于各自根目录的 `run_load_preview_puppeteer.bat`（自动解析 `face-puppeteer-ui-enhancements-ai-code` 与 `venv`）。
 
 ## 更新与备份规则
 
-需要留档时：**把当前根目录内容移入 `his/`，用本地时间精确到秒命名**，再从 `bai_custom` 复制新版本到根目录。
+需要留档时：在 **`face-puppeteer-ui-enhancements-ai-code\`** 运行 `archive_to_his.ps1`，将当前内容移入 `his/yyyy-MM-dd_HH-mm-ss/`。
 
 | 项 | 约定 |
 |----|------|
-| 快照目录名 | `yyyy-MM-dd_HH-mm-ss`（例：`2026-05-27_14-30-45`） |
+| 快照目录名 | `yyyy-MM-dd_HH-mm-ss` |
 | 不移入快照 | `his/`、`.git/` |
-| 推荐顺序 | `archive_to_his.ps1` → `sync_from_bai_custom.ps1` |
+| develop → fork | 手动合并文件 + 更新 fork 根文档；~~`sync_from_bai_custom.ps1`~~ 已废弃 |
 
-详细步骤与恢复说明见 **[BACKUP.md](BACKUP.md)**。
+详细步骤见 **[BACKUP.md](BACKUP.md)**。
 
 ## 硬件需求
 
-单独运行、与 **OBS / 快手直播助手** 同开时的 CPU/GPU/内存建议、**项目原理与显存档位说明**（为何文档会出现 12GB 推荐），以及与 THA4 原版的对比，见 **[HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md)**。
+单独运行、与 **OBS / 快手直播助手** 同开时的 CPU/GPU/内存建议，见 **[HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md)**。
 
 ## 训练建议（云服务器 / 角色风格）
 
 ### 1) 何时建议用云服务器训练
 
-以下场景建议把训练放到云服务器（本地仅做推理与调参）：
-
 - 本地显卡显存不足或常与 OBS/直播助手抢资源。
-- 需要长时间连续训练（如 450k -> 800k）且不希望占用日常工作机器。
+- 需要长时间连续训练（如 450k → 800k）。
 - 需要多版本并行试验（不同 `distiller_config` 参数组）。
 
-建议配置（训练向）：
-- 单卡 NVIDIA 12GB+ 可起步，24GB+ 更从容；
-- 稳定 SSD 与足够磁盘配额（保存 checkpoint）；
-- 训练完成后只下载打包结果（`face_morpher.pt` / `body_morpher.pt` / `character.png`）回本地。
+建议配置：单卡 NVIDIA 12GB+ 可起步，24GB+ 更从容；稳定 SSD 与足够磁盘配额。
 
-实践建议：
-- 云端负责 `distill` / checkpoint 迭代，本地只负责 `packaged/.../character_model.yaml` 验证；
-- 固定 checkpoint 命名与日志，便于回溯（如 `0045=450k`, `0080=800k`）。
+实践建议：云端负责 `distill` / checkpoint 迭代，本地只负责 `packaged/.../character_model.yaml` 验证。
 
 ### 2) 低色彩复杂度角色的训练建议
 
-对于配色简单、渐变少、大面积纯色（“低色彩复杂度”）角色，常见问题是边缘发灰、眼周脏色或轻微色块抖动。建议：
+对于配色简单、渐变少、大面积纯色角色，常见问题是边缘发灰、眼周脏色或轻微色块抖动。建议：
 
-- 优先降低 body 训练里的颜色混合强度（参考本仓 `bai_450k` 经验：`color_change`、`blended` 适当下调）。
+- 优先降低 body 训练里的颜色混合强度（参考 `bai_450k` 经验）。
 - 先做 450k 里程碑观察眼部与脸部，再决定是否继续到 650k/800k。
-- 保持角色原图边界干净（透明通道与边缘抗锯齿一致），减少训练时把半透明边缘学成灰边。
-- 在手动 poser 与 puppeteer 两端都验证：避免只在单一姿态看起来正常。
+- 保持角色原图边界干净（透明通道与边缘抗锯齿一致）。
 
 可参考：
-- `packaged/bai_450k/TRAINING_NOTES.txt`
-- `packaged/bai_450k/PACKAGING_README.txt`
+
+- `face-puppeteer-ui-enhancements-ai-code/packaged/bai_450k/TRAINING_NOTES.txt`
+- `docs/training/README_BAI_CUSTOM.txt`（历史流程归档）
 
 ## 排障 Q&A
 
-常见故障、DroidCam/camfix 结论、fork 与 bai_custom 区别，以及**容易被当成 bug 的正常表现**，见 **[TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md)**。
+常见故障、**窗口捕获**、DroidCam 绕行、fork/develop 区别、定制化持久化预期（第九节），见 **[TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md)**。
 
 ## 改动列表 / Change log
 
-完整列表见 **[CHANGELOG.md](CHANGELOG.md)**；历史归档说明见 **[his/CHANGELOG.md](his/CHANGELOG.md)**。
+完整列表见 **[CHANGELOG.md](CHANGELOG.md)**；代码包历史见 **`face-puppeteer-ui-enhancements-ai-code/his/`**。
 
 ### 摘要（相对 THA4 原版 puppeteer）
 
 | 类别 | 主要改动 |
 |------|----------|
-| 启动 | 紧凑三按钮启动窗；完整调参窗懒加载；可切换紧凑/完整 |
-| 模型 | 加载后立刻默认 pose 预览；Load Last / Load Other |
-| 输出 | 独立无边框输出窗；自动平移/缩放；曲线/倾斜/镜像/抗锯齿 |
-| 嘴部 | 人脸/音频切换；示波器；设备名显示（pose converter） |
-| 摄像头 | 视频来源下拉与刷新；多设备/多后端；DroidCam 优先 MSMF；后台打开防卡死 |
-| 持久化 | 开关、周期、背景、镜像、输出窗几何、上次模型路径；张嘴模式及面捕/声音参数 |
-| 调查 | DroidCam 问题主要为客户端/虚拟摄像头配置（见 camfix 测试） |
+| 启动 | **默认完整调参窗**；可选精简小窗（朝向/输出增强校准 + 打开完整窗） |
+| 模型 | 加载后立刻默认 pose；Load Last / Load Other；THA3 / THA4 双图像源 |
+| 输出 | 独立无边框输出窗；自动平移/缩放；**输出动态增强校准**；曲线/倾斜/镜像/抗锯齿 |
+| 嘴部 | 人脸/音频切换；示波器；音频驱动有少量延时（界面已注明） |
+| 视频源 | **窗口捕获**（DroidCam 预览窗绕行）；加载模型后自动连接（窗口优先） |
+| 持久化 | `load_preview_ui_state.json` 保存开关、几何、模型路径等 |
+| 外挂 | `external_layer_output_bridge` → `contract.json` / `status.json` |
 
-### 修改的文件
+更细条目见 `face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/README.txt`。
 
-- `experiments/puppeteer_load_preview/character_model_mediapipe_puppeteer_load_preview.py`
-- `talking-head-anime-4-demo/src/tha4/mocap/mediapipe_face_pose_converter_00.py`
-- `packaged/bai_450k/`
+## 摄像头 / DroidCam
 
-## Run (from THA4 venv)
+- **推荐**：窗口捕获抓取 DroidCam **电脑端预览窗**，勿死磕「DroidCam Video」虚拟摄像头项。
+- 隔离测试摘要：[docs/camfix/CAMERA_CHANGES_SUMMARY.md](docs/camfix/CAMERA_CHANGES_SUMMARY.md)。
 
-```bat
-cd /d E:\THA4_bundle_bai_custom\talking-head-anime-4-demo
-set PYTHONPATH=%cd%\src
-venv\Scripts\python.exe E:\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\character_model_mediapipe_puppeteer_load_preview.py
-```
-
-Or use the launcher in `experiments/puppeteer_load_preview/run_load_preview_puppeteer.bat` (paths may point at `bai_custom`; adjust if needed).
-
-## Camera / DroidCam (2026-05-27)
-
-Isolated testing (`E:\THA4_bundle_bai_custom\camfix\`) showed:
-
-- DroidCam can appear in DirectShow lists when the client is running.
-- OpenCV `CAP_DSHOW` on DroidCam index can crash or hang on this machine; MSMF is safer.
-- **No picture / wrong device** was ultimately traced to **DroidCam app / virtual camera setup**, not THA4 UI alone.
-
-Camfix sources remain under `bai_custom\camfix\` for reference; not duplicated in this fork root.
-
-## Sync from bai_custom
-
-After changes in `E:\THA4_bundle_bai_custom\`, refresh this fork:
-
-- `experiments/puppeteer_load_preview/character_model_mediapipe_puppeteer_load_preview.py`
-- `talking-head-anime-4-demo/src/tha4/mocap/mediapipe_face_pose_converter_00.py`
-- `packaged/bai_450k/`
-- `HANDOVER.md`
-
-Before large updates, archive the fork root under `his/yyyy-MM-dd_HH-mm-ss/` (see [BACKUP.md](BACKUP.md)).
-
-## Git (optional)
-
-This directory is structured as a fork workspace but may not be `git init` yet. When ready:
+## Git
 
 ```bat
-cd /d E:\face-puppeteer-ui-enhancements-ai-code
-git init
-git add .
-git commit -m "Reorganize fork layout; archive 2026-05-27 snapshot under his/"
+cd /d E:\tha4fork
+git pull origin main
+git add -A
+git commit -m "your message"
+git push origin main
 ```
 
-Then add your remote and push to GitHub/GitLab as needed.
-
-### Stable Fork Launcher
-
-Use `面捕启动.bat` at the fork root. It forwards to `experiments\puppeteer_load_preview\run_load_preview_puppeteer.bat` via a **relative path**.
-
-As long as the target file name and location stay unchanged, this launcher remains valid across later iterations/syncs.
-
-其他：该部分由liketocode345与cursor协同开发，由于是ai负责代码实现，本人已确认出现故障时会保护性闪退，如果出现其他意外本人概不负责，如果有想要的功能可以许愿，可使用米强迫liketocode345帮你解决定制问题
+远程说明见 [FORK_ROOT.md](FORK_ROOT.md)。
 
 ## 免责声明 / Disclaimer
 
 本项目为个人实验性质的面捕与角色驱动工具，用于学习、测试与创作流程验证，不构成任何形式的商业级稳定性或适配承诺。
 
-- 在合理硬件配置、正常散热和正确驱动环境下，本项目与常见图形/直播软件类似，通常不会主动对硬件造成物理损坏。
-- 本项目不会进行超频、改电压、刷固件等硬件级操作；但高负载场景下可能出现发热、降频、风扇噪音、卡顿、闪退或 `CUDA out of memory`。
-- 若与 OBS、快手直播助手、虚拟摄像头等软件同时运行，资源争用会明显增加，可能导致掉帧、无画面、设备占用冲突或程序不稳定。
-- 使用者应自行确认设备状态（温度、功耗、驱动版本、音视频设备占用）并承担由系统环境、第三方驱动、虚拟设备链路和个体配置差异导致的风险。
-- 因兼容性问题、配置不当、第三方软件冲突或不可预见异常造成的数据丢失、业务中断、设备异常等间接损失，项目维护者不承担责任。
+- 高负载场景下可能出现发热、降频、闪退或 `CUDA out of memory`。
+- 与 OBS、快手直播助手、虚拟摄像头等同开时资源争用会明显增加。
+- 使用者应自行确认设备状态并承担由环境、第三方软件冲突导致的风险。
 
-建议在重要直播/录制前先进行单机压力测试，并参考 `HARDWARE_REQUIREMENTS.md` 与 `TROUBLESHOOTING_QA.md` 完成环境校验与预排障。
+建议在重要直播/录制前先进行单机压力测试，并参考 `HARDWARE_REQUIREMENTS.md` 与 `TROUBLESHOOTING_QA.md`。
