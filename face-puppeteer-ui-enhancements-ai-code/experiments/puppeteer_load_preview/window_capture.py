@@ -27,6 +27,50 @@ PW_CLIENT_RENDER = PW_CLIENTONLY | PW_RENDERFULLCONTENT
 SRCCOPY = 0x00CC0020
 
 _dpi_awareness_set = False
+_prototypes_initialized = False
+
+
+def _init_win32_prototypes() -> None:
+    global _prototypes_initialized
+    if _prototypes_initialized:
+        return
+    _prototypes_initialized = True
+
+    user32.GetDC.argtypes = [wintypes.HWND]
+    user32.GetDC.restype = wintypes.HDC
+    user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    user32.ReleaseDC.restype = ctypes.c_int
+    user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+    user32.PrintWindow.restype = wintypes.BOOL
+
+    gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    gdi32.CreateCompatibleDC.restype = wintypes.HDC
+    gdi32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+    gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+    gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    gdi32.SelectObject.restype = wintypes.HGDIOBJ
+    gdi32.BitBlt.argtypes = [
+        wintypes.HDC, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        wintypes.HDC, ctypes.c_int, ctypes.c_int, wintypes.DWORD,
+    ]
+    gdi32.BitBlt.restype = wintypes.BOOL
+    gdi32.GetDIBits.argtypes = [
+        wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
+        wintypes.LPVOID, ctypes.POINTER(BITMAPINFO), wintypes.UINT,
+    ]
+    gdi32.GetDIBits.restype = ctypes.c_int
+    gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    gdi32.DeleteObject.restype = wintypes.BOOL
+    gdi32.DeleteDC.argtypes = [wintypes.HDC]
+    gdi32.DeleteDC.restype = wintypes.BOOL
+
+
+def _as_hwnd(hwnd: int) -> wintypes.HWND:
+    return wintypes.HWND(int(hwnd))
+
+
+def _as_hdc(hdc) -> wintypes.HDC:
+    return wintypes.HDC(int(hdc))
 
 
 class BITMAPINFOHEADER(ctypes.Structure):
@@ -59,6 +103,7 @@ class WindowInfo:
 
 def _ensure_dpi_awareness() -> None:
     global _dpi_awareness_set
+    _init_win32_prototypes()
     if _dpi_awareness_set:
         return
     try:
@@ -137,7 +182,7 @@ def _client_screen_rect(hwnd: int) -> Optional[Tuple[int, int, int, int]]:
     return left, top, left + width, top + height
 
 
-def _hdc_bitmap_to_bgr(hdc_mem: int, hbmp: int, width: int, height: int) -> Optional[numpy.ndarray]:
+def _hdc_bitmap_to_bgr(hdc_mem, hbmp, width: int, height: int) -> Optional[numpy.ndarray]:
     bmi = BITMAPINFO()
     bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
     bmi.bmiHeader.biWidth = width
@@ -148,16 +193,17 @@ def _hdc_bitmap_to_bgr(hdc_mem: int, hbmp: int, width: int, height: int) -> Opti
 
     buffer_size = width * height * 4
     buffer = ctypes.create_string_buffer(buffer_size)
-    lines = gdi32.GetDIBits(hdc_mem, hbmp, 0, height, buffer, ctypes.byref(bmi), 0)
+    lines = gdi32.GetDIBits(
+        _as_hdc(hdc_mem), wintypes.HBITMAP(int(hbmp)), 0, height, buffer, ctypes.byref(bmi), 0)
     if lines == 0:
         return None
     bgra = numpy.frombuffer(buffer, dtype=numpy.uint8).reshape((height, width, 4))
     return cv2.cvtColor(bgra, cv2.COLOR_BGRA2BGR)
 
 
-def _capture_with_hdc_bitblt(hdc_source: int, width: int, height: int,
+def _capture_with_hdc_bitblt(hdc_source, width: int, height: int,
                              src_x: int = 0, src_y: int = 0) -> Optional[numpy.ndarray]:
-    hdc_screen = user32.GetDC(0)
+    hdc_screen = user32.GetDC(wintypes.HWND(0))
     if not hdc_screen:
         return None
     hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
@@ -166,7 +212,7 @@ def _capture_with_hdc_bitblt(hdc_source: int, width: int, height: int,
     try:
         ok = gdi32.BitBlt(
             hdc_mem, 0, 0, width, height,
-            hdc_source, src_x, src_y, SRCCOPY)
+            _as_hdc(hdc_source), src_x, src_y, SRCCOPY)
         if not ok:
             return None
         return _hdc_bitmap_to_bgr(hdc_mem, hbmp, width, height)
@@ -174,12 +220,13 @@ def _capture_with_hdc_bitblt(hdc_source: int, width: int, height: int,
         gdi32.SelectObject(hdc_mem, old)
         gdi32.DeleteObject(hbmp)
         gdi32.DeleteDC(hdc_mem)
-        user32.ReleaseDC(0, hdc_screen)
+        user32.ReleaseDC(wintypes.HWND(0), hdc_screen)
 
 
 def _capture_print_window_client(hwnd: int, width: int, height: int) -> Optional[numpy.ndarray]:
     """OBS/WGC fallback for hardware-accelerated or occluded windows."""
-    hdc_screen = user32.GetDC(0)
+    hwnd_w = _as_hwnd(hwnd)
+    hdc_screen = user32.GetDC(wintypes.HWND(0))
     if not hdc_screen:
         return None
     hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
@@ -187,13 +234,13 @@ def _capture_print_window_client(hwnd: int, width: int, height: int) -> Optional
     old = gdi32.SelectObject(hdc_mem, hbmp)
     try:
         ok = user32.PrintWindow(
-            wintypes.HWND(int(hwnd)),
+            hwnd_w,
             hdc_mem,
             PW_CLIENT_RENDER,
         )
         if not ok:
             ok = user32.PrintWindow(
-                wintypes.HWND(int(hwnd)),
+                hwnd_w,
                 hdc_mem,
                 PW_RENDERFULLCONTENT,
             )
@@ -204,18 +251,19 @@ def _capture_print_window_client(hwnd: int, width: int, height: int) -> Optional
         gdi32.SelectObject(hdc_mem, old)
         gdi32.DeleteObject(hbmp)
         gdi32.DeleteDC(hdc_mem)
-        user32.ReleaseDC(0, hdc_screen)
+        user32.ReleaseDC(wintypes.HWND(0), hdc_screen)
 
 
 def _capture_obs_window_dc_bitblt(hwnd: int, width: int, height: int) -> Optional[numpy.ndarray]:
     """Same as OBS dc_capture_capture: BitBlt from GetDC(window), not from screen."""
-    hdc_window = user32.GetDC(wintypes.HWND(int(hwnd)))
+    hwnd_w = _as_hwnd(hwnd)
+    hdc_window = user32.GetDC(hwnd_w)
     if not hdc_window:
         return None
     try:
         return _capture_with_hdc_bitblt(hdc_window, width, height, 0, 0)
     finally:
-        user32.ReleaseDC(wintypes.HWND(int(hwnd)), hdc_window)
+        user32.ReleaseDC(hwnd_w, hdc_window)
 
 
 def _capture_screen_bitblt(hwnd: int, width: int, height: int) -> Optional[numpy.ndarray]:
@@ -223,13 +271,13 @@ def _capture_screen_bitblt(hwnd: int, width: int, height: int) -> Optional[numpy
     if rect is None:
         return None
     left, top, _, _ = rect
-    hdc_screen = user32.GetDC(0)
+    hdc_screen = user32.GetDC(wintypes.HWND(0))
     if not hdc_screen:
         return None
     try:
         return _capture_with_hdc_bitblt(hdc_screen, width, height, left, top)
     finally:
-        user32.ReleaseDC(0, hdc_screen)
+        user32.ReleaseDC(wintypes.HWND(0), hdc_screen)
 
 
 def _frame_mean_luma(bgr: numpy.ndarray) -> float:
@@ -289,7 +337,10 @@ def capture_window_client_bgr(hwnd: int) -> Optional[numpy.ndarray]:
         best: Optional[numpy.ndarray] = None
         best_score = -1.0
         for method in methods:
-            frame = method(hwnd, width, height)
+            try:
+                frame = method(hwnd, width, height)
+            except Exception:
+                continue
             if frame is None:
                 continue
             score = _frame_mean_luma(frame)

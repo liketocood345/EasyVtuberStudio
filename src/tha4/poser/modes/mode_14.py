@@ -14,6 +14,11 @@ from torch import Tensor
 KEY_FACE_MORPHER = "face_morpher"
 KEY_BODY_MORPHER = "body_morpher"
 
+# Repo-relative default student (resolved from cwd = demo root at runtime).
+_DEFAULT_STUDENT_DIR = (
+    "data/character_models/baiten_from_project_forlon9/bai_450k/character_model"
+)
+
 
 @dataclass
 class Keys:
@@ -138,10 +143,10 @@ def create_poser(
     if module_file_names is None:
         module_file_names = {}
     if KEY_FACE_MORPHER not in module_file_names:
-        file_name = "data/character_models/lambda_00/face_morpher.pt"
+        file_name = f"{_DEFAULT_STUDENT_DIR}/face_morpher.pt"
         module_file_names[KEY_FACE_MORPHER] = file_name
     if KEY_BODY_MORPHER not in module_file_names:
-        file_name = "data/character_models/lambda_00/body_morpher.pt"
+        file_name = f"{_DEFAULT_STUDENT_DIR}/body_morpher.pt"
         module_file_names[KEY_BODY_MORPHER] = file_name
 
     loaders = {

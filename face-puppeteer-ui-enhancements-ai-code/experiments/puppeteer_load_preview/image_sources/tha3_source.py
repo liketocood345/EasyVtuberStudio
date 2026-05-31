@@ -6,7 +6,7 @@ import wx
 
 from image_sources.base import LoadUiSpec
 from tha3_engine import Tha3Engine
-from tha3_paths import IMAGE_SOURCE_THA3
+from tha3_paths import IMAGE_SOURCE_THA3, tha3_inference_assets_available
 from tha3_pose_adapter import mediapipe_pose_to_tha3_vector, neutral_tha3_pose
 
 
@@ -20,6 +20,9 @@ class Tha3Source:
 
     def start(self, main_frame) -> None:
         variant = getattr(main_frame, "tha3_model_variant", "separable_half")
+        if not tha3_inference_assets_available(variant):
+            self.engine = None
+            return
         self.engine = Tha3Engine(main_frame.device, model_variant=variant)
         self._default_pose = neutral_tha3_pose(main_frame.pose_converter)
         self.last_pose = None
@@ -34,15 +37,22 @@ class Tha3Source:
         main_frame.last_output_wx_image = None
         main_frame.last_pose = None
         main_frame._load_preview_shown = False
-        main_frame.update_source_image_bitmap()
+        main_frame._invalidate_source_preview_cache()
+        main_frame.update_source_image_bitmap(force=True)
 
     def is_ready(self, main_frame) -> bool:
         return self.engine is not None and self.engine.is_loaded()
 
     def load_asset(self, main_frame, path: str) -> bool:
+        from tha3_assets_prompt import ensure_tha3_assets_available
+
+        variant = getattr(main_frame, "tha3_model_variant", "separable_half")
+        if not ensure_tha3_assets_available(main_frame, variant):
+            return False
         if self.engine is None:
             self.start(main_frame)
-        assert self.engine is not None
+        if self.engine is None:
+            return False
         ok = self.engine.load_character_png(path)
         if not ok:
             message_dialog = wx.MessageDialog(
@@ -54,6 +64,8 @@ class Tha3Source:
             message_dialog.Destroy()
             return False
         main_frame.last_tha3_character_png = path
+        if hasattr(main_frame, "save_persistent_ui_state"):
+            main_frame.save_persistent_ui_state()
         try:
             import PIL.Image
 
@@ -63,13 +75,17 @@ class Tha3Source:
             main_frame.wx_source_image = wx.Bitmap.FromBufferRGBA(512, 512, pil.tobytes())
         except Exception:
             main_frame.wx_source_image = None
-        main_frame.update_source_image_bitmap()
+        main_frame._invalidate_source_preview_cache()
+        main_frame.update_source_image_bitmap(force=True)
         default_pose = self._default_pose or neutral_tha3_pose(main_frame.pose_converter)
         wx_image = self.engine.render_pose(default_pose)
         if wx_image is not None:
             main_frame.last_output_wx_image = wx_image
             main_frame.last_pose = default_pose
-            main_frame.draw_result_wx_image(wx_image, main_frame.LOAD_PREVIEW_BANNER)
+            main_frame.draw_result_wx_image(
+                wx_image,
+                main_frame.LOAD_PREVIEW_BANNER,
+                fast_affine_only=not main_frame.is_layer_blend_enabled())
             main_frame._load_preview_shown = True
         main_frame.save_persistent_ui_state()
         return True
@@ -89,6 +105,7 @@ class Tha3Source:
             main_frame.pose_converter,
         )
         current_pose = main_frame.apply_negative_tilt_limit_to_pose(current_pose)
+        current_pose = main_frame.apply_invert_tilt_mapping_to_pose(current_pose)
         pose_changed = self.last_pose is None or self.last_pose != current_pose
         background_changed = main_frame.last_background_choice != main_frame.get_output_background_signature()
 
@@ -105,7 +122,13 @@ class Tha3Source:
         main_frame.last_pose = current_pose
         main_frame.last_output_wx_image = wx_image
         main_frame.last_background_choice = main_frame.get_output_background_signature()
-        main_frame.draw_result_wx_image(wx_image, None)
+        main_frame._interp_keyframe_pose = list(current_pose)
+        main_frame._interp_substep_index = 0
+        main_frame.draw_result_wx_image(
+            wx_image,
+            None,
+            fast_affine_only=not main_frame.is_layer_blend_enabled())
+        main_frame._note_inference_fps_tick()
         return "rendered"
 
     def get_load_ui_spec(self) -> LoadUiSpec:

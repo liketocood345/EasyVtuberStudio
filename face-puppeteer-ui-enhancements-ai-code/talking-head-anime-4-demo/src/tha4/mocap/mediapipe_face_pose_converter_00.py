@@ -14,6 +14,8 @@ from scipy.spatial.transform import Rotation
 
 try:
     import sounddevice
+    import logging
+    logging.getLogger("sounddevice").setLevel(logging.ERROR)
 except Exception:
     sounddevice = None
 
@@ -45,6 +47,30 @@ def deg_to_rad(deg):
 
 def clamp(x, min_value, max_value):
     return max(min_value, min(max_value, x))
+
+
+def _wx_widget_alive(widget) -> bool:
+    if widget is None:
+        return False
+    try:
+        if not isinstance(widget, wx.Window):
+            return True
+        if hasattr(widget, "IsDestroyed") and widget.IsDestroyed():
+            return False
+        widget.GetHandle()
+        return True
+    except (RuntimeError, AttributeError):
+        return False
+
+
+def _safe_set_gauge_value(gauge, value: int) -> None:
+    if not _wx_widget_alive(gauge):
+        return
+    try:
+        gauge.SetValue(int(value))
+    except RuntimeError:
+        pass
+
 
 def slider_label(name_cn: str, name_en: str, unit_cn: str, unit_en: str) -> str:
     return f"{name_cn} / {name_en} ({unit_cn} / {unit_en})"
@@ -235,6 +261,9 @@ class FloatSliderControl:
         self.slider.SetValue(self._float_to_int(value))
         self._refresh_value_label()
 
+    def Enable(self, enabled: bool):
+        self.panel.Enable(bool(enabled))
+
 class MediaPipeFacePoseConverter00Args:
     def __init__(self,
                  smile_threshold_min: float = 0.4,
@@ -243,6 +272,7 @@ class MediaPipeFacePoseConverter00Args:
                  wink_mode: WinkMode = WinkMode.NORMAL,
                  eye_surprised_max: float = 0.5,
                  eye_blink_max: float = 0.8,
+                 eye_open_gain: float = 0.0,
                  eyebrow_down_max: float = 0.4,
                  cheek_squint_min: float = 0.1,
                  cheek_squint_max: float = 0.7,
@@ -259,6 +289,7 @@ class MediaPipeFacePoseConverter00Args:
                  head_z_offset=0.0,
                  tilt_compensation_deg: float = 0.0,
                  breathing_frequency: float = 20.0,
+                 enable_breathing: bool = True,
                  enable_reactive_breathing: bool = False,
                  reactive_breathing_threshold: float = 0.35,
                  reactive_breathing_frequency: float = 38.0,
@@ -268,7 +299,8 @@ class MediaPipeFacePoseConverter00Args:
                  audio_mouth_threshold: float = -45.0,
                  audio_mouth_max_level: float = -18.0,
                  audio_mouth_attack: float = 0.25,
-                 audio_mouth_release: float = 0.5):
+                 audio_mouth_release: float = 0.5,
+                 audio_keep_face_smile: bool = False):
         self.iris_small_right = iris_small_left
         self.iris_small_left = iris_small_right
 
@@ -289,6 +321,7 @@ class MediaPipeFacePoseConverter00Args:
         self.eyebrow_down_max = eyebrow_down_max
 
         self.eye_blink_max = eye_blink_max
+        self.eye_open_gain = eye_open_gain
         self.eye_surprised_max = eye_surprised_max
 
         self.smile_threshold_min = smile_threshold_min
@@ -299,6 +332,7 @@ class MediaPipeFacePoseConverter00Args:
         self.head_x_offset = head_x_offset
         self.tilt_compensation_deg = tilt_compensation_deg
         self.breathing_frequency = breathing_frequency
+        self.enable_breathing = bool(enable_breathing)
         self.enable_reactive_breathing = enable_reactive_breathing
         self.reactive_breathing_threshold = reactive_breathing_threshold
         self.reactive_breathing_frequency = reactive_breathing_frequency
@@ -309,6 +343,7 @@ class MediaPipeFacePoseConverter00Args:
         self.audio_mouth_max_level = audio_mouth_max_level
         self.audio_mouth_attack = audio_mouth_attack
         self.audio_mouth_release = audio_mouth_release
+        self.audio_keep_face_smile = bool(audio_keep_face_smile)
 
         self.eyebrow_down_mode = eyebrow_down_mode
 
@@ -323,6 +358,9 @@ class MediaPipeFacePoseConverter00Args:
 
     def set_eye_blink_max(self, new_value: float):
         self.eye_blink_max = new_value
+
+    def set_eye_open_gain(self, new_value: float):
+        self.eye_open_gain = new_value
 
     def set_eyebrow_down_max(self, new_value: float):
         self.eyebrow_down_max = new_value
@@ -353,6 +391,9 @@ class MediaPipeFacePoseConverter00Args:
 
     def set_breathing_frequency(self, new_value: float):
         self.breathing_frequency = max(0.0, new_value)
+
+    def set_enable_breathing(self, new_value: bool):
+        self.enable_breathing = bool(new_value)
 
     def set_enable_reactive_breathing(self, new_value: bool):
         self.enable_reactive_breathing = bool(new_value)
@@ -385,6 +426,9 @@ class MediaPipeFacePoseConverter00Args:
     def set_audio_mouth_release(self, new_value: float):
         """Seconds to approach closed (~95%); smaller = faster."""
         self.audio_mouth_release = MediaPoseFacePoseConverter00.clamp_audio_mouth_time_sec(new_value)
+
+    def set_audio_keep_face_smile(self, new_value: bool):
+        self.audio_keep_face_smile = bool(new_value)
 
 class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
     AUDIO_METER_MIN_DB = -80.0
@@ -488,6 +532,7 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
         args = self.args
         return {
             "breathing_frequency": args.breathing_frequency,
+            "enable_breathing": args.enable_breathing,
             "enable_reactive_breathing": args.enable_reactive_breathing,
             "reactive_breathing_threshold": args.reactive_breathing_threshold,
             "reactive_breathing_frequency": args.reactive_breathing_frequency,
@@ -503,10 +548,12 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
             "audio_mouth_max_level": args.audio_mouth_max_level,
             "audio_mouth_attack": args.audio_mouth_attack,
             "audio_mouth_release": args.audio_mouth_release,
+            "audio_keep_face_smile": args.audio_keep_face_smile,
             "smile_threshold_min": args.smile_threshold_min,
             "smile_threshold_max": args.smile_threshold_max,
             "eye_surprised_max": args.eye_surprised_max,
             "eye_blink_max": args.eye_blink_max,
+            "eye_open_gain": args.eye_open_gain,
             "eyebrow_down_max": args.eyebrow_down_max,
             "cheek_squint_min": args.cheek_squint_min,
             "cheek_squint_max": args.cheek_squint_max,
@@ -525,6 +572,8 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
         args.set_audio_input_source(source if source in ["mic", "loopback"] else "mic")
         if "breathing_frequency" in data:
             args.set_breathing_frequency(float(data["breathing_frequency"]))
+        if "enable_breathing" in data:
+            args.set_enable_breathing(bool(data["enable_breathing"]))
         if "enable_reactive_breathing" in data:
             args.set_enable_reactive_breathing(bool(data["enable_reactive_breathing"]))
         if "reactive_breathing_threshold" in data:
@@ -555,6 +604,8 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
         if "audio_mouth_release" in data:
             args.set_audio_mouth_release(
                 self.normalize_stored_audio_mouth_time(data["audio_mouth_release"]))
+        if "audio_keep_face_smile" in data:
+            args.set_audio_keep_face_smile(bool(data["audio_keep_face_smile"]))
         if "smile_threshold_min" in data:
             args.set_smile_threshold_min(float(data["smile_threshold_min"]))
         if "smile_threshold_max" in data:
@@ -563,6 +614,8 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
             args.set_eye_surprised_max(float(data["eye_surprised_max"]))
         if "eye_blink_max" in data:
             args.set_eye_blink_max(float(data["eye_blink_max"]))
+        if "eye_open_gain" in data:
+            args.set_eye_open_gain(float(data["eye_open_gain"]))
         if "eyebrow_down_max" in data:
             args.set_eyebrow_down_max(float(data["eyebrow_down_max"]))
         if "cheek_squint_min" in data:
@@ -581,6 +634,8 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
         args = self.args
         if hasattr(self, "breathing_frequency_slider"):
             self.breathing_frequency_slider.SetValue(args.breathing_frequency)
+        if hasattr(self, "enable_breathing_checkbox"):
+            self.enable_breathing_checkbox.SetValue(args.enable_breathing)
         if hasattr(self, "enable_reactive_breathing_checkbox"):
             self.enable_reactive_breathing_checkbox.SetValue(args.enable_reactive_breathing)
         if hasattr(self, "reactive_breathing_threshold_slider"):
@@ -589,12 +644,14 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
             self.reactive_breathing_frequency_slider.SetValue(args.reactive_breathing_frequency)
         if hasattr(self, "reactive_breathing_decay_slider"):
             self.reactive_breathing_decay_slider.SetValue(args.reactive_breathing_decay)
-        self.refresh_reactive_breathing_ui_state()
+        self.refresh_breathing_ui_state()
         self.refresh_breathing_status_text()
         if hasattr(self, "mouth_input_mode_choice"):
             self.mouth_input_mode_choice.SetSelection(0 if args.mouth_input_mode == "face" else 1)
         if hasattr(self, "audio_input_source_choice"):
             self.audio_input_source_choice.SetSelection(0 if args.audio_input_source == "mic" else 1)
+        if hasattr(self, "audio_keep_face_smile_checkbox"):
+            self.audio_keep_face_smile_checkbox.SetValue(args.audio_keep_face_smile)
         mouth_sliders = (
             ("jaw_open_min_spin", args.jaw_open_min),
             ("jaw_open_max_spin", args.jaw_open_max),
@@ -609,6 +666,7 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
             ("smile_threshold_max_spin", args.smile_threshold_max),
             ("eye_surprised_max_spin", args.eye_surprised_max),
             ("eye_blink_max_spin", args.eye_blink_max),
+            ("eye_open_gain_spin", args.eye_open_gain),
             ("eyebrow_down_max_spin", args.eyebrow_down_max),
             ("cheek_squint_min_spin", args.cheek_squint_min),
             ("cheek_squint_max_spin", args.cheek_squint_max),
@@ -724,6 +782,15 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
             self.breathing_panel.SetAutoLayout(1)
             self.panel_sizer.Add(self.breathing_panel, 0, wx.EXPAND)
 
+            self.enable_breathing_checkbox = wx.CheckBox(
+                self.breathing_panel,
+                label="启用呼吸 / Enable Breathing")
+            self.enable_breathing_checkbox.SetValue(self.args.enable_breathing)
+            self.enable_breathing_checkbox.Bind(wx.EVT_CHECKBOX, self.enable_breathing_clicked)
+            breathing_panel_sizer.Add(
+                self.enable_breathing_checkbox,
+                wx.SizerFlags().Border(wx.BOTTOM, 4))
+
             self.restart_breathing_cycle_button = wx.Button(
                 self.breathing_panel, label="重启呼吸周期 / Restart Breathing Cycle")
             self.restart_breathing_cycle_button.Bind(wx.EVT_BUTTON, self.restart_breathing_cycle_clicked)
@@ -795,6 +862,7 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
 
             self.breathing_status_text = wx.StaticText(self.breathing_panel, label="")
             breathing_panel_sizer.Add(self.breathing_status_text, 0, wx.EXPAND | wx.TOP, 4)
+            self.refresh_breathing_ui_state()
             self.refresh_reactive_breathing_ui_state()
             self.refresh_breathing_status_text()
 
@@ -868,6 +936,13 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
             self.audio_input_source_choice.SetSelection(0 if self.args.audio_input_source == "mic" else 1)
             self.audio_input_source_choice.Bind(wx.EVT_CHOICE, self.change_audio_input_source)
             audio_mouth_sizer.Add(self.audio_input_source_choice, 0, wx.EXPAND | wx.BOTTOM, 4)
+
+            self.audio_keep_face_smile_checkbox = wx.CheckBox(
+                self.audio_mouth_panel,
+                label="保留面捕微笑嘴角 / Keep Smile Corners from Face")
+            self.audio_keep_face_smile_checkbox.SetValue(self.args.audio_keep_face_smile)
+            self.audio_keep_face_smile_checkbox.Bind(wx.EVT_CHECKBOX, self.change_audio_keep_face_smile)
+            audio_mouth_sizer.Add(self.audio_keep_face_smile_checkbox, 0, wx.EXPAND | wx.BOTTOM, 4)
 
             self.audio_mouth_threshold_spin = self.create_spin_control(
                 self.audio_mouth_panel,
@@ -974,6 +1049,16 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
                 slider_label("眨眼最大", "Max Eye Blink", "系数 0~1", "factor 0~1"),
                 self.args.eye_blink_max, self.args.set_eye_blink_max,
                 persist_on_change=True)
+            self.eye_open_gain_spin = self.create_spin_control(
+                conversion_param_panel,
+                slider_label("眼睛张开增益", "Eye Open Gain", "加减到开合", "offset ±1"),
+                self.args.eye_open_gain, self.args.set_eye_open_gain,
+                reasonable_min=-1.0,
+                reasonable_max=1.0,
+                increment=0.01,
+                slider_min=-1.0,
+                slider_max=1.0,
+                persist_on_change=True)
             self.eyebrow_down_max_spin = self.create_spin_control(
                 conversion_param_panel,
                 slider_label("眉下压最大", "Max Eyebrow Down", "系数 0~1", "factor 0~1"),
@@ -1052,22 +1137,49 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
     def calibrate_face_orientation_clicked(self, event: wx.Event):
         self.apply_face_orientation_calibration()
 
+    def _relayout_pose_converter_panel(self) -> None:
+        if self.panel is None:
+            return
+        self.panel.Layout()
+        parent = self.panel.GetParent()
+        if parent is not None:
+            parent.Layout()
+
+    def refresh_breathing_ui_state(self):
+        breathing_enabled = bool(self.args.enable_breathing)
+        if hasattr(self, "restart_breathing_cycle_button"):
+            self.restart_breathing_cycle_button.Enable(breathing_enabled)
+        if hasattr(self, "breathing_frequency_slider"):
+            self.breathing_frequency_slider.Enable(breathing_enabled)
+        if hasattr(self, "enable_reactive_breathing_checkbox"):
+            self.enable_reactive_breathing_checkbox.Enable(breathing_enabled)
+        if hasattr(self, "breathing_gauge"):
+            self.breathing_gauge.Enable(breathing_enabled)
+        if hasattr(self, "breathing_status_text"):
+            self.breathing_status_text.Enable(breathing_enabled)
+        self.refresh_reactive_breathing_ui_state()
+
     def refresh_reactive_breathing_ui_state(self):
+        reactive_enabled = bool(self.args.enable_breathing and self.args.enable_reactive_breathing)
         if hasattr(self, "reactive_breathing_panel"):
-            self.reactive_breathing_panel.Enable(self.args.enable_reactive_breathing)
-        if hasattr(self, "panel_sizer") and self.panel is not None:
-            self.panel_sizer.Fit(self.panel)
-            self.panel.Layout()
-            container = self.panel.GetParent()
-            while container is not None:
-                container.Layout()
-                if isinstance(container, wx.ScrolledWindow):
-                    container.FitInside()
-                    break
-                container = container.GetParent()
+            self.reactive_breathing_panel.Enable(reactive_enabled)
+        for slider_name in (
+                "reactive_breathing_threshold_slider",
+                "reactive_breathing_frequency_slider",
+                "reactive_breathing_decay_slider"):
+            slider = getattr(self, slider_name, None)
+            if slider is not None:
+                slider.Enable(reactive_enabled)
+        self._relayout_pose_converter_panel()
 
     def refresh_breathing_status_text(self):
         if not hasattr(self, "breathing_status_text"):
+            return
+        if not _wx_widget_alive(getattr(self, "breathing_status_text", None)):
+            return
+        if not self.args.enable_breathing:
+            self.breathing_status_text.SetLabelText("呼吸已关闭 / Breathing disabled")
+            self.breathing_status_text.Wrap(max(120, self.breathing_status_text.GetParent().GetClientSize().x - 12))
             return
         if self.args.enable_reactive_breathing:
             status_text = "当前 / Current: %.1f bpm | 动作 / Motion: %.3f | 状态 / State: %s" % (
@@ -1378,16 +1490,7 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
             self.audio_input_source_choice.SetSelection(0 if self.args.audio_input_source == "mic" else 1)
         self.ensure_audio_stream_state()
         self.refresh_audio_mouth_status_text()
-        if hasattr(self, "panel_sizer") and self.panel is not None:
-            self.panel_sizer.Fit(self.panel)
-            self.panel.Layout()
-            container = self.panel.GetParent()
-            while container is not None:
-                container.Layout()
-                if isinstance(container, wx.ScrolledWindow):
-                    container.FitInside()
-                    break
-                container = container.GetParent()
+        self._relayout_pose_converter_panel()
 
     def change_mouth_input_mode(self, event: wx.Event):
         selection = self.mouth_input_mode_choice.GetSelection()
@@ -1404,6 +1507,11 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
         self.refresh_mouth_input_ui_state()
         self.notify_ui_state_changed()
 
+    def change_audio_keep_face_smile(self, event: wx.Event):
+        if hasattr(self, "audio_keep_face_smile_checkbox"):
+            self.args.set_audio_keep_face_smile(self.audio_keep_face_smile_checkbox.GetValue())
+        self.notify_ui_state_changed()
+
     def set_panel_enabled(self, enabled: bool):
         self.ui_enabled = enabled
         if self.panel is not None:
@@ -1418,6 +1526,19 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
     def shutdown(self):
         self.stop_audio_stream()
 
+    def enable_breathing_clicked(self, event: wx.Event):
+        self.args.set_enable_breathing(self.enable_breathing_checkbox.GetValue())
+        if not self.args.enable_breathing:
+            self.breathing_cycle_position = 0.0
+            self.reactive_breathing_boost = 0.0
+            self.last_breathing_motion_score = 0.0
+            self.last_reactive_breathing_state = "BASE"
+            if hasattr(self, "breathing_gauge"):
+                self.breathing_gauge.SetValue(0)
+        self.refresh_breathing_ui_state()
+        self.refresh_breathing_status_text()
+        self.notify_ui_state_changed()
+
     def restart_breathing_cycle_clicked(self, event: wx.Event):
         self.breathing_cycle_position = 0.0
         self.last_breathing_update_time = time.time()
@@ -1430,7 +1551,7 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
         if not self.args.enable_reactive_breathing:
             self.reactive_breathing_boost = 0.0
             self.last_reactive_breathing_state = "BASE"
-        self.refresh_reactive_breathing_ui_state()
+        self.refresh_breathing_ui_state()
         self.refresh_breathing_status_text()
         self.notify_ui_state_changed()
 
@@ -1645,6 +1766,19 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
                 pose[self.eye_happy_wink_right_index] = smile_degree * clamp(
                     blendshape_params[EYE_BLINK_RIGHT] / self.args.eye_blink_max, 0.0, 1.0)
 
+            eye_gain = float(self.args.eye_open_gain)
+            if abs(eye_gain) > 1e-6:
+                pose[self.eye_surprised_left_index] = clamp(
+                    pose[self.eye_surprised_left_index] + eye_gain, 0.0, 1.0)
+                pose[self.eye_surprised_right_index] = clamp(
+                    pose[self.eye_surprised_right_index] + eye_gain, 0.0, 1.0)
+                pose[wink_left_index] = clamp(pose[wink_left_index] - eye_gain, 0.0, 1.0)
+                pose[wink_right_index] = clamp(pose[wink_right_index] - eye_gain, 0.0, 1.0)
+                pose[self.eye_happy_wink_left_index] = clamp(
+                    pose[self.eye_happy_wink_left_index] - eye_gain, 0.0, 1.0)
+                pose[self.eye_happy_wink_right_index] = clamp(
+                    pose[self.eye_happy_wink_right_index] - eye_gain, 0.0, 1.0)
+
             # Lower eyelid
             cheek_squint_denom = self.args.cheek_squint_max - self.args.cheek_squint_min
             if cheek_squint_denom <= 0.0:
@@ -1709,17 +1843,26 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
                 else:
                     mouth_open = clamp((blendshape_params[JAW_OPEN] - self.args.jaw_open_min) / jaw_open_denom, 0.0, 1.0)
             pose[self.mouth_aaa_index] = mouth_open
-            pose[self.mouth_raised_corner_left_index] = clamp(smile_value, 0.0, 1.0)
-            pose[self.mouth_raised_corner_right_index] = clamp(smile_value, 0.0, 1.0)
+            use_face_mouth_corners = (
+                self.args.mouth_input_mode != "audio" or self.args.audio_keep_face_smile)
+            if use_face_mouth_corners:
+                pose[self.mouth_raised_corner_left_index] = clamp(smile_value, 0.0, 1.0)
+                pose[self.mouth_raised_corner_right_index] = clamp(smile_value, 0.0, 1.0)
+            else:
+                pose[self.mouth_raised_corner_left_index] = 0.0
+                pose[self.mouth_raised_corner_right_index] = 0.0
 
             is_mouth_open = mouth_open > 0.0
             if not is_mouth_open:
-                if self.args.mouth_frown_max <= 0:
-                    mouth_frown_value = 0.0
+                if use_face_mouth_corners:
+                    if self.args.mouth_frown_max <= 0:
+                        mouth_frown_value = 0.0
+                    else:
+                        mouth_frown_value = clamp(
+                            (blendshape_params[MOUTH_FROWN_LEFT] + blendshape_params[
+                                MOUTH_FROWN_RIGHT]) / self.args.mouth_frown_max, 0.0, 1.0)
                 else:
-                    mouth_frown_value = clamp(
-                        (blendshape_params[MOUTH_FROWN_LEFT] + blendshape_params[
-                            MOUTH_FROWN_RIGHT]) / self.args.mouth_frown_max, 0.0, 1.0)
+                    mouth_frown_value = 0.0
                 pose[self.mouth_lowered_corner_left_index] = mouth_frown_value
                 pose[self.mouth_lowered_corner_right_index] = mouth_frown_value
             else:
@@ -1771,6 +1914,13 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
                     pose[self.mouth_ooo_index] = uo_value * ooo_alpha
 
         pose_signature = pose[:self.breathing_index] + pose[self.breathing_index + 1:]
+        if not self.args.enable_breathing:
+            pose[self.breathing_index] = 0.0
+            if self.panel is not None and _wx_widget_alive(getattr(self, "breathing_gauge", None)):
+                _safe_set_gauge_value(self.breathing_gauge, 0)
+                self.refresh_breathing_status_text()
+            return pose
+
         frequency = max(0.0, self.args.breathing_frequency)
         if self.args.enable_reactive_breathing:
             frequency = self.update_reactive_breathing_frequency(pose_signature, now)
@@ -1791,8 +1941,8 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
         self.current_breathing_frequency = frequency
         pose[self.breathing_index] = value
 
-        if self.panel is not None:
-            self.breathing_gauge.SetValue(int(1000 * value))
+        if self.panel is not None and _wx_widget_alive(getattr(self, "breathing_gauge", None)):
+            _safe_set_gauge_value(self.breathing_gauge, int(1000 * value))
             self.refresh_breathing_status_text()
 
         return pose

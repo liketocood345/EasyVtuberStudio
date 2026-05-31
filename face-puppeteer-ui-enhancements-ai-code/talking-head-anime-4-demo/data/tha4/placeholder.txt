@@ -1,0 +1,3 @@
+THA4 teacher weights are optional add-ons.
+Install via DEPLOY.bat -> [4] tha4_training, or scripts\launch\THA4_DownloadTrainingAssets.bat
+Files install to addons/tha4_training/ and link here when present.

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "addons_root": "addons",
+  "notes": "Optional downloadable packs live under addons/<id>/. Deleting a folder + reconcile restores fresh-extract state for that pack.",
+  "addons": [
+    {
+      "id": "face_puppeteer",
+      "folder": "face_puppeteer",
+      "label": "Face puppeteer runtime (PyTorch + wx + MediaPipe)",
+      "size_hint_mb": 3500,
+      "required_for": ["tha4_student_face_capture"],
+      "delete_safe": true,
+      "included_in_github_zip": false,
+      "install_via": ["bootstrap_portable.ps1", "upstream:mediapipe_task"],
+      "verify": [
+        "addons/face_puppeteer/venv/Scripts/python.exe",
+        "addons/face_puppeteer/mediapipe/face_landmarker_v2_with_blendshapes.task"
+      ]
+    },
+    {
+      "id": "tha3_models",
+      "folder": "tha3_models",
+      "label": "THA3 portrait PyTorch models (~2 GB)",
+      "size_hint_mb": 2000,
+      "required_for": ["tha3_portrait"],
+      "delete_safe": true,
+      "included_in_github_zip": false,
+      "install_via": ["upstream:tha3_models"],
+      "verify": [
+        "addons/tha3_models/separable_half/face_morpher.pt",
+        "addons/tha3_models/separable_half/editor.pt"
+      ]
+    },
+    {
+      "id": "tha4_training",
+      "folder": "tha4_training",
+      "label": "THA4 teacher weights + pose dataset (training / distill)",
+      "size_hint_mb": 2500,
+      "required_for": ["tha4_train"],
+      "delete_safe": true,
+      "included_in_github_zip": false,
+      "install_via": ["upstream:tha4_teacher_training"],
+      "verify": [
+        "addons/tha4_training/tha4/face_morpher.pt",
+        "addons/tha4_training/pose_dataset.pt"
+      ]
+    }
+  ]
+}

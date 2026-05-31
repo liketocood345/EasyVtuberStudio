@@ -1,0 +1,3 @@
+portable-skeleton=0.2.0
+assets_manifest=0.1.0
+notes=GitHub ZIP + double-click EasyVtuberStudio.exe; first launch runs packaging/bootstrap_portable.ps1

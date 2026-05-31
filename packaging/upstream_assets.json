@@ -1,0 +1,93 @@
+{
+  "schema_version": 5,
+  "notes": "Install targets live under addons/<pack>/; reconcile_portable_layout.ps1 links CORE paths (runtime/venv, deps/tha3/models, demo/data/*).",
+  "packages": [
+    {
+      "id": "mediapipe_task",
+      "label": "MediaPipe Face Landmarker (.task)",
+      "attribution": "https://developers.google.com/mediapipe/solutions/vision/face_landmarker",
+      "license_note": "Apache License 2.0",
+      "addon_id": "face_puppeteer",
+      "files": [
+        {
+          "url": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+          "filename": "face_landmarker_v2_with_blendshapes.task",
+          "kind": "file",
+          "install": {
+            "handler": "copy_file",
+            "dest": "addons/face_puppeteer/mediapipe/face_landmarker_v2_with_blendshapes.task"
+          }
+        }
+      ],
+      "verify": [
+        "addons/face_puppeteer/mediapipe/face_landmarker_v2_with_blendshapes.task"
+      ]
+    },
+    {
+      "id": "tha3_models",
+      "label": "THA3 PyTorch models (Hugging Face primary)",
+      "attribution": "https://huggingface.co/ksuriuri/talking-head-anime-3-models",
+      "license_note": "Community mirror of pkhungurn THA3 weights (CC BY 4.0 per upstream demo)",
+      "addon_id": "tha3_models",
+      "files": [
+        {
+          "kind": "huggingface_repo",
+          "label": "Hugging Face mirror (ksuriuri/talking-head-anime-3-models)",
+          "install": {
+            "handler": "tha3_hf_pytorch",
+            "dest": "addons/tha3_models",
+            "repo_id": "ksuriuri/talking-head-anime-3-models",
+            "revision": "main"
+          }
+        }
+      ],
+      "fallback_sources": [
+        {
+          "url": "https://www.dropbox.com/s/y7b8jl4n2euv8xe/talking-head-anime-3-models.zip?dl=1",
+          "filename": "talking-head-anime-3-models.zip",
+          "kind": "zip",
+          "label": "pkhungurn Dropbox (official zip fallback)",
+          "install": {
+            "handler": "tha3_official_pytorch",
+            "dest": "addons/tha3_models"
+          }
+        }
+      ],
+      "verify": [
+        "addons/tha3_models/separable_half/face_morpher.pt",
+        "addons/tha3_models/separable_half/editor.pt"
+      ]
+    },
+    {
+      "id": "tha4_teacher_training",
+      "label": "THA4 teacher weights + pose dataset (pkhungurn)",
+      "attribution": "https://github.com/pkhungurn/talking-head-anime-4-demo",
+      "addon_id": "tha4_training",
+      "files": [
+        {
+          "url": "https://www.dropbox.com/scl/fi/7wec0sur7449iqgtlpi3n/tha4-models.zip?rlkey=0f9d1djmbvjjjn09469s1adx8&dl=1",
+          "filename": "tha4-models.zip",
+          "kind": "zip",
+          "install": {
+            "handler": "tha4_teacher_zip",
+            "dest": "addons/tha4_training/tha4"
+          }
+        },
+        {
+          "url": "https://www.dropbox.com/scl/fi/du10e6buzr5bslbe025qu/pose_dataset.pt?rlkey=y052g4n3xb14nu2elctzouc5x&dl=1",
+          "filename": "pose_dataset.pt",
+          "kind": "file",
+          "install": {
+            "handler": "copy_file",
+            "dest": "addons/tha4_training/pose_dataset.pt"
+          }
+        }
+      ],
+      "verify": [
+        "addons/tha4_training/tha4/face_morpher.pt",
+        "addons/tha4_training/tha4/body_morpher.pt",
+        "addons/tha4_training/pose_dataset.pt"
+      ]
+    }
+  ]
+}

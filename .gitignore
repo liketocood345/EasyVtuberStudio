@@ -30,7 +30,18 @@ out/
 .idea/
 .gradle/
 build/
-/data/
+# Data: track character models (incl. layer parts), distill examples, images, thirdparty
+/data/*
+!/data/character_models/
+!/data/character_models/**
+!/data/distill_examples/
+!/data/distill_examples/**
+!/data/images/
+!/data/images/**
+!/data/tha4/
+!/data/tha4/**
+!/data/thirdparty/
+!/data/thirdparty/**
 .idea/*
 *.iml
 
@@ -44,19 +55,61 @@ build/
 */bin
 
 __pycache__/
-./tools/
 
 temp/
 
 */*/bin/
 
+!face-puppeteer-ui-enhancements-ai-code/talking-head-anime-4-demo/bin/run.bat
+
 venv/*
+
+# Legacy repo-root venv (do not use; see addons/face_puppeteer or workspace/student_venv)
+/venv/
+
+# Portable release (large runtime stays out of Git)
+runtime/
+workspace/student_venv/
+addons/face_puppeteer/
+addons/tha3_models/
+addons/tha4_training/
+!addons/README.md
+!addons/.gitkeep
+workspace/*
+!workspace/.gitkeep
+
+# Allow portable training wrappers (ignore other generated tools output)
+tools/*
+!tools/training/
+!tools/training/**
+
+# Launcher build artifacts
+packaging/launcher/build/
+packaging/launcher/dist/
+packaging/launcher/*.spec
+
+# Portable launchers (commit to repo root)
+!EasyVtuberStudio.exe
+!THA4Train.exe
 
 # CodeGraph 本地索引（开发用 MCP，勿提交）
 .codegraph/
+**/.codegraph/
 
-# THA3 ONNX bundle (large; populate via deps/tha3/populate_tha3_bundle.ps1)
+# 历史快照 / 本地归档（不参与发布；运行不依赖）
+**/his/
+docs/training/
+docs/oid.md
+
+# THA3 model weights (large; upstream via DEPLOY.bat or in-app prompt)
 deps/tha3/models/**/*.onnx
+deps/tha3/models/**/*.pt
+!deps/tha3/models/README.txt
+
+# THA4 teacher / training data (upstream; not in GitHub ZIP)
+**/data/tha4/*.pt
+**/data/pose_dataset.pt
+!**/data/tha4/placeholder.txt
 
 # io dump to ABCI tasks
 *.o*

@@ -1,0 +1,67 @@
+{
+  "schema_version": 5,
+  "release_tag": "portable-v0.1.0",
+  "release_base_url": "https://github.com/liketocood345/EasyVtuberStudio/releases/download/portable-v0.1.0/",
+  "notes": "Slim CORE GitHub ZIP: exe + code + THA4 Student (bai). Optional add-ons install via DEPLOY.bat into addons/ and link into CORE paths. See packaging/addons_manifest.json.",
+  "one_click_deploy_bat": "DEPLOY.bat",
+  "github_zip_includes": [
+    "EasyVtuberStudio.exe",
+    "DEPLOY.bat",
+    "RESET_ADDON.bat",
+    "addons/README.md",
+    "data/character_models (incl. bai student + parts)",
+    "data/distill_examples",
+    "data/images",
+    "deps/tha3 code (tha3_src, ezvtuber_rt) without model weights",
+    "deps/tha3/models/README.txt",
+    "face-puppeteer-ui-enhancements-ai-code/.../data/tha4/placeholder.txt"
+  ],
+  "github_zip_excludes": [
+    "addons/*/venv",
+    "addons/*/mediapipe",
+    "addons/tha3_models/**/*.pt",
+    "addons/tha4_training/**/*.pt",
+    "runtime/venv",
+    "deps/tha3/models/**/*.pt",
+    "demo/data/tha4/*.pt",
+    "demo/data/pose_dataset.pt",
+    "workspace/* (user state)"
+  ],
+  "assets": [
+    {
+      "id": "face_puppeteer_runtime",
+      "label": "Face puppeteer runtime (PyTorch + wx + mediapipe)",
+      "filename": "EasyVtuberStudio-Portable-Runtime.7z",
+      "extract_to": "addons/face_puppeteer",
+      "url": "",
+      "sha256": "",
+      "required": false,
+      "included_in_github_zip": false,
+      "addon_id": "face_puppeteer",
+      "source": "release",
+      "notes": "Optional 7z pack; DEPLOY/bootstrap usually builds venv via pip instead."
+    },
+    {
+      "id": "tha3_models",
+      "label": "THA3 PyTorch models (~2 GB; Hugging Face primary, Dropbox fallback)",
+      "upstream_package": "tha3_models",
+      "required": false,
+      "included_in_github_zip": false,
+      "addon_id": "tha3_models",
+      "source": "upstream",
+      "download_bat": "scripts/launch/THA3_DownloadModels.bat",
+      "notes": "Installs to addons/tha3_models/ and links deps/tha3/models"
+    },
+    {
+      "id": "tha4_teacher_training",
+      "label": "THA4 teacher + pose dataset (distill / training, pkhungurn Dropbox)",
+      "upstream_package": "tha4_teacher_training",
+      "required": false,
+      "included_in_github_zip": false,
+      "addon_id": "tha4_training",
+      "source": "upstream",
+      "download_bat": "scripts/launch/THA4_DownloadTrainingAssets.bat",
+      "notes": "Installs to addons/tha4_training/ and links demo/data/"
+    }
+  ]
+}

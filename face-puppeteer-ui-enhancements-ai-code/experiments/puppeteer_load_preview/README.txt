@@ -16,15 +16,16 @@ puppeteer_load_preview — Load Model 后立即默认 pose 预览（实验）
 ----
 character_model_mediapipe_puppeteer.py.orig     原版备份（只读对照）
 character_model_mediapipe_puppeteer_load_preview.py   实验脚本
-run_load_preview_puppeteer.bat                  启动
+scripts/launch/run_load_preview_puppeteer.bat   启动（仓库根下相对路径）
 
 启动
 ----
-  E:\THA4_bundle_bai_custom\experiments\puppeteer_load_preview\run_load_preview_puppeteer.bat
+  <REPO>\scripts\launch\run_load_preview_puppeteer.bat
+  或双击 <REPO>\EasyVtuberStudio.exe
 
 Load Model 示例
 ---------------
-  E:\THA4_bundle_bai_custom\packaged\bai_450k\character_model\character_model.yaml
+  <REPO>\data\character_models\baiten_from_project_forlon9\bai_450k\character_model\character_model.yaml
 
 行为变化（相对原版）
 --------------------
@@ -40,6 +41,7 @@ Load Model 示例
 4. 右侧单独作为预览列：上方是缩小立绘预览与摄像头预览，下方是“后处理和其他”
    - 调整后的列宽会自动记住，下次启动继续沿用
 5. 无摄像头/无人脸 -> 输出窗口保持预览图，不再刷回 Nothing yet!
+   Mouse + Audio 模式：Model Input 可选「鼠标+音频」，全屏鼠标驱动头/眼、麦克风口型，无需视频源（见 mouse_mocap_driver.py）
 6. 新增 Auto Move / Scale 控制区（默认开启）
 7. 未加载模型时，除加载模型相关按钮外，其余可交互控件会统一置灰锁定
 8. 默认即启用 Enable Auto Move / Scale：
@@ -97,10 +99,12 @@ Load Model 示例
   控制横向 / 纵向位移幅度（单位近似为输出画布像素）。
 - Tilt Limit
   为正时控制左右倾斜显示的最大旋转角度，默认 10 度；为负时会线性减少面捕传给模型的倾斜角数据，负得越多削弱越强。
-- Invert Tilt Mapping
-  当默认左右倾斜方向与你习惯相反时可切换；该开关会被自动记住。
-- Mirror Output
-  水平镜像翻转角色输出；作为最后一步独立调整，不会改变倾斜映射语义；该开关会被自动记住。
+- Tilt Opposite to Head（倾斜映射和头相反）
+  勾选后由头倾斜推导的模型身体滚转（body_z）与头滚转（neck_z）方向相反，示意图下段脊柱同步；动态增强倾斜仍由头决定。
+  绑定到身体的图层始终跟随动态增强（display_rotation），不受此开关翻转。默认勾选；会被自动记住。
+  配置键：`body_tilt_opposite_to_head` 或 `tilt_opposite_to_head`。
+- Character edge (postprocess panel)
+  角色边缘消闪 / 描边 / 无效果；宽度 0.001~24（0.001 步进，三位小数）与颜色可调。
 - Scale Gain
   控制“靠近镜头放大、远离镜头缩小”的敏感度。
 - Tilt Compensation
@@ -114,13 +118,15 @@ Load Model 示例
 - Smoothing
   越大越稳，越小越跟手。
 
-未修改
-------
-  E:\THA4_bundle\talking-head-anime-4-demo\src\tha4\app\character_model_mediapipe_puppeteer.py
+未修改（对照用）
+----------------
+  上游 THA4 原版：`talking-head-anime-4-demo\src\tha4\app\character_model_mediapipe_puppeteer.py`
 
-无 GUI 冒烟（已验证 bai_450k）：
-  cd E:\THA4_bundle_bai_custom\talking-head-anime-4-demo
+无 GUI 冒烟（已验证 bai_450k；在仓库根下，先 DEPLOY [1] 或 [2]）：
+  cd <REPO>\face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo
   set PYTHONPATH=%cd%\src
-  venv\Scripts\python.exe ..\experiments\puppeteer_load_preview\smoke_load_preview.py
+  <REPO>\workspace\student_venv\Scripts\python.exe ..\experiments\puppeteer_load_preview\smoke_load_preview.py
+  <REPO>\workspace\student_venv\Scripts\python.exe ..\experiments\puppeteer_load_preview\smoke_mouse_mocap.py
+  （若已装面捕，可将 python 换为 addons\face_puppeteer\venv\Scripts\python.exe）
 
 满意后再考虑合并进主仓库或做快捷方式 14 的变体。

@@ -1,30 +1,55 @@
-[首次部署（GitHub ZIP 下载后） / First-time Deploy](DEPLOY.md)
+[首次部署（GitHub ZIP 下载后） / First-time Deploy](docs/DEPLOY.md)
 
-[English Guide for Native English Speakers](README-EN.md)
+**便携版（推荐最终用户）：** GitHub Download ZIP（CORE）→ 解压 → **`DEPLOY.bat`**（四档 Y/N）或环境已就绪时直接 **`EasyVtuberStudio.exe`**。详见 [docs/DEPLOY.md](docs/DEPLOY.md)。
 
-# 这是 THA3、THA4、EasyVtuber 三项目的 fork
+**本仓库 = GitHub 发布总库（CORE 刚解压态）**；本地全装研发在 `E:\tha4fork-develop`（三模块 `addons/*` 实体文件，不入本 ZIP）。见 [docs/HANDOVER.md](docs/HANDOVER.md) §0.1 · [docs/ADDONS_LAYOUT.md](docs/ADDONS_LAYOUT.md) · 推送前 [docs/PREP_PUSH.md](docs/PREP_PUSH.md)。
 
-**新 Agent 请先读 [HANDOVER.md](HANDOVER.md)。**
+[English Guide for EasyVtuberStudio](docs/README-EN.md)
+
+# EasyVtuberStudio
+
+**EasyVtuberStudio** — 基于 THA3、THA4 的可面捕虚拟皮套演播软件，可添加附件（主入口 **`EasyVtuberStudio.exe`**）。
+
+**新 Agent 请先读 [docs/HANDOVER.md](docs/HANDOVER.md)。**
+
+
+> ### 【重要声明】
+>
+> 1. **使用前提**：下载或使用本软件前，请确认您具备基本的 Windows 操作与排障能力，并能在必要时借助翻译工具阅读安装过程中的**英文终端输出**（详见 [docs/DEPLOY.md](docs/DEPLOY.md)、[docs/TROUBLESHOOTING_QA.md](docs/TROUBLESHOOTING_QA.md)）。
+> 2. **AI 生成代码风险**：本项目含大量 **AI 辅助编写**的代码。继续下载或使用，即表示您已理解并接受：代码可能存在未预见缺陷，**可能导致程序异常、数据丢失或在极端情况下加剧系统或硬件负载**；请在可接受风险的前提下自行决定是否使用。
+
+**骚年，想玩虚拟皮套直播但没钱定制自己的角色？你的显卡该出场了！（虽然本项目能在无显卡电脑上跑出惊人的1fps）**
+
 
 ## 仓库与路径
 
 | 项 | 说明 |
 |----|------|
-| **发布总库（本目录）** | `E:\tha4fork` — GitHub 推送、对外发布 |
-| 研发主仓 | `E:\tha4fork-develop` — 日常开发，稳定后合并到本目录 |
-| Fork 远程 | https://github.com/liketocood345/EasyVtuber-with-THA3-THA4 |
-| 官方上游 | https://github.com/pkhungurn/talking-head-anime-4-demo |
+| **GitHub 仓库** | **[liketocood345/EasyVtuberStudio](https://github.com/liketocood345/EasyVtuberStudio)** |
+| **本仓库（GitHub CORE）** | 当前解压目录；本地示例 `E:\tha4fork`（`addons/` 初始为空） |
+| **研发主仓（非本仓库）** | `E:\tha4fork-develop` — **三模块全装**，日常改代码后 `scripts\maint\sync_develop_to_fork.ps1` |
+| 曾用仓库名 | ~~`EasyVtuber-with-THA3-THA4`~~（2026-05 更名为 **EasyVtuberStudio**） |
 | 定制代码包 | `face-puppeteer-ui-enhancements-ai-code/` |
-| **新 Agent 入口** | **[HANDOVER.md](HANDOVER.md)** |
-| **首次部署（ZIP 下载）** | **[DEPLOY.md](DEPLOY.md)** |
+| **新 Agent 入口** | **[docs/HANDOVER.md](docs/HANDOVER.md)** |
+| **首次部署（ZIP 下载）** | **[docs/DEPLOY.md](docs/DEPLOY.md)** |
 | 计划与对接 | [plans/](plans/) |
 
-Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_ROOT.md)。
+### 官方上游与参考项目（3）
+
+| # | 项目 | GitHub | 在本项目中的用途 |
+|---|------|--------|------------------|
+| 1 | **THA4**（Talking Head Anime 4） | [pkhungurn/talking-head-anime-4-demo](https://github.com/pkhungurn/talking-head-anime-4-demo) | 核心 Student 面捕引擎、MediaPipe puppeteer、蒸馏与训练 demo；Git `upstream` 默认指向此仓库 |
+| 2 | **THA3**（Talking Head Anime 3） | [pkhungurn/talking-head-anime-3-demo](https://github.com/pkhungurn/talking-head-anime-3-demo) | 立绘 portrait 模式、`deps/tha3/` 运行时与 DEPLOY 档位 **[3] tha3_models** 权重来源 |
+| 3 | **EasyVtuber** | [yuyuyzl/EasyVtuber](https://github.com/yuyuyzl/EasyVtuber) | **Mouse + Audio** 无摄像头面捕交互思路参考（全屏鼠标 + 麦克风口型） |
+
+Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_ROOT.md](docs/FORK_ROOT.md)。
 
 > ~~`E:\THA4_bundle_bai_custom`~~ 已废弃，内容已迁入本仓（见 HANDOVER 附录）。
 
 ---
-骚年，想玩虚拟皮套直播但没钱定制自己的角色？你的显卡该出场了！
+
+
+
 
 
 ## 相对 THA4 原版做了什么（简要）
@@ -41,39 +66,48 @@ Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_
 
 - 人脸跟踪驱动自动平移、缩放（可关）
 - 非线性缩放曲线 + 预览；倾斜映射旋转、镜像作为最后一步
-- **输出动态增强校准**：刷新缩放基准并将角色左右归中（不改垂直基准，避免上漂）；支持周期自动校准与平滑过渡
+- **输出动态增强校准**：刷新缩放基准、左右归中与当前头滚转（左倾/右倾）基准；不改垂直基准，避免上漂；支持周期自动校准与平滑过渡
 - 可调后处理抗锯齿
 
 ### 3. 模型与持久化
 
 - 加载后即显示默认姿态；`Load Last` / `Load Other`
-- `load_preview_ui_state.json` 保存开关、滑块、输出窗、嘴部/显示变换等
+- `workspace/load_preview_ui_state.json` 保存开关、滑块、输出窗、嘴部/显示变换等
 
 ### 4. 呼吸与嘴部（`mediapipe_face_pose_converter_00.py`）
 
 - 呼吸控件与反应式呼吸
 - 嘴部：面捕 / 音频驱动切换，设备选择与 OBS 风格电平条
 
-### 5. 摄像头与视频源
+### 5. 面捕输入模式
+
+- **Face capture (MediaPipe)**：摄像头 / 窗口捕获 / 视频文件（默认）
+- **Mouse + Audio (EasyVtuber)**：无摄像头；**全屏鼠标**驱动头转与眼球，**麦克风**驱动口型；程序化眨眼 + 内建呼吸
+- 模式在 Model Input 列切换，写入 `workspace/load_preview_ui_state.json`（`mocap_input_mode`）
+- 实现：`experiments/puppeteer_load_preview/mouse_mocap_driver.py`；自检 `smoke_mouse_mocap.py`
+
+### 6. 摄像头与视频源
 
 - **窗口捕获**：从 DroidCam 等客户端预览窗抓帧（OBS 式）；与摄像头共用下拉源，记忆上次窗口；**加载模型后**自动连接时窗口捕获优先
 - 设备下拉、DirectShow 枚举、多索引/多后端探测
 - DroidCam 虚拟摄像头仍可用；后台打开；支持视频/图片文件源
 
-### 6. 外挂图层输出（预留）
+### 7. 内置图层系统
 
-- 「外挂图层输出」开关：启用时隐藏内置预览窗，经 `external_layer_output_bridge` 写 `status.json` / `contract.json`（含锚定元数据；RGBA/图层状态导出仍待做）
+- **启用图层混合**：弹出五层独立编辑窗，在内置 OutputFrame 合成（透明 PNG）
+- **启动无限图层系统**：占位开关（L2 尚未实现）
+- ~~向外挂图层系统输出 / bridge~~ 已移除（2026-05-30）
 
-### 7. 其它交互
+### 8. 其它交互
 
 - 滑块悬停约 1 秒后才可用滚轮微调（高亮 + 提示）
 - 「标定朝向」等校准按钮；已去掉「点任意控件置顶输出窗」（避免控件失效）
 
-### 8. 附带内容
+### 9. 附带内容
 
-- `packaged/bai_450k/`：示例白腾（代号：九星独行角色） student 模型（yaml + 图）
-- 文档：`HANDOVER.md`、`HARDWARE_REQUIREMENTS.md`、`TROUBLESHOOTING_QA.md`、`docs/DOC_INDEX.md` 等
-- `his/`：按时间归档的历史快照；`archive_to_his.ps1` 留档（~~`sync_from_bai_custom.ps1`~~ 已废弃，develop → fork 手动合并）
+- `data/character_models/baiten_from_project_forlon9/bai_450k/`：示例白腾（代号：九星独行角色） student 模型（yaml + 图）
+- 文档：`docs/HANDOVER.md`、`docs/HARDWARE_REQUIREMENTS.md`、`docs/TROUBLESHOOTING_QA.md`、`docs/DOC_INDEX.md` 等
+- `his/`：按时间归档的历史快照；`archive_to_his.ps1` 留档
 
 更细的条目见 `face-puppeteer-ui-enhancements-ai-code/CHANGELOG.md`。
 
@@ -81,19 +115,27 @@ Git 远程：`origin` = fork，`upstream` = 官方。详见 [FORK_ROOT.md](FORK_
 
 ---
 
-## 总库目录结构（当前）
+## 根目录结构（发布总库）
 
 ```
-E:\tha4fork\
-├── README.md                ← 本文件（Fork 总览，GitHub 首页展示）
-├── docs/DOC_INDEX.md        ← 全部 Markdown 索引（最全）
-├── plans/                   ← 计划与外挂图层对接说明
-├── HANDOVER.md              ← 新 Agent 入口
-├── FORK_ROOT.md             ← Git 与路径说明
-├── TROUBLESHOOTING_QA.md    ← 排障 Q&A（最全）
-├── DEPLOY.md                ← 首次部署（GitHub ZIP）
-├── 》》》》start《《《《.bat    ← 一键启动入口（转发到 run_load_preview_puppeteer.bat）
-└── face-puppeteer-ui-enhancements-ai-code/   ← 定制 UI 与实验代码
+<REPO_ROOT>\
+├── README.md                 ← 本文件（GitHub 首页）
+├── DEPLOY.bat                ← 四档安装（basic / face / THA3 / THA4）
+├── RESET_ADDON.bat           ← 卸载单个可选包
+├── EasyVtuberStudio.exe      ← 主入口（双击启动）
+├── addons/                   ← 可选包（初始仅 README）
+├── assets/                   ← 品牌资源（icon 等）
+├── data/                     ← CORE 角色与示例资源
+├── deps/                     ← pip 清单与 THA3 代码
+├── docs/                     ← 全部文档（DEPLOY、HANDOVER、排障…）
+├── face-puppeteer-ui-enhancements-ai-code/
+├── packaging/                ← 便携发行、manifest、编译脚本
+├── plans/
+├── scripts/
+│   ├── launch/               ← bat 启动器（run、THA4Train、DownloadAssets…）
+│   └── maint/                ← develop→fork 同步、路径验收
+├── tools/training/
+└── workspace/                ← 用户可写状态（ui state、deploy.log）
 ```
 
 ## 环境兼容策略
@@ -103,7 +145,15 @@ E:\tha4fork\
 - THA4 Student 外壳依赖：`deps/pip/requirements-tha4-student.txt`
 - THA3 ONNX+DirectML 依赖：`deps/pip/requirements-tha3-ort.txt`
 
-对应安装脚本分别为 `deps/pip/install_tha4_student_deps.bat` 与 `deps/pip/install_tha3_ort_deps.bat`。该拆分用于降低依赖冲突风险，保证项目稳定运行。
+对应安装：运行 **`DEPLOY.bat`** 选择档位，或维护者使用 `deps\pip\install_*.bat`（需已存在 venv，见 `resolve_venv.bat`）。已内置。
+
+---
+
+## 日常流程
+
+1. **用户**：双击根目录 **`EasyVtuberStudio.exe`**
+2. **开发**：在 `E:\tha4fork-develop` 改代码 → `scripts\maint\sync_develop_to_fork.ps1` → fork push
+3. **维护者编译 exe**：`scripts\build_launchers.bat`
 
 ---
 
@@ -111,17 +161,4 @@ E:\tha4fork\
 
 | 提交 | 说明 |
 |------|------|
-| （待 push） | 文档交叉合并：fork 为 Markdown 权威副本；窗口捕获、输出动态增强校准等 |
-| `e107413` | DroidCam 相关说明与 QA 更新 |
-
-
-
----
-
-## 日常流程
-
-1. 在 **`E:\tha4fork`** 运行：`》》》》start《《《《.bat`（或 `run_load_preview_puppeteer.bat`）  
-2. 日常开发在 **`E:\tha4fork-develop`**，稳定后合并到本目录再 push  
-3. 新 Agent 先读 [HANDOVER.md](HANDOVER.md)  
-4. 需要留档时：在 `face-puppeteer-ui-enhancements-ai-code` 运行 `archive_to_his.ps1`  
-5. `git add` → `commit` → `git push origin main`
+| `v1.0` | 便携 DEPLOY 四档、Mouse + Audio 面捕、文档与 GitHub 发布 [EasyVtuberStudio](https://github.com/liketocood345/EasyVtuberStudio) |

@@ -1,13 +1,31 @@
-# Junction THA3 / EasyVtuber model assets into bai_custom (no large file copies).
+# Optional: junction EasyVtuber vendor assets into this repo (no large file copies).
+# Usage:
+#   powershell -ExecutionPolicy Bypass -File setup_tha3_vendor.ps1 -EasyVtuberRoot "F:\EasyVtuber\..."
+param(
+    [string]$RepoRoot = "",
+    [string]$EasyVtuberRoot = ""
+)
+
 $ErrorActionPreference = "Stop"
-$EzRoot = "F:\EasyVtuber\EasyVtuber_v0.8.1\EasyVtuber_v0.8.1"
-$BundleRoot = "E:\THA4_bundle_bai_custom"
-$VendorRoot = Join-Path $BundleRoot "vendor\easyvtuber"
+if (-not $RepoRoot) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
+} else {
+    $RepoRoot = (Resolve-Path $RepoRoot).Path
+}
+
+if (-not $EasyVtuberRoot) {
+    Write-Host "Pass -EasyVtuberRoot to the extracted EasyVtuber folder (contains tha3/, data/, etc.)."
+    Write-Host "Repo root: $RepoRoot"
+    exit 1
+}
+$EasyVtuberRoot = (Resolve-Path $EasyVtuberRoot).Path
+
+$VendorRoot = Join-Path $RepoRoot "vendor\easyvtuber"
 $Links = @(
-    @{ Name = "tha3"; Target = Join-Path $EzRoot "tha3" },
-    @{ Name = "ezvtuber-rt"; Target = Join-Path $EzRoot "ezvtuber-rt" },
-    @{ Name = "data_models"; Target = Join-Path $EzRoot "data\models" },
-    @{ Name = "data_images"; Target = Join-Path $EzRoot "data\images" }
+    @{ Name = "tha3"; Target = Join-Path $EasyVtuberRoot "tha3" },
+    @{ Name = "ezvtuber-rt"; Target = Join-Path $EasyVtuberRoot "ezvtuber-rt" },
+    @{ Name = "data_models"; Target = Join-Path $EasyVtuberRoot "data\models" },
+    @{ Name = "data_images"; Target = Join-Path $EasyVtuberRoot "data\images" }
 )
 
 New-Item -ItemType Directory -Force -Path $VendorRoot | Out-Null

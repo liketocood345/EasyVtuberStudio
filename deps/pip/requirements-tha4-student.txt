@@ -1,7 +1,7 @@
-# THA4 Student black box — character_model.yaml + distilled weights.
-# Requires requirements-shell.txt (MediaPipe pose → THA4 poser).
+# THA4 Student black box - character_model.yaml + distilled weights.
+# Requires requirements-shell.txt (MediaPipe pose -> THA4 poser).
 #
 # Inference uses torch + tha4 package from talking-head-anime-4-demo/src.
-# No extra pip packages beyond the shared shell when venv was built from poetry.
+# torch is installed via requirements-torch-cu117.txt during DEPLOY.
 
 -r requirements-shell.txt

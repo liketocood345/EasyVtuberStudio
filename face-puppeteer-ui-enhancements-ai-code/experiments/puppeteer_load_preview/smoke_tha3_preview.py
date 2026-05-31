@@ -11,13 +11,13 @@ EXPERIMENT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(EXPERIMENT_DIR))
 
 from tha3_engine import Tha3Engine
-from tha3_paths import find_repo_root, get_demo_src_path, get_ezvtuber_images_root
+from tha3_paths import find_repo_root, get_demo_src_path, get_packaged_model_yaml
 from tha3_pose_adapter import neutral_tha3_pose
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    default_png = get_ezvtuber_images_root() / "lambda_00.png"
+    default_png = get_packaged_model_yaml(find_repo_root(EXPERIMENT_DIR)).parent / "character.png"
     parser.add_argument("--png", default=str(default_png), help="512x512 RGBA character PNG")
     parser.add_argument("--variant", default="separable_half")
     parser.add_argument("--out", default=str(EXPERIMENT_DIR / "smoke_tha3_output.png"))

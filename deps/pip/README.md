@@ -1,4 +1,4 @@
-# Load Preview pip 依赖（仓库内路径）
+# EasyVtuberStudio pip 依赖（仓库内路径）
 
 `venv` 通过 `resolve_venv.bat` 按**仓库根目录**解析，顺序：
 

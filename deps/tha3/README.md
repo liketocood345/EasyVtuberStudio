@@ -1,4 +1,4 @@
-# THA3 运行时资产（仓库内路径）
+﻿# THA3 运行时资产（仓库内路径）
 
 代码通过 `tha3_paths.py` → `deps.repo_paths.get_tha3_bundle_root()` 访问本目录，**不**再依赖 `vendor/easyvtuber` 或 `F:\EasyVtuber\...`。
 
@@ -18,7 +18,7 @@
 powershell -ExecutionPolicy Bypass -File deps\tha3\populate_tha3_bundle.ps1 -SourceRoot "D:\path\to\EasyVtuber_v0.8.1\EasyVtuber_v0.8.1"
 ```
 
-省略 `-SourceRoot` 时脚本会尝试常见安装路径；复制目标始终为**本仓库**下的 `deps/tha3/`。
+省略 `-SourceRoot` 时脚本会尝试常见安装路径；复制目标始终为**EasyVtuberStudio 仓库**下的 `deps/tha3/`。
 
 ## Git
 

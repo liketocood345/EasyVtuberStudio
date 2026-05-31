@@ -1,0 +1,5 @@
+# PyTorch for THA4 Student inference (matches poetry/pyproject.toml cu117 pins).
+# Large download (~2 GB). Requires NVIDIA GPU + driver for CUDA build.
+--extra-index-url https://download.pytorch.org/whl/cu117
+torch==1.13.1+cu117
+torchvision==0.14.1+cu117

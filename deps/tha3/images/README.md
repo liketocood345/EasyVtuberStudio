@@ -1,7 +1,7 @@
-# Crypko Characters
+THA3 立绘 PNG 由用户自行放入本目录（512×512 RGBA），或通过 UI **加载其他 THA3 立绘** 选择仓库内任意路径。
 
-The files ``crypko_00.png``, ``crypko_01.png``, ..., ``crypko_07.png`` were created with [Crypko](http://crypko.ai). You can make use of these files only according to the [Crypko Guideline](https://crypko.ai/guideline/).
+本仓库**不包含** THA4 原作者示例角色 `lambda_00.png` / `lambda_01.png`。默认可用 bundled **bai** 立绘：
 
-# Lambda Characters
+`data/character_models/baiten_from_project_forlon9/bai_450k/character_model/character.png`
 
-The characters in ``lambda_00.png`` and ``lambda_01.png`` were create by [garun](http://twitter.com/garunstudio), a Thai comic artist who has [published in Japan](https://www.amazon.co.jp/dp/4758066116), through a commission by me, Pramook Khungurn. The copyright of the files and the characters, however, belongs to me. The artworks are licensed to the general public under the [Creative Commons Attribution-NonCommercial 4.0 International](https://creativecommons.org/licenses/by-nc/4.0/legalcode) license.
+（相对**当前运行中的仓库根**解析。）

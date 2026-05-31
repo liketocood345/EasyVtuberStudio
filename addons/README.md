@@ -1,0 +1,20 @@
+# Optional add-on packs
+
+Large optional downloads install under `addons/<pack>/`. CORE paths (`runtime/venv`, `deps/tha3/models`, `demo/data/*`) are **junction links** rebuilt by `packaging/reconcile_portable_layout.ps1`.
+
+## DEPLOY tiers (Y/N menu)
+
+| Tier | Default Enter | Add-on folder | Installs |
+|------|---------------|---------------|----------|
+| **[1] basic_run** | Y | — | `workspace/student_venv` (Mouse + THA4 Student) |
+| **[2] face_puppeteer** | N | `addons/face_puppeteer/` | PyTorch + wx + MediaPipe + `.task` |
+| **[3] tha3_models** | N | `addons/tha3_models/` | THA3 portrait weights |
+| **[4] tha4_training** | N | `addons/tha4_training/` | Teacher + pose dataset |
+
+Run **`DEPLOY.bat`** from the repo root. **`EasyVtuberStudio.exe`** starts when tier [1] (or [2] runtime) is already satisfied.
+
+**Remove an add-on:** delete its folder (or run `RESET_ADDON.bat`), then reconcile runs automatically.
+
+**CORE GitHub ZIP includes:** exe, code, THA4 Student (bai). It does **not** include runtime or training weights.
+
+See [docs/ADDONS_LAYOUT.md](../docs/ADDONS_LAYOUT.md) · [docs/DEPLOY.md](../docs/DEPLOY.md).

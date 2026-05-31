@@ -23,12 +23,12 @@ if (-not $ActiveDevRoot) {
 if ($PublishFork) { $Fork = $true }
 
 if ($Fork) {
-    $batPath = Join-Path $RepoRoot "run_load_preview_puppeteer.bat"
+    $batPath = Join-Path $RepoRoot "scripts\launch\run_load_preview_puppeteer.bat"
     $workDir = $RepoRoot
     $description = "THA4 Load Preview (fork)"
 } else {
-    $batPath = Join-Path $ActiveDevRoot "experiments\puppeteer_load_preview\run_load_preview_puppeteer.bat"
-    $workDir = Join-Path $ActiveDevRoot "experiments\puppeteer_load_preview"
+    $batPath = Join-Path $ActiveDevRoot "scripts\launch\run_load_preview_puppeteer.bat"
+    $workDir = $ActiveDevRoot
     $description = "THA4 Load Preview (active dev)"
 }
 

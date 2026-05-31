@@ -1,4 +1,4 @@
-# THA3 black box — official PyTorch .pt weights under data/models/<variant>/.
+# THA3 black box - official PyTorch .pt weights under data/models/<variant>/.
 # Requires requirements-shell.txt only; uses the same torch as THA4 Student.
 #
 # When .pt files exist, tha3_engine.py prefers PyTorch THA3 poser over ORT.

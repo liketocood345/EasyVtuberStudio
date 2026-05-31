@@ -2,7 +2,7 @@
 
 ## 概念
 
-Load Preview 外壳统一负责：输出窗、显示变换、外挂图层桥接、UI 持久化。
+EasyVtuberStudio 面捕外壳统一负责：输出窗、显示变换、外挂图层桥接、UI 持久化。
 
 两种**互斥**图像来源（切换时 `stop()` 旧源、再 `start()` 新源）：
 
@@ -23,7 +23,7 @@ THA3 运行时资产打包在**仓库根** `deps/tha3/`（路径由 `tha3_paths.
 | `deps/tha3/images/` | 示例立绘 PNG |
 | `deps/pip/` | pip 清单与安装脚本 |
 
-首次填充（需本机 EasyVtuber，仅用于一次性复制进仓库）：
+首次填充（维护者可选；最终用户请用根目录 **`DEPLOY.bat`** 从 THA3 原作者下载）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File deps\tha3\populate_tha3_bundle.ps1
@@ -59,7 +59,7 @@ powershell -ExecutionPolicy Bypass -File deps\tha3\populate_tha3_bundle.ps1
 {
   "image_source_mode": "tha4_student",
   "last_loaded_model_path": "face-puppeteer-ui-enhancements-ai-code/baiten_from_project_forlon9/bai_450k/character_model/character_model.yaml",
-  "tha3_character_png": "deps/tha3/images/lambda_00.png",
+  "tha3_character_png": "data/character_models/baiten_from_project_forlon9/bai_450k/character_model/character.png",
   "tha3_model_variant": "separable_half"
 }
 ```

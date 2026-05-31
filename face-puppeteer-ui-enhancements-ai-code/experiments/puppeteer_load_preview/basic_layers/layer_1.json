@@ -1,0 +1,15 @@
+{
+  "slot_id": 1,
+  "enabled": true,
+  "visible": true,
+  "asset_path": null,
+  "z_order": 1,
+  "occlusion": "behind_character",
+  "transform": {
+    "offset_x": 0.0,
+    "offset_y": 0.0,
+    "scale": 1.0,
+    "rotation_deg": 0.0
+  },
+  "binding_parent": null
+}

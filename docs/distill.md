@@ -34,12 +34,11 @@ Make sure you have (1) created a Python environment and (2) downloaded model fil
 
 ## Configuration File
 
-A configuration file is a [YAML](https://yaml.org/) file that specify how to create a student model. This repository comes with two valid configuration files that you can peruse:
+A configuration file is a [YAML](https://yaml.org/) file that specify how to create a student model. Use the `distiller_ui` program to create configuration files rather than writing them yourself. Inside the program, you can see what the fields are and what they mean.
 
-* [data/distill_examples/lambda_00/config.yaml](../data/distill_examples/lambda_00/config.yaml)
-* [data/distill_examples/lambda_01/config.yaml](../data/distill_examples/lambda_01/config.yaml)
+Example bundled student (this repo): `data/character_models/baiten_from_project_forlon9/bai_450k/character_model/character_model.yaml`.
 
-I recommend that you use the `distiller_ui` program to create configuration files rather than writing them yourself. Inside the program, you can see what the fields are and what they mean.
+Upstream THA4 author example characters (`lambda_00`, `lambda_01`) are **not** shipped in EasyVtuberStudio.
 
 ## What `distill` Outputs
 

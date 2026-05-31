@@ -1,7 +1,7 @@
-# THA3 black box — ONNX Runtime + DirectML (no local PyTorch .pt weights).
-# Requires requirements-shell.txt (MediaPipe pose → 45-float THA3 vector).
+# THA3 black box - ONNX Runtime + DirectML (no local PyTorch .pt weights).
+# Requires requirements-shell.txt (MediaPipe pose -> 45-float THA3 vector).
 #
-# DO NOT add the `onnx` pip package — it requires protobuf>=4 and breaks mediapipe.
+# DO NOT add the `onnx` pip package - it requires protobuf>=4 and breaks mediapipe.
 # tha3_engine.py stubs sys.modules["onnx"] before loading ezvtuber tha3_ort.
 
 -r requirements-shell.txt
