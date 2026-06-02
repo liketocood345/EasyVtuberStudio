@@ -22,6 +22,11 @@
 
 ## 演示
 
+
+
+https://github.com/user-attachments/assets/498f7a42-ae24-44d9-ab0a-29763a80922b
+
+
 https://github.com/liketocood345/EasyVtuberStudio/releases/download/readme-demo-asset/demo.mp4
 
 ## 仓库与路径
