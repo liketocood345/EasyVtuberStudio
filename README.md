@@ -22,9 +22,7 @@
 
 ## 演示
 
-<video src="assets/demo.mp4" controls width="720">
-  您的浏览器不支持 video 标签。
-</video>
+https://github.com/liketocood345/EasyVtuberStudio/releases/download/readme-demo-asset/demo.mp4
 
 ## 仓库与路径
 
