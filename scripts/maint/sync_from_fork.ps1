@@ -1,4 +1,4 @@
-# Overwrite tha4fork-develop code from tha4fork release tree, preserving dev-only paths and full install payloads.
+# Overwrite easyvtuberstudio-develop from easyvtuberstudio-main release tree, preserving dev-only paths.
 # Usage (from develop repo root):
 #   powershell -ExecutionPolicy Bypass -File scripts\maint\sync_from_fork.ps1
 
@@ -7,10 +7,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$DevRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-if (-not $ForkRoot) {
-    $ForkRoot = (Resolve-Path (Join-Path $DevRoot "..\tha4fork")).Path
-}
+. (Join-Path $PSScriptRoot "repo_paths.ps1")
+$roots = Resolve-DevelopForkRoots -ForkRoot $ForkRoot
+$DevRoot = $roots.DevRoot
+$ForkRoot = $roots.ForkRoot
 if (-not (Test-Path (Join-Path $ForkRoot "docs\DEPLOY.md"))) {
     throw "Fork root not found or invalid: $ForkRoot"
 }

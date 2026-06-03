@@ -31,8 +31,8 @@ Two related but **independent** calibrations (do not cross-call):
 
 | Path | Function | Effect | UI controls |
 | --- | --- | --- | --- |
-| **A — head orientation** | `_perform_head_orientation_calibration` → `pose_converter.apply_face_orientation_calibration()` | Sets MediaPipe head X/Y/Z offsets in converter only | Compact **Calibrate Head Orientation**; postprocess **Calibrate Head Orientation**; periodic **Auto Calibrate Forward Gaze** |
-| **B — output dynamic enhancement** | `update_neutral_output_enhancement` / `apply_neutral_calibration` (auto-init only) | Updates pan/scale neutral (`neutral_face_screen_motion`); manual via scale calibrate | **Output Dynamic Enhancement Calibration**; auto enhancement checkbox + interval |
+| **A — head orientation** | `_perform_head_orientation_calibration` → `pose_converter.apply_face_orientation_calibration()` | Sets MediaPipe head X/Y/Z offsets in converter only | Compact **Calibrate Head Orientation**; preview column **Calibrate Head Orientation** (`calibrate_neutral_button`); model-input **Calibrate Forward Gaze** (`calibrate_face_orientation_button`); periodic **Auto Calibrate Forward Gaze** |
+| **B — output dynamic enhancement** | `update_neutral_output_enhancement` / `apply_neutral_calibration` (auto-init only) | Updates pan/scale neutral (`neutral_face_screen_motion`); manual via scale calibrate | Compact **Output Dynamic Enhancement Calibration**; preview column **Output Dynamic Enhancement Calibration** (`calibrate_scale_button`); auto enhancement checkbox + interval |
 
 **Boundary:** path A must **not** call `apply_neutral_calibration`, `update_neutral_output_enhancement`, or reset display offset/scale. Path B must **not** call `apply_face_orientation_calibration`.
 
@@ -385,8 +385,8 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | Function | Purpose | UI control(s) |
 | --- | --- | --- |
 | `MainFrame.calibrate_head_orientation_quick` | Compact launcher: path A head orientation only. | Compact: Calibrate Head Orientation |
-| `MainFrame.calibrate_neutral_clicked` | Postprocess button: path A head orientation only. | Calibrate Head Orientation (postprocess) |
-| `MainFrame.calibrate_scale_clicked` | Manual output dynamic enhancement calibration (path B neutral/size). | Compact: Output Dynamic Enhancement Calibration; Output Dynamic Enhancement Calibration (postprocess) |
+| `MainFrame.calibrate_neutral_clicked` | Preview-column button: path A head orientation only. | Calibrate Head Orientation (preview calibration column) |
+| `MainFrame.calibrate_scale_clicked` | Manual output dynamic enhancement calibration (path B neutral/size). | Compact: Output Dynamic Enhancement Calibration; Output Dynamic Enhancement Calibration (preview calibration column) |
 | `MainFrame.load_last_model` | — | Load Last THA4 Student Model |
 | `MainFrame.load_last_tha3_character_png` | — | Load Last THA3 PNG |
 | `MainFrame.load_model` | — | Load THA4 Student Model |

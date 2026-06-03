@@ -1,7 +1,7 @@
 ﻿# EasyVtuberStudio — 项目交接说明（新 Agent / 维护者主入口）
 
-> **文档权威副本在 fork 发布总库 `E:\tha4fork\docs\`（本文件）。**  
-> 代码日常开发在 **`E:\tha4fork-develop`**，稳定后 `scripts\maint\sync_develop_to_fork.ps1` 合并到 fork 再 push。  
+> **文档权威副本在 fork 发布总库 `E:\easyvtuberstudio-main\docs\`（本文件）。**  
+> 代码日常开发在 **`E:\easyvtuberstudio-develop`**，稳定后 `scripts\maint\sync_develop_to_fork.ps1` 合并到 fork 再 push。  
 > ~~`E:\THA4_bundle_bai_custom`~~ 已废弃。  
 > 远程：https://github.com/liketocood345/EasyVtuberStudio  
 > 曾用名：`EasyVtuber-with-THA3-THA4`
@@ -15,8 +15,8 @@
 
 | 路径 | 用途 |
 |------|------|
-| **`E:\tha4fork`** | **发布总库**：GitHub ZIP **CORE**（刚解压态：无 runtime/可选包，仅 bai + 代码） |
-| **`E:\tha4fork-develop`** | **研发主仓**：**三模块全装**（`addons/face_puppeteer` + `tha3_models` + `tha4_training`），日常改代码 |
+| **`E:\easyvtuberstudio-main`** | **发布总库**：GitHub ZIP **CORE**（刚解压态：无 runtime/可选包，仅 bai + 代码） |
+| **`E:\easyvtuberstudio-develop`** | **研发主仓**：**三模块全装**（`addons/face_puppeteer` + `tha3_models` + `tha4_training`），日常改代码 |
 | ~~`E:\THA4_bundle_bai_custom`~~ | **已废弃** |
 
 **目录约定（两仓代码布局一致，差异在 `addons/` 是否有实体文件）：**
@@ -39,14 +39,14 @@ fork 瘦包验收：`packaging\verify_fresh_extract.ps1`
 **定制部署 / 发布验收（fork）：**
 
 ```bat
-cd /d E:\tha4fork
+cd /d E:\easyvtuberstudio-main
 EasyVtuberStudio.exe
 ```
 
 **日常开发（develop）：**
 
 ```bat
-cd /d E:\tha4fork-develop
+cd /d E:\easyvtuberstudio-develop
 scripts\launch\run_load_preview_puppeteer.bat
 ```
 
@@ -118,7 +118,7 @@ scripts\launch\run_load_preview_puppeteer.bat
 
 ### 0.7 提交前自检
 
-- [ ] 改动是否落在正确仓库（**发布**改 `E:\tha4fork`，**研发**改 `E:\tha4fork-develop`）
+- [ ] 改动是否落在正确仓库（**发布**改 `E:\easyvtuberstudio-main`，**研发**改 `E:\easyvtuberstudio-develop`）
 - [ ] THA3 ↔ THA4 切换是否 `stop()` 旧源
 - [ ] 图层改动是否仅在 L1/L2 计划范围内
 - [ ] 新增失败分支是否在 timer/循环里弹窗（须用 `ui_dialog_guard` 或静默降级）
@@ -149,7 +149,7 @@ Model Input 列选择 **Mouse + Audio (EasyVtuber)**：
 ## 2) 目录结构（本仓 = fork 发布总库）
 
 ```
-E:\tha4fork\
+E:\easyvtuberstudio-main\
 ├── README.md                   ← GitHub 首页
 ├── EasyVtuberStudio.exe        ← 面捕主入口
 ├── docs/                       ← 全部 Markdown（本文件在此）
@@ -162,7 +162,7 @@ E:\tha4fork\
     └── experiments/puppeteer_load_preview/
 ```
 
-研发主仓 **`E:\tha4fork-develop`** 目录布局与上表相同（无 GitHub 发布文档时以 fork 根文档为准）。
+研发主仓 **`E:\easyvtuberstudio-develop`** 目录布局与上表相同（无 GitHub 发布文档时以 fork 根文档为准）。
 
 ---
 
@@ -247,19 +247,19 @@ E:\tha4fork\
 验收（在 **实际运行的仓库** 下执行，fork 或 develop 均可）：
 
 ```bat
-cd /d E:\tha4fork
+cd /d E:\easyvtuberstudio-main
 packaging\verify_deploy.ps1 -PortableRoot . -Strict -RequireFacePuppeteer -RequireTha3Models
 ```
 
 或 smoke 脚本（需已装对应 venv）：
 
 ```bat
-cd /d E:\tha4fork\face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo
+cd /d E:\easyvtuberstudio-main\face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo
 set PYTHONPATH=%cd%\src
 ..\..\..\addons\face_puppeteer\venv\Scripts\python.exe ..\experiments\puppeteer_load_preview\smoke_tha3_preview.py
 ```
 
-（develop 将路径中的 `tha4fork` 换为 `tha4fork-develop`；瘦包仅 basic 时用 `workspace\student_venv\Scripts\python.exe`。）
+（develop 将路径中的 `easyvtuberstudio-main` / `easyvtuberstudio-develop` 替换为实际目录；瘦包仅 basic 时用 `workspace\student_venv\Scripts\python.exe`。）
 
 ---
 

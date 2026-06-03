@@ -2,11 +2,22 @@
 
 相对于 THA4 原版 `character_model_mediapipe_puppeteer.py`（固定 `VideoCapture(0)`、无视频源选择、单窗口布局）。
 
-**活跃开发：** `E:\tha4fork-develop\`  
+**活跃开发：** `E:\easyvtuberstudio-develop\`  
 **EasyVtuberStudio 发布总库根目录：** 对外发布总库（文档权威副本）  
 **代码包历史快照：** `face-puppeteer-ui-enhancements-ai-code/his/`
 
 ---
+
+---
+
+## 2026-06-04
+
+| # | 改动 |
+|---|------|
+| L1 | **三栏布局持久化修复**：分割条拖动与窗缩放/移动写入 `main/animation/right_sidebar_splitter_sash_ratio`；拖动中 80ms 防抖布局 + 250ms 防抖写盘；恢复布局时不再误触发立即保存 |
+| L2 | **校准控件迁至预览行**：「标定朝向」「输出动态增强校准」及周期勾选/间隔 Spin 移至立绘+摄像头预览**右侧** `preview_calibration_column`（自后处理栏迁出） |
+| L3 | **完整调参窗四边可缩放**：`CONTROLS_MIN_CLIENT_WIDTH` 降至 ~1124px；`ControlsFrame` 不再在每次 resize 设 `SetMin/MaxClientSize` 锁死边框 |
+| L4 | 本地目录更名：`tha4fork*` → `easyvtuberstudio-develop` / `easyvtuberstudio-main`（**非** GitHub 仓库名）；GitHub 仍为 **EasyVtuberStudio**；打包 junction 路径验收更新 |
 
 ---
 
@@ -41,7 +52,7 @@
 |---|------|
 | W1 | **窗口捕获**视频源：OBS 式抓取 DroidCam 预览窗；与摄像头共用下拉；记忆窗口；**加载模型后**自动连接时优先窗口捕获 |
 | W2 | **输出动态增强校准**：刷新缩放基准 + 水平归中（不改垂直基准）；开启自动移动缩放时平滑过渡 |
-| W3 | THA3 变体与「标定朝向」分子面板，缓解窄侧栏重叠 |
+| W3 | THA3 变体下拉仍位于后处理栏；**朝向/输出动态增强校准**已迁至预览行右侧校准列（2026-06-04） |
 | W4 | 音频驱动嘴型界面注明「有少量延时」 |
 | W5 | 移除调试脚手架（`agent_debug` 等） |
 | W6 | **默认启动完整调参窗**（`startup_show_full_controls`）；精简小窗改为可选（3 快捷校准按钮 + 打开完整窗） |

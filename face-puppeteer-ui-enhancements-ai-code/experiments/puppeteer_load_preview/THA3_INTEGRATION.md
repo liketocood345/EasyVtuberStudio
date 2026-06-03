@@ -49,7 +49,9 @@ powershell -ExecutionPolicy Bypass -File deps\tha3\populate_tha3_bundle.ps1
 
 顶栏：**以 THA3 加载上次/其他立绘**、**加载 THA4 Student 模型** 等。图像来源由 `image_source_mode` 与加载动作决定。
 
-后处理区：**THA3 模型变体**下拉（THA3 模式时显示）、朝向/输出动态增强校准等。
+后处理区：**THA3 模型变体**下拉（THA3 模式时显示）、抗锯齿/背景/图层开关等。
+
+预览行（立绘 + 摄像头右侧 **`preview_calibration_column`**）：**标定朝向**、**输出动态增强校准**及周期自动校准勾选与间隔（2026-06-04 自后处理迁出）。
 
 ## 持久化 (`load_preview_ui_state.json`)
 

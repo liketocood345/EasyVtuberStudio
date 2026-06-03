@@ -1,18 +1,18 @@
-# Copy tha4fork-develop -> tha4fork release tree (code + docs under Load Preview).
+# Copy easyvtuberstudio-develop -> easyvtuberstudio-main (Load Preview experiment subtree).
 # Does NOT overwrite local runtime state (ui state, layer json, external_layer_output).
 # Usage (from develop root):
 #   powershell -ExecutionPolicy Bypass -File sync_to_fork.ps1
-# Optional: -ForkRoot "E:\tha4fork"
+# Optional: -ForkRoot "E:\easyvtuberstudio-main"
 
 param(
     [string]$ForkRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
-$DevRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-if (-not $ForkRoot) {
-    $ForkRoot = (Resolve-Path (Join-Path $DevRoot "..\tha4fork")).Path
-}
+. (Join-Path $PSScriptRoot "repo_paths.ps1")
+$roots = Resolve-DevelopForkRoots -ForkRoot $ForkRoot
+$DevRoot = $roots.DevRoot
+$ForkRoot = $roots.ForkRoot
 if (-not (Test-Path (Join-Path $ForkRoot "docs\DEPLOY.md"))) {
     throw "Fork root not found or invalid: $ForkRoot"
 }

@@ -64,6 +64,37 @@ def get_packaged_model_yaml(repo_root: Path | None = None) -> Path:
     return candidates[0]
 
 
+def get_packaged_character_png(repo_root: Path | None = None) -> Path:
+    yaml_path = get_packaged_model_yaml(repo_root)
+    png_path = yaml_path.parent / "character.png"
+    if png_path.is_file():
+        return png_path
+    root = repo_root or find_repo_root()
+    candidates = (
+        root / "data" / "character_models" / "baiten_from_project_forlon9" / "bai_450k" / "character_model" / "character.png",
+        root / "packaged" / "bai_450k" / "character_model" / "character.png",
+        root / "face-puppeteer-ui-enhancements-ai-code" / "packaged" / "bai_450k" / "character_model" / "character.png",
+    )
+    for path in candidates:
+        if path.is_file():
+            return path
+    return png_path
+
+
+def resolve_bundled_bai_model_paths(repo_root: Path | None = None) -> tuple[str, str] | None:
+    """Repo-relative (forward slashes) yaml + png for bundled bai student model, if present."""
+    root = repo_root or find_repo_root()
+    yaml_path = get_packaged_model_yaml(root)
+    png_path = get_packaged_character_png(root)
+    if not yaml_path.is_file() or not png_path.is_file():
+        return None
+    yaml_rel = to_repo_relative(str(yaml_path.resolve()), root)
+    png_rel = to_repo_relative(str(png_path.resolve()), root)
+    if not yaml_rel or not png_rel:
+        return None
+    return yaml_rel, png_rel
+
+
 def get_tha3_bundle_root() -> Path:
     return find_repo_root() / "deps" / "tha3"
 

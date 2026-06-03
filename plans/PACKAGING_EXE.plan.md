@@ -128,7 +128,7 @@ icon = "assets/branding/app-icon-source.ico"
 **构建命令（草案）：**
 
 ```bat
-cd /d E:\tha4fork-develop
+cd /d E:\easyvtuberstudio-develop
 venv\Scripts\pip install pyinstaller
 venv\Scripts\pyinstaller packaging\load_preview.spec --noconfirm
 ```
