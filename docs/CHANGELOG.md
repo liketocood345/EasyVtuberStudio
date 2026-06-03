@@ -17,7 +17,7 @@
 | L1 | **三栏布局持久化修复**：分割条拖动与窗缩放/移动写入 `main/animation/right_sidebar_splitter_sash_ratio`；拖动中 80ms 防抖布局 + 250ms 防抖写盘；恢复布局时不再误触发立即保存 |
 | L2 | **校准控件迁至预览行**：「标定朝向」「输出动态增强校准」及周期勾选/间隔 Spin 移至立绘+摄像头预览**右侧** `preview_calibration_column`（自后处理栏迁出） |
 | L3 | **完整调参窗四边可缩放**：`CONTROLS_MIN_CLIENT_WIDTH` 降至 ~1124px；`ControlsFrame` 不再在每次 resize 设 `SetMin/MaxClientSize` 锁死边框 |
-| L4 | 仓库目录更名文档对齐：`tha4fork*` → `easyvtuberstudio-develop` / `easyvtuberstudio-main`；打包 junction 路径验收更新 |
+| L4 | 本地目录更名：`tha4fork*` → `easyvtuberstudio-develop` / `easyvtuberstudio-main`（**非** GitHub 仓库名）；GitHub 仍为 **EasyVtuberStudio**；打包 junction 路径验收更新 |
 
 ---
 

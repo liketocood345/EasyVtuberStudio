@@ -2,27 +2,28 @@
 
 本文件位于 **main 发布总库** `docs/`。日常开发在 **`E:\easyvtuberstudio-develop`**，稳定后运行 `scripts/maint/sync_develop_to_fork.ps1` 再 push。
 
-## 远程（GitHub，大小写与仓库名一致）
+## 远程（GitHub）
 
 | 远程名 | 仓库 | 用途 |
 |--------|------|------|
-| **origin** | https://github.com/liketocood345/easyvtuberstudio-main | 发布总库（默认 push/pull） |
+| **origin** | https://github.com/liketocood345/EasyVtuberStudio | **唯一**发布仓库（默认 push/pull） |
 | **upstream** | https://github.com/pkhungurn/talking-head-anime-4-demo | 官方上游（`git fetch upstream`） |
 
-研发主仓（无根目录 `.git` 时）对应：**https://github.com/liketocood345/easyvtuberstudio-develop**
+**说明：** `E:\easyvtuberstudio-develop` 为本地研发目录，**无独立 GitHub 仓库**；变更经 `sync_develop_to_fork.ps1` 合并到 `E:\easyvtuberstudio-main` 后 push 到 **EasyVtuberStudio**。
 
 ### 曾用名
 
 | 项 | 值 |
 |----|-----|
+| GitHub 曾用 slug | `EasyVtuber-with-THA3-THA4` |
 | 本地目录曾用名 | `E:\tha4fork` / `E:\tha4fork-develop` |
-| GitHub 曾用 slug | `EasyVtuberStudio`、`EasyVtuber-with-THA3-THA4` |
+| 文档误写（非 GitHub 仓库） | `easyvtuberstudio-main` / `easyvtuberstudio-develop` 仅为**本地文件夹名** |
 
-main 仓库更新 origin：
+更新 origin：
 
 ```bat
 cd /d E:\easyvtuberstudio-main
-git remote set-url origin https://github.com/liketocood345/easyvtuberstudio-main.git
+git remote set-url origin https://github.com/liketocood345/EasyVtuberStudio.git
 ```
 
 ## 本地目录

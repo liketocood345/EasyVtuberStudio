@@ -1,4 +1,4 @@
-# Shared local repo path resolution (GitHub: easyvtuberstudio-develop / easyvtuberstudio-main).
+# Shared local repo path resolution (local dirs: easyvtuberstudio-develop / easyvtuberstudio-main; GitHub: EasyVtuberStudio).
 
 $script:DevDirCandidates = @("easyvtuberstudio-develop", "tha4fork-develop")
 $script:ForkDirCandidates = @("easyvtuberstudio-main", "tha4fork")
