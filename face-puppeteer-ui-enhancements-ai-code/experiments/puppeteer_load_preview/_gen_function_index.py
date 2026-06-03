@@ -355,7 +355,7 @@ def main():
         "",
         "| Path | Function | Effect | UI controls |",
         "| --- | --- | --- | --- |",
-        "| **A — head orientation** | `_perform_head_orientation_calibration` → `pose_converter.apply_face_orientation_calibration()` | Sets MediaPipe head X/Y/Z offsets in converter only | Compact **Calibrate Head Orientation**; postprocess **Calibrate Head Orientation**; periodic **Auto Calibrate Forward Gaze** |",
+        "| **A — head orientation** | `_perform_head_orientation_calibration` → `pose_converter.apply_face_orientation_calibration()` | Sets MediaPipe head X/Y/Z offsets in converter only | Compact **Calibrate Head Orientation**; preview column **Calibrate Head Orientation**; model-input **Calibrate Forward Gaze**; periodic **Auto Calibrate Forward Gaze** |",
         "| **B — output dynamic enhancement** | `update_neutral_output_enhancement` / `apply_neutral_calibration` (auto-init only) | Updates pan/scale neutral (`neutral_face_screen_motion`); manual via scale calibrate | **Output Dynamic Enhancement Calibration**; auto enhancement checkbox + interval |",
         "",
         "**Boundary:** path A must **not** call `apply_neutral_calibration`, `update_neutral_output_enhancement`, or reset display offset/scale. Path B must **not** call `apply_face_orientation_calibration`.",

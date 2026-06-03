@@ -111,10 +111,26 @@ from mouse_mocap_driver import (
     MOCAP_INPUT_MODE_MEDIAPIPE,
     MOCAP_INPUT_MODE_MOUSE_AUDIO,
     MOCAP_INPUT_MODE_VALUES,
+    MOUSE_BLINK_INTERVAL_MAX_SEC,
+    MOUSE_BLINK_INTERVAL_MIN_SEC,
+    MOUSE_DEFAULT_FACE_SIZE,
+    MOUSE_HORIZONTAL_TILT_MIX_MAX,
+    MOUSE_HORIZONTAL_TILT_MIX_MIN,
+    MouseCenterZone,
     MouseMocapConfig,
+    blend_mouse_head_roll_degrees,
+    build_mouse_dynamic_face_screen_motion,
     build_mouse_mediapipe_face_pose,
+    clamp,
+    clamp_blink_interval_sec,
+    clamp_horizontal_tilt_mix,
+    extract_head_roll_degrees,
+    face_size_from_zone_distance,
+    is_mouse_inside_center_zone,
     normalize_mocap_input_mode,
+    zone_local_coords,
 )
+from mouse_zone_panel import MouseZonePanel
 from layer_runtime import (
     BasicLayersState,
     BindingContext,
@@ -160,6 +176,7 @@ from tha3_paths import (
     find_repo_root,
     from_repo_relative,
     get_demo_root,
+    resolve_bundled_bai_model_paths,
     to_repo_relative,
 )
 from portable_paths import face_capture_assets_ready, get_portable_root, resolve_mediapipe_task_path
@@ -676,17 +693,32 @@ class OutputFrame(wx.Frame):
 
 class ControlsFrame(wx.Frame):
     def __init__(self, owner_main_frame: "MainFrame"):
-        super().__init__(None, wx.ID_ANY, "THA4 MediaPipe Puppeteer [Full Controls]")
+        super().__init__(None, wx.ID_ANY, "EasyVtuberStudio")
         self.owner_main_frame = owner_main_frame
         self.SetDoubleBuffered(True)
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.Bind(wx.EVT_SIZE, self.on_geometry_changed)
         self.Bind(wx.EVT_MOVE, self.on_geometry_changed)
         self.Bind(wx.EVT_ACTIVATE, self.on_activate)
+        self.Bind(wx.EVT_SHOW, self.on_show)
+
+    def on_show(self, event: wx.ShowEvent):
+        if event.IsShown():
+            if not getattr(self, "_controls_first_idle_bound", False):
+                self._controls_first_idle_bound = True
+                self.Bind(wx.EVT_IDLE, self.on_first_idle)
+            self.owner_main_frame.on_controls_frame_shown()
+        event.Skip()
+
+    def on_first_idle(self, event: wx.Event):
+        self.Unbind(wx.EVT_IDLE, handler=self.on_first_idle)
+        self.owner_main_frame.on_controls_first_idle()
 
     def on_geometry_changed(self, event: wx.Event):
         if isinstance(event, wx.SizeEvent):
             wx.CallAfter(self.owner_main_frame.handle_controls_frame_resized)
+        elif isinstance(event, wx.MoveEvent):
+            wx.CallAfter(self.owner_main_frame.on_controls_frame_moved)
         self.owner_main_frame.schedule_window_geometry_save()
         event.Skip()
 
@@ -703,8 +735,7 @@ class ControlsFrame(wx.Frame):
         event.Veto()
 
 class WebcamPreviewPopupFrame(wx.Frame):
-    POPUP_CLIENT_WIDTH = 640
-    POPUP_CLIENT_HEIGHT = 480
+    POPUP_PREVIEW_SIZE = 640
 
     def __init__(self, owner_main_frame: "MainFrame"):
         super().__init__(None, wx.ID_ANY, "Webcam Preview / 摄像头预览")
@@ -715,10 +746,13 @@ class WebcamPreviewPopupFrame(wx.Frame):
         self.SetSizer(popup_sizer)
         self.SetAutoLayout(1)
 
+        popup_side = WebcamPreviewPopupFrame.POPUP_PREVIEW_SIZE
         self.preview_panel = wx.Panel(
             self,
-            size=(WebcamPreviewPopupFrame.POPUP_CLIENT_WIDTH, WebcamPreviewPopupFrame.POPUP_CLIENT_HEIGHT),
+            size=(popup_side, popup_side),
             style=wx.SIMPLE_BORDER)
+        self.preview_panel.SetBackgroundColour(MainFrame.PREVIEW_IDLE_BACKGROUND)
+        self.preview_panel.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.preview_panel.SetDoubleBuffered(True)
         self.preview_panel.Bind(wx.EVT_PAINT, self.on_paint_preview_panel)
         self.preview_panel.Bind(wx.EVT_ERASE_BACKGROUND, self.on_erase_background)
@@ -747,23 +781,27 @@ class WebcamPreviewPopupFrame(wx.Frame):
         pass
 
     def on_paint_preview_panel(self, event: wx.Event):
-        dc = wx.BufferedPaintDC(self.preview_panel)
-        panel_size = self.preview_panel.GetClientSize()
-        source_bitmap = self.owner_main_frame.webcam_capture_bitmap
-        source_size = source_bitmap.GetSize()
-        if panel_size.x <= 0 or panel_size.y <= 0 or source_size.x <= 0 or source_size.y <= 0:
+        panel = self.preview_panel
+        panel_size = panel.GetClientSize()
+        if panel_size.x <= 0 or panel_size.y <= 0:
             return
-
-        scale = min(panel_size.x / source_size.x, panel_size.y / source_size.y)
+        dc = wx.BufferedPaintDC(panel)
+        dc.SetBackground(wx.Brush(MainFrame.PREVIEW_IDLE_BACKGROUND))
+        dc.SetBackgroundMode(wx.SOLID)
+        dc.Clear()
+        source_bitmap = self.owner_main_frame.webcam_capture_bitmap
+        if not source_bitmap.IsOk():
+            return
+        source_size = source_bitmap.GetSize()
+        if source_size.x <= 0 or source_size.y <= 0:
+            return
+        viewport_side = min(panel_size.x, panel_size.y)
+        scale = viewport_side / max(1, source_size.x)
         draw_w = max(1, int(source_size.x * scale))
         draw_h = max(1, int(source_size.y * scale))
         draw_x = (panel_size.x - draw_w) // 2
         draw_y = (panel_size.y - draw_h) // 2
-        dc.Clear()
         dc.DrawBitmap(source_bitmap, draw_x, draw_y, True)
-        dc.SetPen(wx.Pen(wx.Colour(80, 80, 80)))
-        dc.SetBrush(wx.TRANSPARENT_BRUSH)
-        dc.DrawRectangle(draw_x, draw_y, draw_w, draw_h)
 
     def on_preview_double_click(self, event: wx.MouseEvent):
         self.Close()
@@ -777,16 +815,25 @@ class WebcamPreviewPopupFrame(wx.Frame):
 class MainFrame(wx.Frame):
     IMAGE_SIZE = 512
     SOURCE_PREVIEW_SIZE = 192
-    WEBCAM_PREVIEW_WIDTH = 256
-    WEBCAM_PREVIEW_HEIGHT = 192
+    WEBCAM_PREVIEW_SIZE = 192
     MAX_CAMERA_PROBE_INDEX = 19
     VIDEO_SOURCE_COLUMN_MIN_WIDTH = 260
+    PREVIEW_CALIBRATION_COLUMN_MIN_WIDTH = 220
     CAPTURE_PANEL_MIN_WIDTH = (
         SOURCE_PREVIEW_SIZE + 24
-        + WEBCAM_PREVIEW_WIDTH + 24
-        + 24)
-    CAPTURE_PANEL_MIN_HEIGHT = max(SOURCE_PREVIEW_SIZE + 88, WEBCAM_PREVIEW_HEIGHT + 32) + 12
+        + WEBCAM_PREVIEW_SIZE + 24
+        + PREVIEW_CALIBRATION_COLUMN_MIN_WIDTH + 24)
+    CAPTURE_PANEL_MIN_HEIGHT = (
+        max(SOURCE_PREVIEW_SIZE + 108, WEBCAM_PREVIEW_SIZE + 72) + 12 + 72)
+    PREVIEW_IDLE_BACKGROUND = wx.Colour(0, 0, 0)
+    # Shared minimum for both panes in right_sidebar_splitter (preview / postprocess).
+    RIGHT_SIDEBAR_PANE_MIN_HEIGHT = 140
     RIGHT_SIDEBAR_MIN_WIDTH = CAPTURE_PANEL_MIN_WIDTH
+    CONTROLS_COLUMN_MIN_WIDTH = 200
+    CONTROLS_TWO_COLUMN_MIN_WIDTH = CONTROLS_COLUMN_MIN_WIDTH * 2
+    # Default layout: three equal-width columns (B model input | C dynamic | D preview+post).
+    # Structurally: main_splitter = left (B+C) 2/3 + right (D) 1/3; animation_splitter splits B|C 50/50.
+    CONTROLS_LAYOUT_THIRD_COUNT = 3
     POSTPROCESS_H_PADDING = 8
     DEFAULT_OUTPUT_SIZE = int(IMAGE_SIZE * 1.5)
     LOCKED_OUTPUT_CLIENT_WIDTH = DEFAULT_OUTPUT_SIZE
@@ -795,9 +842,12 @@ class MainFrame(wx.Frame):
     AUTO_TRANSFORM_HOLD_SECONDS = 0.75
     SCALE_CURVE_DELTA_RANGE = 0.22
     UI_STATE_FILE_NAME = "load_preview_ui_state.json"
-    CONTROLS_MIN_CLIENT_WIDTH = 720
-    CONTROLS_MIN_CLIENT_HEIGHT = 520
-    CONTROLS_MAX_CLIENT_HEIGHT = 1400
+    CONTROLS_MIN_CLIENT_WIDTH = max(
+        720,
+        CONTROLS_TWO_COLUMN_MIN_WIDTH + RIGHT_SIDEBAR_MIN_WIDTH + 48)
+    CONTROLS_MIN_CLIENT_HEIGHT = 480
+    # Height cap comes from the display work area (portrait / multi-monitor), not a fixed pixel limit.
+    CONTROLS_MAX_CLIENT_HEIGHT = 32000
     COMPACT_MIN_CLIENT_WIDTH = 260
     COMPACT_MIN_CLIENT_HEIGHT = 180
     CAPTURE_PROCESS_INTERVAL_MS = 66
@@ -828,7 +878,7 @@ class MainFrame(wx.Frame):
                  video_capture,
                  face_landmarker,
                  device: torch.device):
-        super().__init__(None, wx.ID_ANY, "THA4 MediaPipe Puppeteer [Load Preview]")
+        super().__init__(None, wx.ID_ANY, "EasyVtuberStudio")
         self.face_landmarker = face_landmarker
         self.video_capture = video_capture
         self.pose_converter = pose_converter
@@ -836,7 +886,8 @@ class MainFrame(wx.Frame):
 
         self.source_image_bitmap = wx.Bitmap(MainFrame.SOURCE_PREVIEW_SIZE, MainFrame.SOURCE_PREVIEW_SIZE)
         self.result_image_bitmap = wx.Bitmap(1, 1)
-        self.webcam_capture_bitmap = wx.Bitmap(256, 192)
+        self.webcam_capture_bitmap = wx.Bitmap(
+            MainFrame.WEBCAM_PREVIEW_SIZE, MainFrame.WEBCAM_PREVIEW_SIZE)
         # Video source handling (camera not connected -> show error instead of generic "Nothing yet!").
         self.video_capture_status_message: Optional[str] = None
         self.video_source_choice_map: dict[str, tuple[str, object, object]] = {}
@@ -907,6 +958,9 @@ class MainFrame(wx.Frame):
         self._mouse_mocap_fallback_done = False
         self._last_mouse_mocap_nx = 0.0
         self._last_mouse_mocap_ny = 0.0
+        self.last_mouse_calibration_time: Optional[float] = None
+        self._enable_mouse_auto_calibration = False
+        self._mouse_auto_calibration_interval_seconds = 300.0
         self.last_direction_calibration_time: Optional[float] = None
         self.last_scale_calibration_time: Optional[float] = None
         self.display_offset_x = 0.0
@@ -934,28 +988,42 @@ class MainFrame(wx.Frame):
         self._startup_autofit_pending = False
         self._controls_geometry_restored = False
         self._compact_geometry_restored = False
+        self._live_main_splitter_ratio: Optional[float] = None
+        self._live_animation_splitter_ratio: Optional[float] = None
+        self._live_right_sidebar_splitter_ratio: Optional[float] = None
         self._controls_fixed_client_width: Optional[int] = None
         self._scroll_refresh_pending = False
         self._dynamic_output_layout_pending = False
         self._dynamic_output_layout_in_progress = False
+        self._model_input_layout_timer = None
+        self._dynamic_output_layout_timer = None
+        self._postprocess_layout_timer = None
         self._postprocess_layout_pending = False
         self._postprocess_layout_in_progress = False
+        self._responsive_text_layout_pending = False
         self._controls_build_in_progress = False
+        self._applying_persisted_controls_layout_depth = 0
         self._active_save_caller: Optional[str] = None
         self._restoring_window_geometry = False
         self._window_geometry_save_pending = False
+        self._window_geometry_save_timer = None
+        self._controls_frame_layout_timer = None
+        self._controls_window_bounds_timer = None
         self._hover_help_pending_window: Optional[wx.Window] = None
         self._hover_help_active_window: Optional[wx.Window] = None
         self.last_loaded_model_path: Optional[str] = None
         self.full_controls_expanded = False
         self.controls_frame: Optional[ControlsFrame] = None
         self.persistent_ui_state = self.load_persistent_ui_state()
+        self.apply_bundled_default_model_paths_if_missing()
+        self._seed_live_splitter_ratios_from_persistent()
         self.mocap_input_mode = normalize_mocap_input_mode(
             self.persistent_ui_state.get("mocap_input_mode", MOCAP_INPUT_MODE_MOUSE_AUDIO))
         if (self.mocap_input_mode != MOCAP_INPUT_MODE_MOUSE_AUDIO
                 and not face_capture_assets_ready(get_portable_root())):
             self.mocap_input_mode = MOCAP_INPUT_MODE_MOUSE_AUDIO
             self.persistent_ui_state["mocap_input_mode"] = MOCAP_INPUT_MODE_MOUSE_AUDIO
+        self._load_mouse_mocap_settings_from_persistent(self.persistent_ui_state)
         self.basic_layers_state = load_basic_layers_state(
             self.get_ui_state_file_path(),
             self.resolve_layer_asset_path)
@@ -1515,8 +1583,6 @@ class MainFrame(wx.Frame):
             if hasattr(self, "layer_blend_status_text"):
                 self.layer_blend_status_text.SetLabel(
                     f"图层混合切换失败：{exc}\n/ Layer blend toggle failed: {exc}")
-        finally:
-            self.schedule_refresh_controls_scrolling()
         event.Skip()
 
     def apply_layer_blend_visibility(self) -> None:
@@ -1531,27 +1597,21 @@ class MainFrame(wx.Frame):
             self.draw_cached_result_image(self.last_banner_text)
 
     def on_layer_force_full_follow_changed(self, event: wx.Event) -> None:
-        try:
-            self._safe_checkbox_value(
-                "layer_force_full_follow_checkbox", self._layer_force_full_follow_state)
-            self.layer_binding_smoother.reset_all()
-            self.head_binding_pose_filter.reset()
-            if self.last_output_wx_image is not None:
-                self.draw_cached_result_image(self.last_banner_text)
-            self.save_persistent_ui_state()
-        finally:
-            self.schedule_refresh_controls_scrolling()
+        self._safe_checkbox_value(
+            "layer_force_full_follow_checkbox", self._layer_force_full_follow_state)
+        self.layer_binding_smoother.reset_all()
+        self.head_binding_pose_filter.reset()
+        if self.last_output_wx_image is not None:
+            self.draw_cached_result_image(self.last_banner_text)
+        self.save_persistent_ui_state()
         event.Skip()
 
     def on_unlimited_layers_changed(self, event: wx.Event):
         """Placeholder for L2; persists checkbox state only."""
-        try:
-            self._safe_checkbox_value(
-                "unlimited_layers_enabled_checkbox", self._unlimited_layers_enabled_state)
-            self.refresh_unlimited_layers_status()
-            self.save_persistent_ui_state()
-        finally:
-            self.schedule_refresh_controls_scrolling()
+        self._safe_checkbox_value(
+            "unlimited_layers_enabled_checkbox", self._unlimited_layers_enabled_state)
+        self.refresh_unlimited_layers_status()
+        self.save_persistent_ui_state()
         event.Skip()
 
     def refresh_unlimited_layers_status(self) -> None:
@@ -1577,6 +1637,7 @@ class MainFrame(wx.Frame):
         self.save_persistent_ui_state()
         if hasattr(self, "active_image_source"):
             self.active_image_source.stop(self)
+        self.release_video_capture()
         if hasattr(self.pose_converter, "shutdown"):
             self.pose_converter.shutdown()
         self.animation_timer.Stop()
@@ -1614,27 +1675,60 @@ class MainFrame(wx.Frame):
             control.SetLabelText(text)
 
     @staticmethod
-    def wrap_static_text_to_parent(control: wx.StaticText, horizontal_margin: int = 12):
-        parent = control.GetParent()
-        if parent is None:
-            return
-        wrap_width = parent.GetClientSize().x - horizontal_margin
+    def wrap_static_text_to_parent(
+            control: wx.StaticText,
+            horizontal_margin: int = 12,
+            wrap_width: Optional[int] = None):
+        if wrap_width is None:
+            parent = control.GetParent()
+            if parent is None:
+                return
+            wrap_width = parent.GetClientSize().x - horizontal_margin
         if wrap_width <= 40:
+            control._last_wrap_width = None
             return
         last_width = getattr(control, "_last_wrap_width", None)
-        if last_width == wrap_width:
+        if last_width is not None and abs(last_width - wrap_width) < 2:
             return
+        if last_width is not None and wrap_width > last_width:
+            control.SetLabel(control.GetLabel())
         control._last_wrap_width = wrap_width
         control.Wrap(wrap_width)
+        if hasattr(control, "InvalidateBestSize"):
+            control.InvalidateBestSize()
+
+    @staticmethod
+    def _stop_call_later(timer: Optional[object]) -> None:
+        if timer is None:
+            return
+        stop = getattr(timer, "Stop", None)
+        if callable(stop):
+            try:
+                stop()
+            except Exception:
+                pass
+
+    def schedule_model_input_column_layout_refresh(self) -> None:
+        self._stop_call_later(getattr(self, "_model_input_layout_timer", None))
+        self._model_input_layout_timer = wx.CallLater(
+            80, self._run_model_input_column_layout_refresh)
+
+    def _run_model_input_column_layout_refresh(self) -> None:
+        self._model_input_layout_timer = None
+        if (self._is_closing
+                or self._controls_build_in_progress
+                or self._applying_persisted_controls_layout_depth > 0):
+            return
+        self._nudge_animation_splitter_layout()
+        self.apply_model_input_column_layout()
 
     def schedule_dynamic_output_layout_refresh(self):
-        if self._dynamic_output_layout_pending:
-            return
-        self._dynamic_output_layout_pending = True
-        wx.CallLater(80, self._run_dynamic_output_layout_refresh)
+        self._stop_call_later(getattr(self, "_dynamic_output_layout_timer", None))
+        self._dynamic_output_layout_timer = wx.CallLater(
+            80, self._run_dynamic_output_layout_refresh)
 
     def _run_dynamic_output_layout_refresh(self):
-        self._dynamic_output_layout_pending = False
+        self._dynamic_output_layout_timer = None
         if self._dynamic_output_layout_in_progress or self._is_closing:
             return
         self._dynamic_output_layout_in_progress = True
@@ -1652,7 +1746,268 @@ class MainFrame(wx.Frame):
     def set_wrapped_static_text_if_changed(self, control: wx.StaticText, text: str):
         if control.GetLabel() != text:
             control.SetLabelText(text)
+            control._last_wrap_width = None
         wx.CallAfter(self.wrap_static_text_to_parent, control)
+
+    def get_model_input_column_wrap_width(self, horizontal_margin: int = 12) -> int:
+        candidates: list[int] = []
+        animation_splitter = getattr(self, "animation_splitter", None)
+        if animation_splitter is not None and animation_splitter.IsSplit():
+            sash_w = animation_splitter.GetSashPosition()
+            if sash_w > horizontal_margin + 40:
+                candidates.append(sash_w - horizontal_margin)
+            pane = animation_splitter.GetWindow1()
+            if pane is not None:
+                pane_w = pane.GetClientSize().x
+                if pane_w > horizontal_margin + 40:
+                    candidates.append(pane_w - horizontal_margin)
+        main_splitter = getattr(self, "main_splitter", None)
+        if animation_splitter is not None and main_splitter is not None and main_splitter.IsSplit():
+            main_sash = main_splitter.GetSashPosition()
+            if main_sash > horizontal_margin + 40:
+                estimated = int((main_sash * 2) / (3 * 2))
+                if estimated > horizontal_margin + 40:
+                    candidates.append(estimated - horizontal_margin)
+        scroll = getattr(self, "model_input_column", None)
+        if scroll is not None:
+            client_w = scroll.GetClientSize().x
+            if client_w > horizontal_margin + 40:
+                candidates.append(client_w - horizontal_margin)
+        if candidates:
+            return max(candidates)
+        return max(40, MainFrame.VIDEO_SOURCE_COLUMN_MIN_WIDTH - horizontal_margin)
+
+    def _sync_controls_splitter_geometry(self) -> None:
+        """Flush wx layout so splitter sash / pane sizes match the shown frame."""
+        if getattr(self, "_is_closing", False):
+            return
+        controls_window = self.get_controls_window()
+        if controls_window is None:
+            return
+        controls_window.Layout()
+        controls_window.Update()
+        if hasattr(self, "main_splitter"):
+            self.main_splitter.Layout()
+            self.main_splitter.Update()
+        animation_panel = getattr(self, "animation_panel", None)
+        if animation_panel is not None:
+            animation_panel.Layout()
+            animation_panel.Update()
+        animation_splitter = getattr(self, "animation_splitter", None)
+        if animation_splitter is not None:
+            animation_splitter.Layout()
+            animation_splitter.Update()
+        right_sidebar = getattr(self, "right_sidebar", None)
+        if right_sidebar is not None:
+            right_sidebar.Layout()
+            right_sidebar.Update()
+
+    def refresh_model_input_column_wrapped_texts(self) -> None:
+        wrap_width = self.get_model_input_column_wrap_width()
+        for attr_name in (
+                "mocap_input_mode_status_text",
+                "last_window_capture_text",
+                "video_source_status_text",
+        ):
+            control = getattr(self, attr_name, None)
+            if control is not None:
+                control._last_wrap_width = None
+                self.wrap_static_text_to_parent(control, wrap_width=wrap_width)
+
+    def _relayout_animation_splitter_panes(self) -> None:
+        animation_splitter = getattr(self, "animation_splitter", None)
+        if animation_splitter is None or not animation_splitter.IsSplit():
+            return
+        sash = animation_splitter.GetSashPosition()
+        if sash <= 0:
+            return
+        animation_splitter.SetSashPosition(
+            MainFrame.clamp_splitter_sash(animation_splitter, sash))
+
+    def _wrap_static_texts_under_window(self, window: Optional[wx.Window], wrap_width: int) -> None:
+        if window is None or wrap_width <= 40:
+            return
+        if isinstance(window, wx.StaticText):
+            window._last_wrap_width = None
+            self.wrap_static_text_to_parent(window, wrap_width=wrap_width)
+        for child in window.GetChildren():
+            self._wrap_static_texts_under_window(child, wrap_width)
+
+    def _nudge_animation_splitter_layout(self) -> None:
+        animation_splitter = getattr(self, "animation_splitter", None)
+        if animation_splitter is None or not animation_splitter.IsSplit():
+            return
+        sash = animation_splitter.GetSashPosition()
+        if sash <= 0:
+            return
+        clamped = MainFrame.clamp_splitter_sash(animation_splitter, sash)
+        if clamped != sash:
+            animation_splitter.SetSashPosition(clamped)
+        else:
+            animation_splitter.SetSashPosition(max(1, clamped - 1))
+            animation_splitter.SetSashPosition(clamped)
+
+    def apply_model_input_column_layout(self) -> bool:
+        """One-shot layout for model input column after splitter geometry is known."""
+        if getattr(self, "_controls_build_in_progress", False) or getattr(self, "_is_closing", False):
+            return False
+        scroll = getattr(self, "model_input_column", None)
+        if scroll is None:
+            return False
+        wrap_width = self.get_model_input_column_wrap_width()
+        if wrap_width <= 40:
+            return False
+        self._model_input_column_last_layout_width = scroll.GetClientSize().x
+        animation_splitter = getattr(self, "animation_splitter", None)
+        if animation_splitter is not None and animation_splitter.IsSplit():
+            sash_w = animation_splitter.GetSashPosition()
+            pane_h = max(1, animation_splitter.GetSize().height)
+            if sash_w > 0:
+                scroll.SetSize((sash_w, pane_h))
+        controls_window = self.get_controls_window()
+        if controls_window is not None:
+            controls_window.Layout()
+        if hasattr(self, "main_splitter"):
+            self.main_splitter.Layout()
+        animation_panel = getattr(self, "animation_panel", None)
+        if animation_panel is not None:
+            animation_panel.Layout()
+        self._relayout_animation_splitter_panes()
+        scroll.Layout()
+        sizer = scroll.GetSizer()
+        if sizer is not None:
+            sizer.Layout()
+        self.refresh_model_input_column_wrapped_texts()
+        self._wrap_static_texts_under_window(scroll, wrap_width)
+        if sizer is not None:
+            sizer.Layout()
+        self.refresh_model_input_column_scroll()
+        fit_inside = getattr(scroll, "FitInside", None)
+        if callable(fit_inside):
+            fit_inside()
+        scroll.Refresh(False)
+        if getattr(self, "pose_converter", None) is not None:
+            panel = getattr(self.pose_converter, "panel", None)
+            if panel is not None:
+                panel.Layout()
+        return True
+
+    def finalize_controls_column_layout(self) -> bool:
+        controls_window = self.get_controls_window()
+        if controls_window is None or getattr(self, "_is_closing", False):
+            return False
+        controls_window.Layout()
+        self._relayout_animation_splitter_panes()
+        model_ready = self.apply_model_input_column_layout()
+        self.refresh_dynamic_output_status_layout()
+        self.refresh_dynamic_output_scroll()
+        self.refresh_postprocess_scroll_layout()
+        controls_window.Layout()
+        return model_ready
+
+    def on_controls_frame_shown(self) -> None:
+        if not self.full_controls_expanded or getattr(self, "_is_closing", False):
+            return
+        if getattr(self, "_controls_column_layout_retry_done", False):
+            return
+        self._apply_persisted_controls_layout()
+        if getattr(self, "_model_input_column_last_layout_width", 0) > 40:
+            self._controls_column_layout_retry_done = True
+        else:
+            wx.CallAfter(self._retry_controls_column_layout_once)
+
+    def _retry_controls_column_layout_once(self) -> None:
+        if getattr(self, "_controls_column_layout_retry_done", False) or getattr(self, "_is_closing", False):
+            return
+        self._sync_controls_splitter_geometry()
+        self.initialize_adjustable_columns()
+        self._nudge_animation_splitter_layout()
+        if self.finalize_controls_column_layout():
+            self._controls_column_layout_retry_done = True
+        self.refresh_preview_placeholders()
+
+    def _apply_persisted_controls_layout(self) -> None:
+        if getattr(self, "_is_closing", False):
+            return
+        self._sync_controls_splitter_geometry()
+        self.apply_controls_layout_from_persistent()
+        self._nudge_animation_splitter_layout()
+        self.finalize_controls_column_layout()
+        self.refresh_preview_placeholders()
+
+    def on_controls_first_idle(self) -> None:
+        self._apply_persisted_controls_layout()
+
+    def _post_show_controls_setup(self) -> None:
+        if not self.full_controls_expanded:
+            return
+        controls_window = self.get_controls_window()
+        if controls_window is None:
+            return
+        self._controls_column_layout_retry_done = False
+        self.adapt_main_window_to_controls(initial=not self._controls_geometry_restored)
+        self.initialize_adjustable_columns()
+        self._apply_persisted_controls_layout()
+        if self.finalize_controls_column_layout():
+            self._controls_column_layout_retry_done = True
+        else:
+            wx.CallAfter(self._retry_controls_column_layout_once)
+        self.bind_animation_area_mousewheel()
+
+    def refresh_model_input_column_scroll(self) -> None:
+        scroll = getattr(self, "model_input_column", None)
+        if not isinstance(scroll, wx.ScrolledWindow):
+            return
+        sizer = scroll.GetSizer()
+        min_size = sizer.GetMinSize() if sizer is not None else scroll.GetBestSize()
+        client_size = scroll.GetClientSize()
+        if client_size.y <= 0:
+            return
+        virtual_width = max(client_size.x, min_size.x)
+        virtual_height = max(min_size.y, client_size.y + 1)
+        current = scroll.GetVirtualSize()
+        if current.x == virtual_width and current.y == virtual_height:
+            return
+        scroll.SetVirtualSize((virtual_width, virtual_height))
+        scroll.EnableScrolling(False, True)
+
+    @staticmethod
+    def find_nearest_scrolled_window(window: Optional[wx.Window]) -> Optional[wx.ScrolledWindow]:
+        current = window
+        while current is not None:
+            if isinstance(current, wx.ScrolledWindow):
+                return current
+            current = current.GetParent()
+        return None
+
+    def bind_mousewheel_scroll_recursive(self, window: Optional[wx.Window]) -> None:
+        if window is None:
+            return
+        if not getattr(window, "_mousewheel_scroll_bound", False):
+            window.Bind(wx.EVT_MOUSEWHEEL, self.on_mousewheel_scroll)
+            window._mousewheel_scroll_bound = True
+        for child in window.GetChildren():
+            if isinstance(child, wx.Slider):
+                continue
+            self.bind_mousewheel_scroll_recursive(child)
+
+    def bind_animation_area_mousewheel(self) -> None:
+        if hasattr(self, "animation_panel"):
+            self.bind_mousewheel_scroll_recursive(self.animation_panel)
+        if hasattr(self, "right_sidebar"):
+            self.bind_mousewheel_scroll_recursive(self.right_sidebar)
+
+    def on_mousewheel_scroll(self, event: wx.MouseEvent) -> None:
+        event_object = event.GetEventObject()
+        scroll_target = self.find_nearest_scrolled_window(event_object)
+        if scroll_target is not None:
+            wheel_delta = event.GetWheelDelta()
+            if wheel_delta:
+                lines = int(event.GetWheelRotation() / wheel_delta)
+                if lines != 0:
+                    scroll_target.ScrollLines(-lines)
+            return
+        event.Skip()
 
     def refresh_dynamic_output_status_layout(self):
         for attr_name in ("scale_curve_status_text", "auto_transform_status_text", "fps_text"):
@@ -1660,7 +2015,7 @@ class MainFrame(wx.Frame):
             if control is not None:
                 self.wrap_static_text_to_parent(control)
 
-    def refresh_dynamic_output_scroll(self):
+    def refresh_dynamic_output_scroll(self) -> None:
         scroll = getattr(self, "dynamic_output_scroll", None)
         panel = getattr(self, "animation_left_panel", None)
         if scroll is None or panel is None:
@@ -1669,19 +2024,31 @@ class MainFrame(wx.Frame):
         client_size = scroll.GetClientSize()
         if client_size.x <= 0 or client_size.y <= 0:
             return
-        virtual_width = max(client_size.x, min(min_size.x, 320))
-        virtual_height = max(min_size.y, client_size.y)
+        virtual_width = max(client_size.x, min_size.x)
+        virtual_height = max(min_size.y, client_size.y + 1)
         current = scroll.GetVirtualSize()
         if current.x == virtual_width and current.y == virtual_height:
             return
         scroll.SetVirtualSize((virtual_width, virtual_height))
         scroll.EnableScrolling(False, True)
 
+    def on_model_input_column_size(self, event: wx.Event):
+        client_w = 0
+        if hasattr(self, "model_input_column") and self.model_input_column is not None:
+            client_w = self.model_input_column.GetClientSize().x
+        last_w = getattr(self, "_model_input_column_last_layout_width", None)
+        if client_w > 40 and (last_w is None or abs(client_w - last_w) >= 2):
+            self._model_input_column_last_layout_width = client_w
+            if not getattr(self, "_model_input_layout_in_progress", False):
+                self._model_input_layout_in_progress = True
+                try:
+                    self.apply_model_input_column_layout()
+                finally:
+                    self._model_input_layout_in_progress = False
+        event.Skip()
+
     def on_dynamic_output_panel_size(self, event: wx.Event):
         event.Skip()
-        if self._dynamic_output_layout_in_progress:
-            return
-        self.schedule_dynamic_output_layout_refresh()
 
     @staticmethod
     def apply_splitter_sash(splitter: wx.SplitterWindow, sash_position: int):
@@ -1697,6 +2064,243 @@ class MainFrame(wx.Frame):
         clamped_position = max(minimum, min(total - minimum, int(sash_position)))
         splitter.SetSashPosition(clamped_position)
 
+    @staticmethod
+    def clamp_splitter_sash(splitter: wx.SplitterWindow, sash_position: int) -> int:
+        minimum = max(1, splitter.GetMinimumPaneSize())
+        if splitter.GetSplitMode() == wx.SPLIT_HORIZONTAL:
+            total = max(1, splitter.GetClientSize().y)
+        else:
+            total = max(1, splitter.GetClientSize().x)
+        if total <= minimum * 2:
+            return max(minimum, total // 2)
+        return max(minimum, min(total - minimum, int(sash_position)))
+
+    @staticmethod
+    def _splitter_extent(splitter: wx.SplitterWindow) -> int:
+        if splitter.GetSplitMode() == wx.SPLIT_HORIZONTAL:
+            return max(1, int(splitter.GetClientSize().y))
+        return max(1, int(splitter.GetClientSize().x))
+
+    @staticmethod
+    def _splitter_sash_from_ratio(splitter: wx.SplitterWindow, ratio: float) -> int:
+        ratio = max(0.05, min(0.95, float(ratio)))
+        target = int(MainFrame._splitter_extent(splitter) * ratio)
+        return MainFrame.clamp_splitter_sash(splitter, target)
+
+    def _capture_splitter_ratios(self) -> None:
+        main_splitter = getattr(self, "main_splitter", None)
+        if main_splitter is not None and main_splitter.IsSplit():
+            extent = self._splitter_extent(main_splitter)
+            self._live_main_splitter_ratio = float(main_splitter.GetSashPosition()) / float(extent)
+        animation_splitter = getattr(self, "animation_splitter", None)
+        if animation_splitter is not None and animation_splitter.IsSplit():
+            extent = self._splitter_extent(animation_splitter)
+            self._live_animation_splitter_ratio = float(animation_splitter.GetSashPosition()) / float(extent)
+        right_splitter = getattr(self, "right_sidebar_splitter", None)
+        if right_splitter is not None and right_splitter.IsSplit():
+            extent = self._splitter_extent(right_splitter)
+            self._live_right_sidebar_splitter_ratio = float(right_splitter.GetSashPosition()) / float(extent)
+
+    def _controls_splitter_layout_readable(self) -> bool:
+        controls_window = self.get_controls_window()
+        if controls_window is None or not controls_window.IsShown():
+            return False
+        if self._applying_persisted_controls_layout_depth > 0:
+            return False
+        main_splitter = getattr(self, "main_splitter", None)
+        return main_splitter is not None and main_splitter.IsSplit()
+
+    def _seed_live_splitter_ratios_from_persistent(self) -> None:
+        ratio_seed = (
+            ("main_splitter_sash_ratio", "_live_main_splitter_ratio"),
+            ("animation_splitter_sash_ratio", "_live_animation_splitter_ratio"),
+            ("right_sidebar_splitter_sash_ratio", "_live_right_sidebar_splitter_ratio"),
+        )
+        for ratio_key, live_attr in ratio_seed:
+            ratio = self._resolve_persisted_splitter_sash_ratio(ratio_key)
+            if ratio is not None:
+                setattr(self, live_attr, ratio)
+
+    def _sync_splitter_ratio_fields_to_persistent_state(self) -> None:
+        entries = (
+            ("main_splitter", "main_splitter_sash", "main_splitter_sash_ratio", "_live_main_splitter_ratio"),
+            ("animation_splitter", "animation_splitter_sash", "animation_splitter_sash_ratio", "_live_animation_splitter_ratio"),
+            ("right_sidebar_splitter", "right_sidebar_splitter_sash", "right_sidebar_splitter_sash_ratio", "_live_right_sidebar_splitter_ratio"),
+        )
+        for splitter_attr, sash_key, ratio_key, live_attr in entries:
+            ratio = getattr(self, live_attr, None)
+            if ratio is not None:
+                self.persistent_ui_state[ratio_key] = ratio
+            splitter = getattr(self, splitter_attr, None)
+            if splitter is not None and splitter.IsSplit():
+                self.persistent_ui_state[sash_key] = splitter.GetSashPosition()
+
+    def _collect_splitter_layout_fields(self) -> dict:
+        fields: dict = {}
+        entries = (
+            ("main_splitter", "main_splitter_sash", "main_splitter_sash_ratio", "_live_main_splitter_ratio"),
+            ("animation_splitter", "animation_splitter_sash", "animation_splitter_sash_ratio", "_live_animation_splitter_ratio"),
+            ("right_sidebar_splitter", "right_sidebar_splitter_sash", "right_sidebar_splitter_sash_ratio", "_live_right_sidebar_splitter_ratio"),
+        )
+        if self._controls_splitter_layout_readable():
+            for splitter_attr, sash_key, ratio_key, _live_attr in entries:
+                splitter = getattr(self, splitter_attr, None)
+                if splitter is None or not splitter.IsSplit():
+                    continue
+                extent = self._splitter_extent(splitter)
+                if extent <= 0:
+                    continue
+                sash = splitter.GetSashPosition()
+                fields[sash_key] = sash
+                fields[ratio_key] = float(sash) / float(extent)
+            return fields
+        for _splitter_attr, sash_key, ratio_key, live_attr in entries:
+            ratio = self._resolve_persisted_splitter_sash_ratio(ratio_key)
+            if ratio is None:
+                ratio = getattr(self, live_attr, None)
+            if ratio is None and ratio_key in self.persistent_ui_state:
+                saved_ratio = self.persistent_ui_state.get(ratio_key)
+                if isinstance(saved_ratio, (int, float)):
+                    ratio = float(saved_ratio)
+            if ratio is not None:
+                fields[ratio_key] = ratio
+            if sash_key in self.persistent_ui_state:
+                fields[sash_key] = self.persistent_ui_state[sash_key]
+        return fields
+
+    @staticmethod
+    def compute_equal_thirds_main_sash(
+            total_width: int,
+            left_minimum: int,
+            right_minimum: int) -> int:
+        """Main splitter: left (B+C) = 2/3, right (D preview+post) = 1/3 of total width."""
+        total_width = max(1, int(total_width))
+        left_minimum = max(1, int(left_minimum))
+        right_minimum = max(1, int(right_minimum))
+        if total_width <= left_minimum + right_minimum:
+            return max(left_minimum, total_width // 2)
+        ideal = int((2 * total_width) / MainFrame.CONTROLS_LAYOUT_THIRD_COUNT)
+        return max(left_minimum, min(total_width - right_minimum, ideal))
+
+    @staticmethod
+    def compute_equal_halves_sash(total_extent: int, minimum_pane_size: int) -> int:
+        """Animation splitter (B|C each ~1/3 total width) or right sidebar (preview|post): 50/50."""
+        total_extent = max(1, int(total_extent))
+        minimum = max(1, int(minimum_pane_size))
+        target = total_extent // 2
+        return max(minimum, min(total_extent - minimum, target))
+
+    def _resolve_persisted_splitter_sash(self, key: str, default_sash: int) -> int:
+        saved = self.persistent_ui_state.get(key)
+        if isinstance(saved, (int, float)):
+            return int(saved)
+        return int(default_sash)
+
+    def compute_default_main_splitter_sash(self) -> int:
+        if not hasattr(self, "main_splitter"):
+            return MainFrame.CONTROLS_TWO_COLUMN_MIN_WIDTH
+        return MainFrame.compute_equal_thirds_main_sash(
+            self.main_splitter.GetClientSize().x,
+            MainFrame.CONTROLS_TWO_COLUMN_MIN_WIDTH,
+            MainFrame.RIGHT_SIDEBAR_MIN_WIDTH)
+
+    def compute_default_animation_splitter_sash(self) -> int:
+        if not hasattr(self, "animation_splitter"):
+            return MainFrame.CONTROLS_COLUMN_MIN_WIDTH
+        return MainFrame.compute_equal_halves_sash(
+            self.animation_splitter.GetClientSize().x,
+            self.animation_splitter.GetMinimumPaneSize())
+
+    def compute_default_right_sidebar_splitter_sash(self) -> int:
+        if not hasattr(self, "right_sidebar_splitter"):
+            return MainFrame.CAPTURE_PANEL_MIN_HEIGHT
+        return MainFrame.compute_equal_halves_sash(
+            self.right_sidebar_splitter.GetClientSize().y,
+            self.right_sidebar_splitter.GetMinimumPaneSize())
+
+    @staticmethod
+    def adaptive_right_sidebar_capture_min_height(total_height: int) -> int:
+        """Allow more vertical drag on short (portrait) windows while keeping a usable preview."""
+        total_height = max(1, int(total_height))
+        return min(
+            MainFrame.CAPTURE_PANEL_MIN_HEIGHT,
+            max(MainFrame.RIGHT_SIDEBAR_PANE_MIN_HEIGHT, int(total_height * 0.22)))
+
+    def _resolve_persisted_splitter_sash_ratio(self, key: str) -> Optional[float]:
+        saved = self.persistent_ui_state.get(key)
+        if isinstance(saved, (int, float)):
+            ratio = float(saved)
+            if 0.05 <= ratio <= 0.95:
+                return ratio
+        return None
+
+    def compute_right_sidebar_splitter_sash_from_ratio(self, ratio: float) -> int:
+        if not hasattr(self, "right_sidebar_splitter"):
+            return MainFrame.CAPTURE_PANEL_MIN_HEIGHT
+        total_h = max(1, self.right_sidebar_splitter.GetClientSize().y)
+        minimum = max(1, self.right_sidebar_splitter.GetMinimumPaneSize())
+        target = int(total_h * float(ratio))
+        return MainFrame.clamp_splitter_sash(self.right_sidebar_splitter, target)
+
+    def _resolve_layout_splitter_ratio(
+            self,
+            ratio_key: str,
+            sash_key: str,
+            splitter: Optional[wx.SplitterWindow],
+            live_ratio: Optional[float],
+            default_ratio: float) -> float:
+        persisted = self._resolve_persisted_splitter_sash_ratio(ratio_key)
+        if persisted is not None:
+            return persisted
+        if splitter is not None and splitter.IsSplit():
+            saved_sash = self.persistent_ui_state.get(sash_key)
+            if isinstance(saved_sash, (int, float)):
+                extent = self._splitter_extent(splitter)
+                if extent > 0:
+                    return max(0.05, min(0.95, float(saved_sash) / float(extent)))
+        if live_ratio is not None:
+            return live_ratio
+        return default_ratio
+
+    def apply_controls_layout_from_persistent(self, *, vertical_only: bool = False) -> None:
+        """Restore splitters: visual B|C|D equal width via nested splitters (not 3 horizontal splitters)."""
+        self._applying_persisted_controls_layout_depth += 1
+        try:
+            if not vertical_only:
+                if hasattr(self, "main_splitter") and self.main_splitter.IsSplit():
+                    main_ratio = self._resolve_layout_splitter_ratio(
+                        "main_splitter_sash_ratio",
+                        "main_splitter_sash",
+                        self.main_splitter,
+                        self._live_main_splitter_ratio,
+                        2.0 / MainFrame.CONTROLS_LAYOUT_THIRD_COUNT)
+                    main_sash = self._splitter_sash_from_ratio(self.main_splitter, main_ratio)
+                    self.apply_splitter_sash(self.main_splitter, main_sash)
+                if hasattr(self, "animation_splitter") and self.animation_splitter.IsSplit():
+                    animation_ratio = self._resolve_layout_splitter_ratio(
+                        "animation_splitter_sash_ratio",
+                        "animation_splitter_sash",
+                        self.animation_splitter,
+                        self._live_animation_splitter_ratio,
+                        0.5)
+                    animation_sash = self._splitter_sash_from_ratio(
+                        self.animation_splitter, animation_ratio)
+                    self.apply_splitter_sash(self.animation_splitter, animation_sash)
+            if hasattr(self, "right_sidebar_splitter") and self.right_sidebar_splitter.IsSplit():
+                right_ratio = self._resolve_layout_splitter_ratio(
+                    "right_sidebar_splitter_sash_ratio",
+                    "right_sidebar_splitter_sash",
+                    self.right_sidebar_splitter,
+                    self._live_right_sidebar_splitter_ratio,
+                    0.5)
+                right_sash = self._splitter_sash_from_ratio(
+                    self.right_sidebar_splitter, right_ratio)
+                self.apply_splitter_sash(self.right_sidebar_splitter, right_sash)
+        finally:
+            self._applying_persisted_controls_layout_depth -= 1
+        self._capture_splitter_ratios()
+        self._sync_splitter_ratio_fields_to_persistent_state()
+
     def get_controls_window(self) -> Optional[wx.Frame]:
         return self.controls_frame if getattr(self, "controls_frame", None) is not None else None
 
@@ -1704,42 +2308,12 @@ class MainFrame(wx.Frame):
         controls_window = self.get_controls_window()
         if getattr(self, "_is_closing", False) or controls_window is None:
             return
-        if hasattr(self, "animation_splitter") and self.animation_splitter.IsSplit():
-            saved_animation_sash = self.persistent_ui_state.get("animation_splitter_sash")
-            default_animation_sash = max(260, self.model_input_column.GetBestSize().x)
-            self.apply_splitter_sash(
-                self.animation_splitter,
-                saved_animation_sash if isinstance(saved_animation_sash, (int, float)) else default_animation_sash)
-        if hasattr(self, "main_splitter") and self.main_splitter.IsSplit():
-            saved_main_sash = self.persistent_ui_state.get("main_splitter_sash")
-            if hasattr(self, "right_sidebar"):
-                self.right_sidebar.Layout()
-            total_w = max(1, self.main_splitter.GetClientSize().x)
-            min_pane_w = max(1, self.main_splitter.GetMinimumPaneSize())
-            right_best_w = max(
-                MainFrame.CAPTURE_PANEL_MIN_WIDTH,
-                MainFrame.RIGHT_SIDEBAR_MIN_WIDTH,
-                min_pane_w)
-            default_main_sash = int(total_w - right_best_w)
-            sash_to_use = default_main_sash
-            if isinstance(saved_main_sash, (int, float)):
-                saved_right_w = total_w - float(saved_main_sash)
-                # If the saved sash would squeeze the right sidebar below its best width,
-                # ignore it and use the safe default.
-                if saved_right_w >= right_best_w * 0.95:
-                    sash_to_use = int(saved_main_sash)
-            self.apply_splitter_sash(self.main_splitter, sash_to_use)
-        if hasattr(self, "right_sidebar_splitter") and self.right_sidebar_splitter.IsSplit():
-            self.apply_splitter_sash(
-                self.right_sidebar_splitter,
-                MainFrame.CAPTURE_PANEL_MIN_HEIGHT)
-        self.refresh_dynamic_output_status_layout()
-        wx.CallAfter(self.schedule_dynamic_output_layout_refresh)
-        wx.CallAfter(self.schedule_postprocess_layout_refresh)
-        if hasattr(self, "animation_panel"):
-            self.schedule_refresh_controls_scrolling()
+        if hasattr(self, "right_sidebar"):
+            self.right_sidebar.Layout()
         controls_window.Layout()
-        wx.CallAfter(lambda: self.adapt_main_window_to_controls(initial=False))
+        self.apply_controls_layout_from_persistent()
+        controls_window.Layout()
+        self._relayout_animation_splitter_panes()
 
     def on_compact_geometry_changed(self, event: wx.Event):
         if self.full_controls_expanded:
@@ -1749,12 +2323,14 @@ class MainFrame(wx.Frame):
         event.Skip()
 
     def schedule_window_geometry_save(self):
-        if self._window_geometry_save_pending or self._restoring_window_geometry:
+        if self._restoring_window_geometry:
             return
-        self._window_geometry_save_pending = True
-        wx.CallLater(250, self.process_window_geometry_save)
+        self._stop_call_later(getattr(self, "_window_geometry_save_timer", None))
+        self._window_geometry_save_timer = wx.CallLater(
+            250, self.process_window_geometry_save)
 
     def process_window_geometry_save(self):
+        self._window_geometry_save_timer = None
         self._window_geometry_save_pending = False
         if self._is_closing or self._restoring_window_geometry:
             return
@@ -3262,7 +3838,6 @@ class MainFrame(wx.Frame):
 
             self.Show(False)
             self.bring_controls_frame_to_front()
-            self.schedule_refresh_controls_scrolling()
             wx.CallAfter(self.sync_transparent_capture_output_window)
             if not self.controls_frame.IsShown():
                 # Failsafe: if full controls failed to show, keep compact launcher visible.
@@ -3317,60 +3892,118 @@ class MainFrame(wx.Frame):
         # We intentionally keep a small fixed minimum client size and rely on scrolling.
         return wx.Size(self.CONTROLS_MIN_CLIENT_WIDTH, self.CONTROLS_MIN_CLIENT_HEIGHT)
 
-    def get_controls_height_bounds(self, window: wx.Window, min_height: int) -> tuple[int, int]:
-        max_height = self.CONTROLS_MAX_CLIENT_HEIGHT
+    def get_display_work_area_for_window(self, window: wx.Window) -> Optional[wx.Rect]:
         try:
             display_index = wx.Display.GetFromWindow(window)
             if display_index != wx.NOT_FOUND:
-                work_area = wx.Display(display_index).GetClientArea()
-                max_height = min(max_height, max(min_height, int(work_area.height) - 40))
+                return wx.Display(display_index).GetClientArea()
         except Exception:
             pass
+        return None
+
+    def get_controls_height_bounds(self, window: wx.Window, min_height: int) -> tuple[int, int]:
+        max_height = self.CONTROLS_MAX_CLIENT_HEIGHT
+        work_area = self.get_display_work_area_for_window(window)
+        if work_area is not None:
+            max_height = min(max_height, max(min_height, int(work_area.height) - 40))
         return min_height, max(min_height, max_height)
 
-    def apply_controls_window_size_policy(self, window: wx.Window):
-        policy_start = time.time()
+    def apply_controls_window_size_policy(
+            self, window: wx.Window, *, clamp_if_oversize: bool = False) -> None:
+        """Apply min height cap once; never touch width max or client size during active drag-resize."""
         if window is None:
             return
         min_client_size = self.get_controls_min_client_size()
-        current_size = window.GetClientSize()
         min_width = max(1, int(min_client_size.x))
-        max_width = max(min_width, 10000)
-        try:
-            display_index = wx.Display.GetFromWindow(window)
-            if display_index != wx.NOT_FOUND:
-                work_area = wx.Display(display_index).GetClientArea()
-                max_width = max(min_width, int(work_area.width) - 40)
-        except Exception:
-            pass
         min_height, max_height = self.get_controls_height_bounds(window, min_client_size.y)
-        target_width = max(min_width, min(max_width, int(current_size.x)))
-        target_height = max(min_height, min(max_height, int(current_size.y)))
 
         self._restoring_window_geometry = True
         try:
             window.SetMinClientSize(wx.Size(min_width, min_height))
-            window.SetMaxClientSize(wx.Size(max_width, max_height))
-            if current_size.x != target_width or current_size.y != target_height:
-                window.SetClientSize(wx.Size(target_width, target_height))
+            # Width: no wx max (avoid min==max lock on narrow displays). Height: work-area cap.
+            window.SetMaxClientSize(wx.Size(-1, max_height))
         finally:
             self._restoring_window_geometry = False
 
-    def handle_controls_frame_resized(self):
+        if not clamp_if_oversize:
+            return
+        current_size = window.GetClientSize()
+        work_area = self.get_display_work_area_for_window(window)
+        max_width = int(current_size.x)
+        if work_area is not None:
+            max_width = max(min_width, int(work_area.width) - 40)
+        target_width = min(int(current_size.x), max_width)
+        target_height = min(int(current_size.y), max_height)
+        if target_width < int(current_size.x) or target_height < int(current_size.y):
+            self._clamp_controls_window_client_size_preserve_origin(
+                window,
+                wx.Size(max(min_width, target_width), max(min_height, target_height)))
+
+    def _clamp_controls_window_client_size_preserve_origin(
+            self, window: wx.Window, target_client_size: wx.Size) -> None:
+        """Shrink an oversized controls window without jumping the client top-left corner."""
+        current_size = window.GetClientSize()
+        if (current_size.x <= target_client_size.x and current_size.y <= target_client_size.y):
+            return
+        client_origin = window.ClientToScreen(wx.Point(0, 0))
+        self._restoring_window_geometry = True
+        try:
+            window.SetClientSize(target_client_size)
+            new_origin = window.ClientToScreen(wx.Point(0, 0))
+            delta_x = int(client_origin.x - new_origin.x)
+            delta_y = int(client_origin.y - new_origin.y)
+            if delta_x != 0 or delta_y != 0:
+                frame_pos = window.GetPosition()
+                window.SetPosition(wx.Point(frame_pos.x + delta_x, frame_pos.y + delta_y))
+        finally:
+            self._restoring_window_geometry = False
+
+    def schedule_controls_window_bounds_refresh(self) -> None:
+        self._stop_call_later(getattr(self, "_controls_window_bounds_timer", None))
+        self._controls_window_bounds_timer = wx.CallLater(
+            250, self._run_controls_window_bounds_refresh)
+
+    def _run_controls_window_bounds_refresh(self) -> None:
+        self._controls_window_bounds_timer = None
+        controls_window = self.get_controls_window()
+        if controls_window is None or not controls_window.IsShown() or self._restoring_window_geometry:
+            return
+        self.apply_controls_window_size_policy(controls_window, clamp_if_oversize=True)
+
+    def on_controls_frame_moved(self) -> None:
+        self.schedule_controls_window_bounds_refresh()
+
+    def schedule_controls_frame_layout_refresh(self) -> None:
+        self._stop_call_later(getattr(self, "_controls_frame_layout_timer", None))
+        self._controls_frame_layout_timer = wx.CallLater(
+            80, self._run_controls_frame_layout_refresh)
+
+    def _run_controls_frame_layout_refresh(self) -> None:
+        self._controls_frame_layout_timer = None
         controls_window = self.get_controls_window()
         if controls_window is None or not controls_window.IsShown():
             return
-        self.apply_controls_window_size_policy(controls_window)
-        self.schedule_refresh_controls_scrolling()
+        if self._restoring_window_geometry or self._is_closing:
+            return
+        if hasattr(self, "main_splitter"):
+            controls_window.Layout()
+            self.apply_controls_layout_from_persistent()
+            self.refresh_postprocess_scroll_layout()
+            self.finalize_controls_column_layout()
+
+    def handle_controls_frame_resized(self) -> None:
+        if self._restoring_window_geometry:
+            return
+        controls_window = self.get_controls_window()
+        if controls_window is None or not controls_window.IsShown():
+            return
+        self.schedule_controls_frame_layout_refresh()
+
+    def handle_controls_frame_geometry_changed(self):
+        self.handle_controls_frame_resized()
 
     def schedule_refresh_controls_scrolling(self):
-        if self._scroll_refresh_pending:
-            return
-        self._scroll_refresh_pending = True
-        wx.CallLater(60, self._run_scheduled_refresh_controls_scrolling)
-
-    def _run_scheduled_refresh_controls_scrolling(self):
-        self._scroll_refresh_pending = False
+        """Synchronous controls layout refresh (no debounced CallLater)."""
         self.refresh_controls_scrolling()
 
     def restore_controls_frame_geometry(self) -> bool:
@@ -3443,8 +4076,6 @@ class MainFrame(wx.Frame):
         self.refresh_dynamic_output_status_layout()
         if hasattr(self, "right_sidebar"):
             self.right_sidebar.Layout()
-        if hasattr(self, "animation_panel"):
-            self.schedule_refresh_controls_scrolling()
         controls_window.Layout()
 
         min_client_size = self.get_controls_min_client_size()
@@ -3453,9 +4084,15 @@ class MainFrame(wx.Frame):
             if not self.restore_controls_frame_geometry():
                 default_width = max(
                     min_client_size.x,
-                    MainFrame.CAPTURE_PANEL_MIN_WIDTH + 520,
+                    MainFrame.CAPTURE_PANEL_MIN_WIDTH + MainFrame.CONTROLS_TWO_COLUMN_MIN_WIDTH + 80,
                     1280)
-                default_height = max(min_client_size.y, 760)
+                work_area = self.get_display_work_area_for_window(controls_window)
+                if work_area is not None:
+                    default_height = max(
+                        min_client_size.y,
+                        min(int(work_area.height * 0.88), int(work_area.height) - 48))
+                else:
+                    default_height = max(min_client_size.y, 760)
                 self._restoring_window_geometry = True
                 try:
                     controls_window.SetClientSize(wx.Size(default_width, default_height))
@@ -3465,25 +4102,33 @@ class MainFrame(wx.Frame):
                 self._controls_geometry_restored = True
         self.apply_controls_window_size_policy(controls_window)
 
-        if hasattr(self, "animation_panel"):
-            self.schedule_refresh_controls_scrolling()
         controls_window.Layout()
-        if initial and not self._startup_autofit_pending:
-            self._startup_autofit_pending = True
-            wx.CallAfter(self.finalize_startup_autofit)
+        if initial:
+            self._sync_controls_splitter_geometry()
+            self.initialize_adjustable_columns()
+            self._nudge_animation_splitter_layout()
+            self.finalize_controls_column_layout()
 
     def finalize_startup_autofit(self):
         self._startup_autofit_pending = False
-        self.adapt_main_window_to_controls(initial=False)
-        self.schedule_refresh_controls_scrolling()
+        self._sync_controls_splitter_geometry()
+        self.finalize_controls_column_layout()
 
     def on_column_splitter_changed(self, event: wx.Event):
-        self.refresh_dynamic_output_status_layout()
-        self.schedule_postprocess_layout_refresh()
-        if hasattr(self, "animation_panel"):
-            self.schedule_refresh_controls_scrolling()
-        if hasattr(self, "output_background_choice"):
-            self.save_persistent_ui_state()
+        splitter = event.GetEventObject()
+        if (not self._restoring_window_geometry
+                and not self._controls_build_in_progress
+                and self._applying_persisted_controls_layout_depth <= 0):
+            self._capture_splitter_ratios()
+            self._sync_splitter_ratio_fields_to_persistent_state()
+            if splitter in (
+                    getattr(self, "animation_splitter", None),
+                    getattr(self, "main_splitter", None)):
+                self.schedule_model_input_column_layout_refresh()
+                self.schedule_dynamic_output_layout_refresh()
+            if splitter is getattr(self, "right_sidebar_splitter", None):
+                self.schedule_postprocess_layout_refresh()
+            self.schedule_window_geometry_save()
         event.Skip()
 
     @classmethod
@@ -3598,6 +4243,20 @@ class MainFrame(wx.Frame):
 
     def reload_persistent_ui_state_from_disk(self):
         self.persistent_ui_state = self.load_persistent_ui_state()
+        self.apply_bundled_default_model_paths_if_missing()
+        self._controls_geometry_restored = False
+        self._seed_live_splitter_ratios_from_persistent()
+
+    def apply_bundled_default_model_paths_if_missing(self) -> None:
+        """When no saved last-model memory, default Load Last to bundled bai student yaml + png."""
+        bundled = resolve_bundled_bai_model_paths()
+        if bundled is None:
+            return
+        yaml_rel, png_rel = bundled
+        if not str(self.persistent_ui_state.get("last_loaded_model_path") or "").strip():
+            self.persistent_ui_state["last_loaded_model_path"] = yaml_rel
+        if not str(self.persistent_ui_state.get("tha3_character_png") or "").strip():
+            self.persistent_ui_state["tha3_character_png"] = png_rel
 
     @staticmethod
     def sanitize_window_geometry_in_state(data: dict) -> dict:
@@ -3623,12 +4282,10 @@ class MainFrame(wx.Frame):
         return sanitized
 
     def collect_persistent_ui_state(self) -> dict:
-        animation_splitter_sash = self.persistent_ui_state.get("animation_splitter_sash")
-        if hasattr(self, "animation_splitter") and self.animation_splitter.IsSplit():
-            animation_splitter_sash = self.animation_splitter.GetSashPosition()
-        main_splitter_sash = self.persistent_ui_state.get("main_splitter_sash")
-        if hasattr(self, "main_splitter") and self.main_splitter.IsSplit():
-            main_splitter_sash = self.main_splitter.GetSashPosition()
+        if self._controls_splitter_layout_readable():
+            self._capture_splitter_ratios()
+            self._sync_splitter_ratio_fields_to_persistent_state()
+        splitter_layout_fields = self._collect_splitter_layout_fields()
         if self._active_save_caller == "process_window_geometry_save":
             output_background_hex = self.normalize_background_hex(
                 self.persistent_ui_state.get("output_background_hex", "#000000"),
@@ -3687,15 +4344,21 @@ class MainFrame(wx.Frame):
             "tha3_character_png": self.last_tha3_character_png,
             "tha3_model_variant": self.tha3_model_variant,
             "last_loaded_model_path": self.last_loaded_model_path,
-            "animation_splitter_sash": animation_splitter_sash,
-            "main_splitter_sash": main_splitter_sash,
             "mouth_settings": persistent_mouth_settings,
             "mocap_input_mode": self.mocap_input_mode,
+            "mouse_blink_interval_sec": self._mouse_mocap_config.blink_interval_sec,
+            "mouse_center_zone": self._mouse_mocap_config.center_zone.to_dict(),
+            "mouse_horizontal_tilt_mix": self._mouse_mocap_config.horizontal_tilt_mix,
+            "mouse_gaze_neutral_nx": self._mouse_mocap_config.gaze_neutral_nx,
+            "mouse_gaze_neutral_ny": self._mouse_mocap_config.gaze_neutral_ny,
+            "enable_mouse_auto_calibration": bool(self._enable_mouse_auto_calibration),
+            "mouse_auto_calibration_interval_seconds": float(self._mouse_auto_calibration_interval_seconds),
             "display_transform_settings": self.collect_display_transform_settings(),
             # Keep last remembered window-capture target stable across source switches.
             "window_capture_hwnd": int(self._window_capture_hwnd or persisted_window_hwnd or 0),
             "window_capture_title": (self._window_capture_title or persisted_window_title or ""),
         }
+        state.update(splitter_layout_fields)
         if getattr(self, "output_frame", None) is not None and self.output_frame:
             state.update(self.collect_window_client_rect(self.output_frame, "output_frame"))
         capture_window = getattr(self, "transparent_capture_window", None)
@@ -3893,7 +4556,7 @@ class MainFrame(wx.Frame):
         wx.CallAfter(self.refresh_unlimited_layers_status)
         wx.CallAfter(self.sync_transparent_capture_output_window)
         if self.get_controls_window() is not None:
-            wx.CallAfter(self.initialize_adjustable_columns)
+            wx.CallAfter(self._apply_persisted_controls_layout)
 
     def apply_output_frame_state(self):
         if getattr(self, "output_frame", None) is None:
@@ -3970,18 +4633,23 @@ class MainFrame(wx.Frame):
             wrap_width = panel_width - margin
             if wrap_width > 40:
                 last_width = getattr(image_path_text, "_last_wrap_width", None)
-                if last_width != wrap_width:
+                if last_width is None or abs(last_width - wrap_width) >= 2:
+                    if last_width is not None and wrap_width > last_width:
+                        image_path_text.SetLabel(image_path_text.GetLabel())
                     image_path_text._last_wrap_width = wrap_width
                     image_path_text.Wrap(wrap_width)
+                    if hasattr(image_path_text, "InvalidateBestSize"):
+                        image_path_text.InvalidateBestSize()
+            else:
+                image_path_text._last_wrap_width = None
 
     def schedule_postprocess_layout_refresh(self):
-        if self._postprocess_layout_pending:
-            return
-        self._postprocess_layout_pending = True
-        wx.CallLater(80, self._run_postprocess_layout_refresh)
+        self._stop_call_later(getattr(self, "_postprocess_layout_timer", None))
+        self._postprocess_layout_timer = wx.CallLater(
+            80, self._run_postprocess_layout_refresh)
 
     def _run_postprocess_layout_refresh(self):
-        self._postprocess_layout_pending = False
+        self._postprocess_layout_timer = None
         if self._postprocess_layout_in_progress or self._is_closing:
             return
         self._postprocess_layout_in_progress = True
@@ -4009,17 +4677,14 @@ class MainFrame(wx.Frame):
         splitter = getattr(self, "right_sidebar_splitter", None)
         if splitter is not None and splitter.IsSplit():
             total_h = max(1, splitter.GetClientSize().y)
-            min_capture_h = min(
-                MainFrame.CAPTURE_PANEL_MIN_HEIGHT,
-                max(160, total_h // 3))
+            minimum = max(1, splitter.GetMinimumPaneSize())
+            min_capture_h = MainFrame.adaptive_right_sidebar_capture_min_height(total_h)
+            min_capture_h = max(minimum, min(total_h - minimum, min_capture_h))
             if splitter.GetSashPosition() < min_capture_h:
                 splitter.SetSashPosition(min_capture_h)
 
     def on_postprocess_scroll_size(self, event: wx.Event):
         event.Skip()
-        if self._postprocess_layout_in_progress:
-            return
-        self.schedule_postprocess_layout_refresh()
 
     def refresh_right_sidebar_scrolling(self):
         if self._postprocess_layout_in_progress:
@@ -4027,29 +4692,18 @@ class MainFrame(wx.Frame):
         self.refresh_postprocess_scroll_layout()
 
     def refresh_controls_scrolling(self):
-        scroll_start = time.time()
         if not hasattr(self, "animation_panel"):
             return
-        view_start_before = self.animation_panel.GetViewStart()
         controls_window = self.get_controls_window()
         if controls_window is not None:
             controls_window.Layout()
         if hasattr(self, "right_sidebar"):
             self.right_sidebar.Layout()
-        self.refresh_right_sidebar_scrolling()
         if hasattr(self, "main_splitter"):
             self.main_splitter.Layout()
-        self.animation_panel.Layout()
-        min_size = self.animation_panel_sizer.GetMinSize()
-        client_size = self.animation_panel.GetClientSize()
-        virtual_width = max(client_size.x, min_size.x)
-        virtual_height = max(min_size.y, client_size.y)
-        self.animation_panel.SetVirtualSize((virtual_width, virtual_height))
-        self.animation_panel.EnableScrolling(True, True)
-        self.animation_panel.FitInside()
-        self.animation_panel.Refresh()
-        self.schedule_dynamic_output_layout_refresh()
-        view_start_after = self.animation_panel.GetViewStart()
+        if hasattr(self, "animation_panel"):
+            self.animation_panel.Layout()
+        self.finalize_controls_column_layout()
 
     def ensure_result_bitmap_size(self):
         width, height = self.get_output_canvas_size()
@@ -4072,66 +4726,63 @@ class MainFrame(wx.Frame):
             self.update_result_image_bitmap()
 
     def create_animation_panel(self, parent):
-        self.animation_panel = wx.ScrolledWindow(parent, style=wx.RAISED_BORDER | wx.HSCROLL | wx.VSCROLL)
+        self.animation_panel = wx.Panel(parent, style=wx.RAISED_BORDER)
         self.animation_panel_sizer = wx.BoxSizer(wx.VERTICAL)
         self.animation_panel.SetSizer(self.animation_panel_sizer)
         self.animation_panel.SetAutoLayout(1)
         self.animation_panel.SetDoubleBuffered(True)
-        self.animation_panel.SetScrollRate(16, 16)
-        self.animation_panel.EnableScrolling(True, True)
-        self.animation_panel.Bind(wx.EVT_MOUSEWHEEL, self.on_animation_panel_mousewheel_logged)
-
-        image_size = MainFrame.IMAGE_SIZE
-        self.animation_panel.SetMinSize(wx.Size(-1, image_size + 140))
+        self.animation_panel.SetMinSize(
+            wx.Size(MainFrame.CONTROLS_TWO_COLUMN_MIN_WIDTH, 320))
 
         self.animation_splitter = wx.SplitterWindow(
             self.animation_panel,
             style=wx.SP_LIVE_UPDATE | wx.SP_3D | wx.SP_BORDER)
-        self.animation_splitter.SetMinimumPaneSize(200)
-        self.animation_splitter.SetSashGravity(0.0)
+        self.animation_splitter.SetMinimumPaneSize(MainFrame.CONTROLS_COLUMN_MIN_WIDTH)
+        self.animation_splitter.SetSashGravity(0.5)
         self.animation_splitter.Bind(wx.EVT_SPLITTER_SASH_POS_CHANGED, self.on_column_splitter_changed)
         self.animation_panel_sizer.Add(self.animation_splitter, 1, wx.EXPAND)
 
+        self.model_input_column = wx.ScrolledWindow(
+            self.animation_splitter,
+            style=wx.SIMPLE_BORDER | wx.VSCROLL)
+        self.model_input_column.SetScrollRate(10, 10)
+        self.model_input_column.EnableScrolling(False, True)
+        self.model_input_column_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.model_input_column.SetSizer(self.model_input_column_sizer)
+        self.model_input_column.SetAutoLayout(1)
+        self.model_input_column.SetDoubleBuffered(True)
+        self.model_input_column.Bind(wx.EVT_SIZE, self.on_model_input_column_size)
+
+        model_input_text = wx.StaticText(
+            self.model_input_column, label="--- 模型参数传入 / Model Input ---", style=wx.ALIGN_CENTER)
+        self.model_input_column_sizer.Add(model_input_text, 0, wx.EXPAND)
+
+        self.create_model_input_video_source_controls(self.model_input_column, self.model_input_column_sizer)
+
+        def current_pose_supplier() -> Optional[MediaPipeFacePose]:
+            return self.mediapipe_face_pose
+
+        self.pose_converter.ui_state_changed_callback = self.save_persistent_ui_state
+        self.pose_converter.init_pose_converter_panel(self.model_input_column, current_pose_supplier)
+        mouth_settings = self.persistent_ui_state.get("mouth_settings")
+        if isinstance(mouth_settings, dict):
+            apply_fn = getattr(self.pose_converter, "apply_persistent_mouth_settings", None)
+            if callable(apply_fn):
+                apply_fn(mouth_settings)
+        if hasattr(self.pose_converter, "refresh_audio_input_runtime"):
+            self.pose_converter.refresh_audio_input_runtime(time.time())
+        self.model_input_column_sizer.Fit(self.model_input_column)
+
+        self.dynamic_output_scroll = wx.ScrolledWindow(
+            self.animation_splitter,
+            style=wx.SIMPLE_BORDER | wx.VSCROLL)
+        self.dynamic_output_scroll.SetScrollRate(10, 10)
+        self.dynamic_output_scroll.EnableScrolling(False, True)
+        self.dynamic_output_scroll.SetDoubleBuffered(True)
+        self.dynamic_output_scroll_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.dynamic_output_scroll.SetSizer(self.dynamic_output_scroll_sizer)
+
         if True:
-            self.model_input_column = wx.Panel(self.animation_splitter, style=wx.SIMPLE_BORDER)
-            self.model_input_column_sizer = wx.BoxSizer(wx.VERTICAL)
-            self.model_input_column.SetSizer(self.model_input_column_sizer)
-            self.model_input_column.SetAutoLayout(1)
-            self.model_input_column.SetDoubleBuffered(True)
-
-            model_input_text = wx.StaticText(
-                self.model_input_column, label="--- 模型参数传入 / Model Input ---", style=wx.ALIGN_CENTER)
-            self.model_input_column_sizer.Add(model_input_text, 0, wx.EXPAND)
-
-            self.create_model_input_video_source_controls(self.model_input_column, self.model_input_column_sizer)
-
-        if True:
-            def current_pose_supplier() -> Optional[MediaPipeFacePose]:
-                return self.mediapipe_face_pose
-
-            self.pose_converter.ui_state_changed_callback = self.save_persistent_ui_state
-            model_input_children_before = len(self.model_input_column.GetChildren())
-            self.pose_converter.init_pose_converter_panel(self.model_input_column, current_pose_supplier)
-            model_input_children_after = len(self.model_input_column.GetChildren())
-            mouth_settings = self.persistent_ui_state.get("mouth_settings")
-            if isinstance(mouth_settings, dict):
-                apply_fn = getattr(self.pose_converter, "apply_persistent_mouth_settings", None)
-                if callable(apply_fn):
-                    apply_fn(mouth_settings)
-            if hasattr(self.pose_converter, "refresh_audio_input_runtime"):
-                self.pose_converter.refresh_audio_input_runtime(time.time())
-            self.model_input_column_sizer.Fit(self.model_input_column)
-
-        if True:
-            self.dynamic_output_scroll = wx.ScrolledWindow(
-                self.animation_splitter,
-                style=wx.VSCROLL)
-            self.dynamic_output_scroll.SetScrollRate(10, 10)
-            self.dynamic_output_scroll.SetDoubleBuffered(True)
-            self.dynamic_output_scroll.SetMaxSize(wx.Size(320, -1))
-            self.dynamic_output_scroll_sizer = wx.BoxSizer(wx.VERTICAL)
-            self.dynamic_output_scroll.SetSizer(self.dynamic_output_scroll_sizer)
-
             self.animation_left_panel = wx.Panel(self.dynamic_output_scroll, style=wx.SIMPLE_BORDER)
             self.animation_left_panel_sizer = wx.BoxSizer(wx.VERTICAL)
             self.animation_left_panel.SetSizer(self.animation_left_panel_sizer)
@@ -4245,17 +4896,15 @@ class MainFrame(wx.Frame):
             self.refresh_auto_transform_status("READY")
             self.refresh_scale_curve_status()
             self.refresh_dynamic_output_status_layout()
-            wx.CallAfter(self.schedule_dynamic_output_layout_refresh)
-
         if not self.animation_splitter.IsSplit():
             self.animation_splitter.SplitVertically(
                 self.model_input_column,
                 self.dynamic_output_scroll,
-                sashPosition=max(280, self.model_input_column.GetBestSize().x))
+                sashPosition=MainFrame.compute_equal_halves_sash(
+                    max(MainFrame.CONTROLS_TWO_COLUMN_MIN_WIDTH, self.animation_splitter.GetClientSize().x),
+                    self.animation_splitter.GetMinimumPaneSize()))
 
-        # Do NOT fit scrolled window to content; otherwise vertical scrollbars never appear.
-        self.animation_panel.SetMinSize(wx.Size(480, 320))
-        wx.CallAfter(self.refresh_controls_scrolling)
+        self.bind_animation_area_mousewheel()
 
     def create_model_input_video_source_controls(self, parent, parent_sizer):
         """Video source picker lives in Model Input column (mocap input for pose params)."""
@@ -4274,17 +4923,104 @@ class MainFrame(wx.Frame):
             parent,
             label="",
             style=wx.ST_ELLIPSIZE_END)
-        self.mocap_input_mode_status_text.Wrap(MainFrame.VIDEO_SOURCE_COLUMN_MIN_WIDTH - 20)
         parent_sizer.Add(self.mocap_input_mode_status_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
 
-        separator = wx.StaticLine(parent, -1)
-        parent_sizer.Add(separator, 0, wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
+        self.mouse_only_controls_panel = wx.Panel(parent)
+        mouse_only_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.mouse_only_controls_panel.SetSizer(mouse_only_sizer)
+        self.mouse_only_controls_panel.SetAutoLayout(1)
 
-        source_title = wx.StaticText(
+        blink_slider_panel = wx.Panel(self.mouse_only_controls_panel)
+        blink_slider_sizer = wx.FlexGridSizer(cols=1, hgap=0, vgap=0)
+        blink_slider_sizer.AddGrowableCol(0)
+        blink_slider_panel.SetSizer(blink_slider_sizer)
+        self.mouse_blink_interval_spin = FloatSliderControl(
+            blink_slider_panel,
+            blink_slider_sizer,
+            slider_label("眨眼周期", "Blink Interval", "秒", "s"),
+            self._mouse_mocap_config.blink_interval_sec,
+            MOUSE_BLINK_INTERVAL_MIN_SEC,
+            MOUSE_BLINK_INTERVAL_MAX_SEC,
+            0.5,
+            self.on_mouse_blink_interval_changed,
+            slider_min=MOUSE_BLINK_INTERVAL_MIN_SEC,
+            slider_max=MOUSE_BLINK_INTERVAL_MAX_SEC)
+        mouse_only_sizer.Add(blink_slider_panel, 0, wx.EXPAND | wx.BOTTOM, 4)
+
+        mouse_zone_title = wx.StaticText(
+            self.mouse_only_controls_panel,
+            label="屏幕区 / 中心区（拖移内框，拖边缩放）\nScreen / Center Zone",
+            style=wx.ALIGN_CENTER)
+        mouse_only_sizer.Add(mouse_zone_title, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 2)
+
+        self.mouse_zone_panel = MouseZonePanel(
+            self.mouse_only_controls_panel,
+            zone=self._mouse_mocap_config.center_zone,
+            on_zone_changed=self.on_mouse_center_zone_changed)
+        mouse_only_sizer.Add(self.mouse_zone_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+
+        horizontal_mix_panel = wx.Panel(self.mouse_only_controls_panel)
+        horizontal_mix_sizer = wx.FlexGridSizer(cols=1, hgap=0, vgap=0)
+        horizontal_mix_sizer.AddGrowableCol(0)
+        horizontal_mix_panel.SetSizer(horizontal_mix_sizer)
+        self.mouse_horizontal_tilt_mix_spin = FloatSliderControl(
+            horizontal_mix_panel,
+            horizontal_mix_sizer,
+            slider_label(
+                "左右出框倾斜混合",
+                "Horizontal Out-Tilt Mix",
+                "0位移 1倾斜",
+                "0=move 1=tilt"),
+            self._mouse_mocap_config.horizontal_tilt_mix,
+            MOUSE_HORIZONTAL_TILT_MIX_MIN,
+            MOUSE_HORIZONTAL_TILT_MIX_MAX,
+            0.05,
+            self.on_mouse_horizontal_tilt_mix_changed,
+            slider_min=MOUSE_HORIZONTAL_TILT_MIX_MIN,
+            slider_max=MOUSE_HORIZONTAL_TILT_MIX_MAX)
+        mouse_only_sizer.Add(horizontal_mix_panel, 0, wx.EXPAND | wx.BOTTOM, 4)
+
+        self.enable_mouse_auto_calibration_checkbox = wx.CheckBox(
+            self.mouse_only_controls_panel,
+            label="鼠标周期自动校准 / Mouse Periodic Auto-Calibration")
+        self.enable_mouse_auto_calibration_checkbox.SetValue(self._enable_mouse_auto_calibration)
+        self.enable_mouse_auto_calibration_checkbox.Bind(
+            wx.EVT_CHECKBOX, self.on_mouse_auto_calibration_checkbox_changed)
+        mouse_only_sizer.Add(self.enable_mouse_auto_calibration_checkbox, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+
+        mouse_interval_panel = wx.Panel(self.mouse_only_controls_panel)
+        mouse_interval_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        mouse_interval_panel.SetSizer(mouse_interval_sizer)
+        mouse_interval_label = wx.StaticText(
+            mouse_interval_panel,
+            label=slider_label("校准周期", "Calibration Interval", "秒", "s"))
+        mouse_interval_sizer.Add(mouse_interval_label, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        self.mouse_auto_calibration_interval_seconds_ctrl = wx.SpinCtrlDouble(
+            mouse_interval_panel,
+            wx.ID_ANY,
+            min=1.0,
+            max=3600.0,
+            initial=self._mouse_auto_calibration_interval_seconds,
+            inc=1.0,
+            style=wx.SP_ARROW_KEYS)
+        self.mouse_auto_calibration_interval_seconds_ctrl.SetDigits(0)
+        self.mouse_auto_calibration_interval_seconds_ctrl.Bind(
+            wx.EVT_SPINCTRLDOUBLE, self.on_mouse_auto_calibration_interval_changed)
+        self.mouse_auto_calibration_interval_seconds_ctrl.Bind(
+            wx.EVT_TEXT, self.on_mouse_auto_calibration_interval_changed)
+        mouse_interval_sizer.Add(self.mouse_auto_calibration_interval_seconds_ctrl, 0, wx.ALIGN_CENTER_VERTICAL)
+        mouse_only_sizer.Add(mouse_interval_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+
+        parent_sizer.Add(self.mouse_only_controls_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+
+        self.video_source_section_separator = wx.StaticLine(parent, -1)
+        parent_sizer.Add(self.video_source_section_separator, 0, wx.EXPAND | wx.TOP | wx.BOTTOM, 4)
+
+        self.video_source_title = wx.StaticText(
             parent,
             label="视频输入源（窗口捕获 / 摄像头）\nVideo Source (Window / Camera)",
             style=wx.ALIGN_CENTER)
-        parent_sizer.Add(source_title, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+        parent_sizer.Add(self.video_source_title, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
 
         self.video_source_panel = wx.Panel(parent, style=wx.SIMPLE_BORDER)
         video_source_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -4312,19 +5048,18 @@ class MainFrame(wx.Frame):
             self.video_source_panel,
             label="上次窗口捕获: 未设置\nLast window capture: (none)",
             style=wx.ST_ELLIPSIZE_END)
-        self.last_window_capture_text.Wrap(MainFrame.VIDEO_SOURCE_COLUMN_MIN_WIDTH - 20)
         video_source_sizer.Add(self.last_window_capture_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
 
         self.video_source_status_text = wx.StaticText(
             self.video_source_panel,
             label="尚未连接摄像头 / No camera connected",
             style=wx.ST_ELLIPSIZE_END)
-        self.video_source_status_text.Wrap(MainFrame.VIDEO_SOURCE_COLUMN_MIN_WIDTH - 20)
         video_source_sizer.Add(self.video_source_status_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
 
         parent_sizer.Add(self.video_source_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
         self._init_video_source_choices_with_window()
         wx.CallAfter(self.apply_persistent_mocap_input_mode)
+        wx.CallAfter(self.apply_mouse_mocap_controls_from_persistent)
 
     def on_mocap_input_mode_changed(self, event: wx.Event):
         if not hasattr(self, "mocap_input_mode_choice"):
@@ -4447,6 +5182,209 @@ class MainFrame(wx.Frame):
             f"mouth audio {ready_label}\n{audio_status}"
         )
 
+    def _load_mouse_mocap_settings_from_persistent(self, data: Optional[dict] = None) -> None:
+        if data is None:
+            data = self.persistent_ui_state
+        self._mouse_mocap_config.blink_interval_sec = clamp_blink_interval_sec(
+            float(data.get("mouse_blink_interval_sec", self._mouse_mocap_config.blink_interval_sec)))
+        zone_raw = data.get("mouse_center_zone")
+        self._mouse_mocap_config.center_zone = MouseCenterZone.from_mapping(
+            zone_raw if isinstance(zone_raw, dict) else None)
+        self._mouse_mocap_config.horizontal_tilt_mix = clamp_horizontal_tilt_mix(
+            float(data.get("mouse_horizontal_tilt_mix", self._mouse_mocap_config.horizontal_tilt_mix)))
+        try:
+            self._mouse_mocap_config.gaze_neutral_nx = float(
+                data.get("mouse_gaze_neutral_nx", self._mouse_mocap_config.gaze_neutral_nx))
+            self._mouse_mocap_config.gaze_neutral_ny = float(
+                data.get("mouse_gaze_neutral_ny", self._mouse_mocap_config.gaze_neutral_ny))
+        except (TypeError, ValueError):
+            pass
+        self._mouse_mocap_config.gaze_neutral_nx = clamp(
+            self._mouse_mocap_config.gaze_neutral_nx, -1.0, 1.0)
+        self._mouse_mocap_config.gaze_neutral_ny = clamp(
+            self._mouse_mocap_config.gaze_neutral_ny, -1.0, 1.0)
+        self._enable_mouse_auto_calibration = bool(data.get("enable_mouse_auto_calibration", False))
+        try:
+            self._mouse_auto_calibration_interval_seconds = max(
+                1.0,
+                min(3600.0, float(data.get("mouse_auto_calibration_interval_seconds", 300.0))))
+        except (TypeError, ValueError):
+            self._mouse_auto_calibration_interval_seconds = 300.0
+
+    def apply_mouse_mocap_controls_from_persistent(self) -> None:
+        self._load_mouse_mocap_settings_from_persistent(self.persistent_ui_state)
+        if hasattr(self, "mouse_blink_interval_spin"):
+            self.mouse_blink_interval_spin.SetValue(self._mouse_mocap_config.blink_interval_sec)
+        if hasattr(self, "mouse_zone_panel"):
+            self.mouse_zone_panel.set_zone(self._mouse_mocap_config.center_zone)
+        if hasattr(self, "mouse_horizontal_tilt_mix_spin"):
+            self.mouse_horizontal_tilt_mix_spin.SetValue(self._mouse_mocap_config.horizontal_tilt_mix)
+        if hasattr(self, "enable_mouse_auto_calibration_checkbox"):
+            self.enable_mouse_auto_calibration_checkbox.SetValue(self._enable_mouse_auto_calibration)
+        if hasattr(self, "mouse_auto_calibration_interval_seconds_ctrl"):
+            self.mouse_auto_calibration_interval_seconds_ctrl.SetValue(
+                self._mouse_auto_calibration_interval_seconds)
+        self._apply_mouse_only_controls_visibility()
+
+    def _apply_mouse_only_controls_visibility(self) -> None:
+        mouse_mode = self.is_mouse_audio_mocap_mode()
+        parent_sizer = getattr(self, "model_input_column_sizer", None)
+        show_video = not mouse_mode
+
+        def _show_widget(widget: Optional[wx.Window], show: bool) -> None:
+            if widget is None or parent_sizer is None:
+                return
+            try:
+                parent_sizer.Show(widget, show=show)
+            except RuntimeError:
+                pass
+
+        _show_widget(getattr(self, "mouse_only_controls_panel", None), mouse_mode)
+        _show_widget(getattr(self, "video_source_section_separator", None), show_video)
+        _show_widget(getattr(self, "video_source_title", None), show_video)
+        _show_widget(getattr(self, "video_source_panel", None), show_video)
+        parent = getattr(self, "model_input_column", None)
+        if parent is not None:
+            try:
+                parent.Layout()
+            except RuntimeError:
+                pass
+
+    def on_mouse_blink_interval_changed(self, event: Optional[wx.Event] = None) -> None:
+        if hasattr(self, "mouse_blink_interval_spin"):
+            self._mouse_mocap_config.blink_interval_sec = clamp_blink_interval_sec(
+                self.mouse_blink_interval_spin.GetValue())
+        self.save_persistent_ui_state()
+        if event is not None:
+            event.Skip()
+
+    def on_mouse_center_zone_changed(self, zone: MouseCenterZone) -> None:
+        self._mouse_mocap_config.center_zone = zone.clamped_to_surface()
+        if hasattr(self, "mouse_zone_panel"):
+            self.mouse_zone_panel.set_zone(self._mouse_mocap_config.center_zone, refresh=False)
+        self.save_persistent_ui_state()
+
+    def on_mouse_horizontal_tilt_mix_changed(self, event: Optional[wx.Event] = None) -> None:
+        if hasattr(self, "mouse_horizontal_tilt_mix_spin"):
+            self._mouse_mocap_config.horizontal_tilt_mix = clamp_horizontal_tilt_mix(
+                self.mouse_horizontal_tilt_mix_spin.GetValue())
+        self.save_persistent_ui_state()
+        if event is not None:
+            event.Skip()
+
+    def on_mouse_auto_calibration_checkbox_changed(self, event: wx.Event) -> None:
+        if hasattr(self, "enable_mouse_auto_calibration_checkbox"):
+            self._enable_mouse_auto_calibration = bool(
+                self.enable_mouse_auto_calibration_checkbox.GetValue())
+        # Defer first periodic calibration until the interval elapses (avoid jumping zone on enable).
+        self.last_mouse_calibration_time = time.time()
+        self.save_persistent_ui_state()
+        event.Skip()
+
+    def on_mouse_auto_calibration_interval_changed(self, event: wx.Event) -> None:
+        if hasattr(self, "mouse_auto_calibration_interval_seconds_ctrl"):
+            try:
+                self._mouse_auto_calibration_interval_seconds = max(
+                    1.0,
+                    min(3600.0, float(self.mouse_auto_calibration_interval_seconds_ctrl.GetValue())))
+            except (TypeError, ValueError):
+                pass
+        self.last_mouse_calibration_time = time.time()
+        self.save_persistent_ui_state()
+        event.Skip()
+
+    def calibrate_mouse_dynamic_enhancement(self, nx: float, ny: float) -> bool:
+        """Calibrate neutral enhancement; move center-zone center to mouse without resizing the zone."""
+        zone = self._mouse_mocap_config.center_zone.clamped_to_surface()
+        face_size = face_size_from_zone_distance(nx, ny, zone)
+        motion = FaceScreenMotion(center_x=nx, center_y=ny, face_size=face_size)
+        self.update_neutral_output_enhancement(motion)
+        self._mouse_mocap_config.center_zone = zone.with_center_at_preserving_size(nx, ny)
+        if hasattr(self, "mouse_zone_panel"):
+            self.mouse_zone_panel.set_zone(self._mouse_mocap_config.center_zone)
+
+        self._mouse_mocap_config.gaze_neutral_nx = clamp(nx, -1.0, 1.0)
+        self._mouse_mocap_config.gaze_neutral_ny = clamp(ny, -1.0, 1.0)
+        time_now = time.time()
+        forward_pose, _, _ = build_mouse_mediapipe_face_pose(
+            time_now,
+            self._mouse_mocap_config,
+            nx=nx,
+            ny=ny)
+        self.mediapipe_face_pose = forward_pose
+        pose_converter = getattr(self, "pose_converter", None)
+        if pose_converter is not None and hasattr(pose_converter, "apply_face_orientation_calibration"):
+            pose_converter.apply_face_orientation_calibration()
+        roll_deg = extract_head_roll_degrees(forward_pose)
+        self.neutral_head_roll_deg = roll_deg
+        self.latest_head_roll_deg = roll_deg
+        self.last_mouse_calibration_time = time_now
+        self.last_scale_calibration_time = time_now
+        return True
+
+    def maybe_apply_periodic_mouse_calibration(self, time_now: float, nx: float, ny: float) -> None:
+        if not self.is_mouse_audio_mocap_mode() or not self._enable_mouse_auto_calibration:
+            return
+        interval_seconds = max(1.0, float(self._mouse_auto_calibration_interval_seconds))
+        if self.last_mouse_calibration_time is not None \
+                and time_now - self.last_mouse_calibration_time < interval_seconds:
+            return
+        self.calibrate_mouse_dynamic_enhancement(nx, ny)
+        self.save_persistent_ui_state()
+
+    def _update_mouse_dynamic_enhancement_motion(
+            self,
+            nx: float,
+            ny: float,
+            mediapipe_face_pose: MediaPipeFacePose) -> None:
+        zone = self._mouse_mocap_config.center_zone.clamped_to_surface()
+        neutral_motion = self.neutral_face_screen_motion
+        if neutral_motion is not None:
+            neutral_center_x = neutral_motion.center_x
+            neutral_center_y = neutral_motion.center_y
+            neutral_face_size = neutral_motion.face_size
+        else:
+            neutral_center_x = 0.0
+            neutral_center_y = 0.0
+            neutral_face_size = MOUSE_DEFAULT_FACE_SIZE
+
+        if is_mouse_inside_center_zone(nx, ny, zone):
+            self.latest_face_screen_motion = FaceScreenMotion(
+                center_x=neutral_center_x,
+                center_y=neutral_center_y,
+                face_size=neutral_face_size)
+        else:
+            center_x, center_y, face_size = build_mouse_dynamic_face_screen_motion(
+                nx,
+                ny,
+                zone,
+                neutral_center_x=neutral_center_x,
+                neutral_center_y=neutral_center_y,
+                neutral_face_size=neutral_face_size,
+                horizontal_tilt_mix=self._mouse_mocap_config.horizontal_tilt_mix)
+            self.latest_face_screen_motion = FaceScreenMotion(
+                center_x=center_x,
+                center_y=center_y,
+                face_size=face_size)
+
+        pose_roll_deg = extract_head_roll_degrees(mediapipe_face_pose)
+        local_x, _local_y = zone_local_coords(nx, ny, zone)
+        try:
+            tilt_limit_deg = max(0.0, float(self.tilt_limit_spin.GetValue()))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            tilt_limit_deg = 30.0
+        self.latest_head_roll_deg = blend_mouse_head_roll_degrees(
+            pose_roll_deg,
+            self.neutral_head_roll_deg,
+            local_x,
+            tilt_limit_deg,
+            self._mouse_mocap_config.horizontal_tilt_mix)
+
+        if hasattr(self, "mouse_zone_panel"):
+            self.mouse_zone_panel.set_mouse_position(nx, ny)
+
+        self.maybe_apply_periodic_mouse_calibration(time_now=time.time(), nx=nx, ny=ny)
+
     def refresh_mocap_input_mode_ui(self) -> None:
         if hasattr(self, "mocap_input_mode_choice") and self.mocap_input_mode_choice is not None:
             try:
@@ -4459,12 +5397,7 @@ class MainFrame(wx.Frame):
             self.set_wrapped_static_text_if_changed(
                 self.mocap_input_mode_status_text,
                 self.get_mouse_mocap_status_message())
-        video_panel = getattr(self, "video_source_panel", None)
-        if video_panel is not None:
-            try:
-                video_panel.Enable(not self.is_mouse_audio_mocap_mode())
-            except RuntimeError:
-                pass
+        self._apply_mouse_only_controls_visibility()
 
     def update_mouse_mocap_face_pose(self, time_now: float) -> None:
         pose, nx, ny = build_mouse_mediapipe_face_pose(
@@ -4474,27 +5407,14 @@ class MainFrame(wx.Frame):
         self._last_mouse_mocap_ny = ny
         self.mediapipe_face_pose = pose
         self.last_face_detected_time = time_now
+        self._update_mouse_dynamic_enhancement_motion(nx, ny, pose)
         if hasattr(self.pose_converter, "refresh_audio_input_runtime"):
             self.pose_converter.refresh_audio_input_runtime(time_now)
         if self._capture_frame_serial % 12 == 0:
             self.refresh_mocap_input_mode_ui()
 
     def on_animation_panel_mousewheel_logged(self, event: wx.MouseEvent):
-        event_object = event.GetEventObject()
-        if isinstance(event_object, wx.Slider):
-            wheel_delta = event.GetWheelDelta()
-            wheel_steps = int(event.GetWheelRotation() / wheel_delta) if wheel_delta else 0
-            old_value = int(event_object.GetValue())
-            line_size = max(1, int(event_object.GetLineSize()))
-            new_value = old_value + wheel_steps * line_size
-            new_value = max(int(event_object.GetMin()), min(int(event_object.GetMax()), int(new_value)))
-            if new_value != old_value:
-                event_object.SetValue(new_value)
-                slider_event = wx.CommandEvent(wx.EVT_SLIDER.typeId, event_object.GetId())
-                slider_event.SetEventObject(event_object)
-                wx.PostEvent(event_object.GetEventHandler(), slider_event)
-            return
-        event.Skip()
+        self.on_mousewheel_scroll(event)
 
     def create_compact_launcher_panel(self, parent):
         self.compact_launcher_panel = wx.Panel(parent, style=wx.SIMPLE_BORDER)
@@ -4602,8 +5522,8 @@ class MainFrame(wx.Frame):
             self.main_splitter = wx.SplitterWindow(
                 self.controls_frame,
                 style=wx.SP_LIVE_UPDATE | wx.SP_3D | wx.SP_BORDER)
-            self.main_splitter.SetMinimumPaneSize(MainFrame.RIGHT_SIDEBAR_MIN_WIDTH)
-            self.main_splitter.SetSashGravity(0.0)
+            self.main_splitter.SetMinimumPaneSize(MainFrame.CONTROLS_COLUMN_MIN_WIDTH)
+            self.main_splitter.SetSashGravity(0.5)
             self.main_splitter.Bind(wx.EVT_SPLITTER_SASH_POS_CHANGED, self.on_column_splitter_changed)
             self.main_sizer.Add(self.main_splitter, wx.SizerFlags(1).Expand().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 5))
 
@@ -4620,8 +5540,8 @@ class MainFrame(wx.Frame):
             self.right_sidebar_splitter = wx.SplitterWindow(
                 self.right_sidebar,
                 style=wx.SP_LIVE_UPDATE | wx.SP_3D | wx.SP_BORDER)
-            self.right_sidebar_splitter.SetMinimumPaneSize(MainFrame.CAPTURE_PANEL_MIN_HEIGHT)
-            self.right_sidebar_splitter.SetSashGravity(0.0)
+            self.right_sidebar_splitter.SetMinimumPaneSize(MainFrame.RIGHT_SIDEBAR_PANE_MIN_HEIGHT)
+            self.right_sidebar_splitter.SetSashGravity(0.5)
             self.right_sidebar_splitter.Bind(
                 wx.EVT_SPLITTER_SASH_POS_CHANGED, self.on_column_splitter_changed)
             self.right_sidebar_sizer.Add(self.right_sidebar_splitter, 1, wx.EXPAND)
@@ -4632,8 +5552,9 @@ class MainFrame(wx.Frame):
 
             self.postprocess_scroll = wx.ScrolledWindow(
                 self.right_sidebar_splitter,
-                style=wx.VSCROLL)
+                style=wx.SIMPLE_BORDER | wx.VSCROLL)
             self.postprocess_scroll.SetScrollRate(10, 10)
+            self.postprocess_scroll.EnableScrolling(False, True)
             self.postprocess_scroll.SetDoubleBuffered(True)
             self.postprocess_scroll.Bind(wx.EVT_SIZE, self.on_postprocess_scroll_size)
             self.postprocess_scroll_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -4646,13 +5567,18 @@ class MainFrame(wx.Frame):
                 self.right_sidebar_splitter.SplitHorizontally(
                     self.capture_panel,
                     self.postprocess_scroll,
-                    sashPosition=MainFrame.CAPTURE_PANEL_MIN_HEIGHT)
+                    sashPosition=MainFrame.compute_equal_halves_sash(
+                        max(MainFrame.CAPTURE_PANEL_MIN_HEIGHT * 2, self.right_sidebar_splitter.GetClientSize().y),
+                        self.right_sidebar_splitter.GetMinimumPaneSize()))
 
             if not self.main_splitter.IsSplit():
                 self.main_splitter.SplitVertically(
                     self.animation_panel,
                     self.right_sidebar,
-                    sashPosition=max(480, self.main_splitter.GetClientSize().x - MainFrame.CAPTURE_PANEL_MIN_WIDTH))
+                    sashPosition=MainFrame.compute_equal_thirds_main_sash(
+                        max(MainFrame.CONTROLS_MIN_CLIENT_WIDTH, self.main_splitter.GetClientSize().x),
+                        MainFrame.CONTROLS_TWO_COLUMN_MIN_WIDTH,
+                        MainFrame.RIGHT_SIDEBAR_MIN_WIDTH))
 
             self.main_sizer.Layout()
             self.refresh_model_loaded_ui_state()
@@ -4663,16 +5589,23 @@ class MainFrame(wx.Frame):
                 pass
             if hasattr(self, "webcam_capture_panel"):
                 self.webcam_capture_panel.Refresh(False)
-            wx.CallAfter(self.initialize_adjustable_columns)
         finally:
             self._controls_build_in_progress = False
 
     def create_capture_panel(self, parent):
         self.capture_panel = wx.Panel(parent, style=wx.RAISED_BORDER)
-        self.capture_panel_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.capture_panel_sizer = wx.BoxSizer(wx.VERTICAL)
         self.capture_panel.SetSizer(self.capture_panel_sizer)
         self.capture_panel.SetAutoLayout(1)
         self.capture_panel.SetDoubleBuffered(True)
+
+        preview_header = wx.StaticText(
+            self.capture_panel,
+            label="--- 预览区 / Preview (D 上) ---",
+            style=wx.ALIGN_CENTER)
+        self.capture_panel_sizer.Add(preview_header, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
+
+        previews_row = wx.BoxSizer(wx.HORIZONTAL)
 
         self.source_preview_column = wx.Panel(self.capture_panel)
         source_preview_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -4681,28 +5614,39 @@ class MainFrame(wx.Frame):
         self.source_preview_column.SetDoubleBuffered(True)
         # Keep source preview + FPS area stable to avoid panel squeezing.
         self.source_preview_column.SetMinSize(
-            wx.Size(MainFrame.SOURCE_PREVIEW_SIZE + 12, MainFrame.SOURCE_PREVIEW_SIZE + 78)
+            wx.Size(MainFrame.SOURCE_PREVIEW_SIZE + 12, MainFrame.SOURCE_PREVIEW_SIZE + 108)
         )
+
+        self.source_preview_caption_text = wx.StaticText(
+            self.source_preview_column,
+            label="立绘源预览 / Character source\n(加载后的静态立绘快照)",
+            style=wx.ALIGN_CENTER)
+        source_preview_sizer.Add(
+            self.source_preview_caption_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
 
         self.source_image_panel = wx.Panel(
             self.source_preview_column,
             size=(MainFrame.SOURCE_PREVIEW_SIZE, MainFrame.SOURCE_PREVIEW_SIZE),
             style=wx.SIMPLE_BORDER)
+        self.source_image_panel.SetBackgroundColour(MainFrame.PREVIEW_IDLE_BACKGROUND)
+        self.source_image_panel.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.source_image_panel.SetDoubleBuffered(True)
         self.source_image_panel.Bind(wx.EVT_PAINT, self.paint_source_image_panel)
         self.source_image_panel.Bind(wx.EVT_ERASE_BACKGROUND, self.on_erase_background)
+        self.source_image_panel.Bind(wx.EVT_SHOW, self.on_source_image_panel_show)
+        self.source_image_panel.Bind(wx.EVT_SIZE, self.on_source_image_panel_size)
         source_preview_sizer.Add(self.source_image_panel, wx.SizerFlags(0).FixedMinSize().Border(wx.ALL, 5))
 
         self.fps_text = wx.StaticText(
             self.source_preview_column,
-            label="输入 In --\n推理 Inf --\n显示 Out --")
+            label="帧率 / FPS\n输入 In --\n推理 Inf --\n显示 Out --")
         source_preview_sizer.Add(self.fps_text, wx.SizerFlags(0).Expand().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 5))
 
-        self.capture_panel_sizer.Add(self.source_preview_column, wx.SizerFlags(0).Border(wx.ALL, 5))
+        previews_row.Add(self.source_preview_column, wx.SizerFlags(0).Border(wx.ALL, 5))
 
         self.webcam_container = wx.Panel(
             self.capture_panel,
-            size=(MainFrame.WEBCAM_PREVIEW_WIDTH, MainFrame.WEBCAM_PREVIEW_HEIGHT))
+            size=(MainFrame.WEBCAM_PREVIEW_SIZE, MainFrame.WEBCAM_PREVIEW_SIZE + 48))
         webcam_container_sizer = wx.BoxSizer(wx.VERTICAL)
         self.webcam_container.SetSizer(webcam_container_sizer)
         self.webcam_container.SetAutoLayout(1)
@@ -4710,21 +5654,179 @@ class MainFrame(wx.Frame):
 
         self.webcam_capture_panel = wx.Panel(
             self.webcam_container,
-            size=(MainFrame.WEBCAM_PREVIEW_WIDTH, MainFrame.WEBCAM_PREVIEW_HEIGHT),
+            size=(MainFrame.WEBCAM_PREVIEW_SIZE, MainFrame.WEBCAM_PREVIEW_SIZE),
             style=wx.SIMPLE_BORDER)
+        self.webcam_capture_panel.SetMinSize(
+            wx.Size(MainFrame.WEBCAM_PREVIEW_SIZE, MainFrame.WEBCAM_PREVIEW_SIZE))
+        self.webcam_capture_panel.SetBackgroundColour(MainFrame.PREVIEW_IDLE_BACKGROUND)
+        self.webcam_capture_panel.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.webcam_capture_panel.SetDoubleBuffered(True)
         self.webcam_capture_panel.Bind(wx.EVT_PAINT, self.paint_webcam_capture_panel)
         self.webcam_capture_panel.Bind(wx.EVT_ERASE_BACKGROUND, self.on_erase_background)
+        self.webcam_capture_panel.Bind(wx.EVT_SHOW, self.on_webcam_capture_panel_show)
+        self.webcam_capture_panel.Bind(wx.EVT_SIZE, self.on_webcam_capture_panel_size)
         self.webcam_capture_panel.Bind(wx.EVT_LEFT_DCLICK, self.on_webcam_preview_double_click)
+
+        self.webcam_preview_caption_text = wx.StaticText(
+            self.webcam_container,
+            label="摄像头 / 窗口捕获预览 / Live capture\n(当前面捕输入画面，双击可放大)",
+            style=wx.ALIGN_CENTER)
+        webcam_container_sizer.Add(
+            self.webcam_preview_caption_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
         webcam_container_sizer.Add(self.webcam_capture_panel, wx.SizerFlags(0).FixedMinSize().Border(wx.ALL, 5))
-        self.capture_panel_sizer.Add(
+        previews_row.Add(
             self.webcam_container,
             wx.SizerFlags(0).FixedMinSize().Border(wx.ALL, 5))
+        self.create_preview_calibration_controls(self.capture_panel, previews_row)
+        self.capture_panel_sizer.Add(previews_row, 0, wx.EXPAND)
 
         self.rotation_labels = {}
         self.rotation_value_labels = {}
+        rotation_caption = wx.StaticText(
+            self.capture_panel,
+            label="头部旋转示值（只读）/ Head rotation readout",
+            style=wx.ALIGN_CENTER)
+        self.capture_panel_sizer.Add(rotation_caption, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
         rotation_column = self.create_rotation_column(self.capture_panel, HEAD_ROTATIONS)
         self.capture_panel_sizer.Add(rotation_column, wx.SizerFlags(0).Expand().Border(wx.ALL, 3))
+
+        self._invalidate_source_preview_cache()
+        self.update_source_image_bitmap(force=True)
+        MainFrame.fill_bitmap_solid(self.webcam_capture_bitmap, MainFrame.PREVIEW_IDLE_BACKGROUND)
+
+    def create_preview_calibration_controls(self, parent: wx.Panel, parent_sizer: wx.BoxSizer) -> None:
+        enable_direction_calibration = self.enable_direction_calibration_checkbox.GetValue()
+        direction_interval_seconds = self.auto_direction_calibration_interval_seconds_ctrl.GetValue()
+        enable_scale_calibration = self.enable_scale_calibration_checkbox.GetValue()
+        scale_interval_seconds = self.auto_scale_calibration_interval_seconds_ctrl.GetValue()
+
+        self.preview_calibration_column = wx.Panel(parent)
+        self.preview_calibration_column.SetAutoLayout(1)
+        self.preview_calibration_column.SetDoubleBuffered(True)
+        self.preview_calibration_column.SetMinSize(
+            wx.Size(MainFrame.PREVIEW_CALIBRATION_COLUMN_MIN_WIDTH, -1))
+        calibration_column_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.preview_calibration_column.SetSizer(calibration_column_sizer)
+
+        calibration_header = wx.StaticText(
+            self.preview_calibration_column,
+            label="--- 校准 / Calibration ---",
+            style=wx.ALIGN_CENTER)
+        calibration_column_sizer.Add(calibration_header, 0, wx.EXPAND | wx.BOTTOM, 4)
+
+        self.direction_calibration_panel = wx.Panel(self.preview_calibration_column)
+        direction_calibration_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.direction_calibration_panel.SetSizer(direction_calibration_sizer)
+        self.direction_calibration_panel.SetAutoLayout(1)
+
+        self.enable_direction_calibration_checkbox = wx.CheckBox(
+            self.direction_calibration_panel,
+            label="周期执行「我正看前方」/ Auto Calibrate Forward Gaze")
+        self.enable_direction_calibration_checkbox.SetValue(enable_direction_calibration)
+        self.enable_direction_calibration_checkbox.Bind(wx.EVT_CHECKBOX, self.on_display_transform_control_changed)
+        direction_calibration_sizer.Add(
+            self.enable_direction_calibration_checkbox,
+            0, wx.EXPAND | wx.BOTTOM, 4)
+
+        self.calibrate_neutral_button = wx.Button(
+            self.direction_calibration_panel,
+            label="标定朝向 / Calibrate Head Orientation")
+        self.calibrate_neutral_button.Bind(wx.EVT_BUTTON, self.calibrate_neutral_clicked)
+        direction_calibration_sizer.Add(
+            self.calibrate_neutral_button,
+            0, wx.EXPAND | wx.BOTTOM, 4)
+
+        self.direction_calibration_interval_panel = wx.Panel(self.direction_calibration_panel)
+        direction_calibration_interval_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.direction_calibration_interval_panel.SetSizer(direction_calibration_interval_sizer)
+        self.direction_calibration_interval_panel.SetAutoLayout(1)
+        direction_calibration_sizer.Add(self.direction_calibration_interval_panel, 0, wx.EXPAND)
+
+        calibration_column_sizer.Add(
+            self.direction_calibration_panel,
+            0, wx.EXPAND | wx.BOTTOM, 6)
+
+        direction_interval_label = wx.StaticText(
+            self.direction_calibration_interval_panel,
+            label=slider_label("朝向前方周期", "Forward Gaze Interval", "秒", "s"))
+        direction_calibration_interval_sizer.Add(
+            direction_interval_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+
+        self.auto_direction_calibration_interval_seconds_ctrl = wx.SpinCtrlDouble(
+            self.direction_calibration_interval_panel,
+            wx.ID_ANY,
+            min=1.0,
+            max=3600.0,
+            initial=direction_interval_seconds,
+            inc=1.0,
+            style=wx.SP_ARROW_KEYS)
+        self.auto_direction_calibration_interval_seconds_ctrl.SetDigits(0)
+        self.auto_direction_calibration_interval_seconds_ctrl.Bind(
+            wx.EVT_SPINCTRLDOUBLE, self.on_display_transform_control_changed)
+        self.auto_direction_calibration_interval_seconds_ctrl.Bind(
+            wx.EVT_TEXT, self.on_display_transform_control_changed)
+        direction_calibration_interval_sizer.Add(
+            self.auto_direction_calibration_interval_seconds_ctrl,
+            0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+
+        self.scale_calibration_panel = wx.Panel(self.preview_calibration_column)
+        scale_calibration_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.scale_calibration_panel.SetSizer(scale_calibration_sizer)
+        self.scale_calibration_panel.SetAutoLayout(1)
+
+        self.enable_scale_calibration_checkbox = wx.CheckBox(
+            self.scale_calibration_panel,
+            label="启用输出动态增强自动校准 / Enable Auto Output Dynamic Enhancement Calibration")
+        self.enable_scale_calibration_checkbox.SetValue(enable_scale_calibration)
+        self.enable_scale_calibration_checkbox.Bind(wx.EVT_CHECKBOX, self.on_display_transform_control_changed)
+        scale_calibration_sizer.Add(
+            self.enable_scale_calibration_checkbox,
+            0, wx.EXPAND | wx.BOTTOM, 4)
+
+        self.calibrate_scale_button = wx.Button(
+            self.scale_calibration_panel,
+            label="输出动态增强校准 / Output Dynamic Enhancement Calibration")
+        self.calibrate_scale_button.Bind(wx.EVT_BUTTON, self.calibrate_scale_clicked)
+        scale_calibration_sizer.Add(
+            self.calibrate_scale_button,
+            0, wx.EXPAND | wx.BOTTOM, 4)
+
+        self.scale_calibration_interval_panel = wx.Panel(self.scale_calibration_panel)
+        scale_calibration_interval_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.scale_calibration_interval_panel.SetSizer(scale_calibration_interval_sizer)
+        self.scale_calibration_interval_panel.SetAutoLayout(1)
+        scale_calibration_sizer.Add(self.scale_calibration_interval_panel, 0, wx.EXPAND)
+
+        calibration_column_sizer.Add(self.scale_calibration_panel, 0, wx.EXPAND)
+
+        scale_interval_label = wx.StaticText(
+            self.scale_calibration_interval_panel,
+            label=slider_label("增强校准周期", "Enhancement Interval", "秒", "s"))
+        scale_calibration_interval_sizer.Add(
+            scale_interval_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+
+        self.auto_scale_calibration_interval_seconds_ctrl = wx.SpinCtrlDouble(
+            self.scale_calibration_interval_panel,
+            wx.ID_ANY,
+            min=1.0,
+            max=3600.0,
+            initial=scale_interval_seconds,
+            inc=1.0,
+            style=wx.SP_ARROW_KEYS)
+        self.auto_scale_calibration_interval_seconds_ctrl.SetDigits(0)
+        self.auto_scale_calibration_interval_seconds_ctrl.Bind(
+            wx.EVT_SPINCTRLDOUBLE, self.on_display_transform_control_changed)
+        self.auto_scale_calibration_interval_seconds_ctrl.Bind(
+            wx.EVT_TEXT, self.on_display_transform_control_changed)
+        scale_calibration_interval_sizer.Add(
+            self.auto_scale_calibration_interval_seconds_ctrl,
+            0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+
+        parent_sizer.Add(
+            self.preview_calibration_column,
+            wx.SizerFlags(1).Expand().Border(wx.ALL, 5))
+
+        self.on_display_transform_control_changed()
 
     def _init_video_source_choices_with_window(self):
         if self.video_source_choice is None:
@@ -5264,8 +6366,7 @@ class MainFrame(wx.Frame):
 
     def update_video_source_status_text(self, message: str):
         if self.video_source_status_text is not None:
-            self.video_source_status_text.SetLabel(message)
-            self.video_source_status_text.Wrap(MainFrame.VIDEO_SOURCE_COLUMN_MIN_WIDTH - 20)
+            self.set_wrapped_static_text_if_changed(self.video_source_status_text, message)
 
     def update_last_window_capture_text(self):
         if self.last_window_capture_text is None:
@@ -5275,8 +6376,7 @@ class MainFrame(wx.Frame):
             text = f"上次窗口捕获: {title}\nLast window capture: {title}"
         else:
             text = "上次窗口捕获: 未设置\nLast window capture: (none)"
-        self.last_window_capture_text.SetLabel(text)
-        self.last_window_capture_text.Wrap(MainFrame.VIDEO_SOURCE_COLUMN_MIN_WIDTH - 20)
+        self.set_wrapped_static_text_if_changed(self.last_window_capture_text, text)
 
     def _reset_mediapipe_video_timestamp(self) -> None:
         self._mediapipe_video_timestamp_ms = None
@@ -5416,29 +6516,66 @@ class MainFrame(wx.Frame):
             interval_ms = max(interval_ms, 66)
         return (time_now - self._last_mediapipe_process_time) >= (interval_ms / 1000.0)
 
+    @classmethod
+    def fill_bitmap_solid(cls, bitmap: wx.Bitmap, colour: wx.Colour) -> None:
+        if not bitmap.IsOk():
+            return
+        dc = wx.MemoryDC()
+        dc.SelectObject(bitmap)
+        dc.SetBackground(wx.Brush(colour))
+        dc.Clear()
+        del dc
+
+    def refresh_preview_placeholders(self) -> None:
+        if hasattr(self, "source_image_bitmap"):
+            self._invalidate_source_preview_cache()
+            self.update_source_image_bitmap(force=True)
+        if hasattr(self, "webcam_capture_bitmap"):
+            MainFrame.fill_bitmap_solid(self.webcam_capture_bitmap, MainFrame.PREVIEW_IDLE_BACKGROUND)
+            if hasattr(self, "webcam_capture_panel"):
+                self.webcam_capture_panel.Refresh(False)
+
     def draw_capture_status_message(self, message: str):
         if not self.is_capture_preview_visible():
             return
-        dc = wx.MemoryDC()
-        dc.SelectObject(self.webcam_capture_bitmap)
-        self.draw_nothing_yet_string(dc, message)
-        del dc
+        MainFrame.fill_bitmap_solid(self.webcam_capture_bitmap, MainFrame.PREVIEW_IDLE_BACKGROUND)
         if hasattr(self, "webcam_capture_panel"):
             self.webcam_capture_panel.Refresh(False)
 
+    def _webcam_preview_target_size(self) -> wx.Size:
+        panel = getattr(self, "webcam_capture_panel", None)
+        if panel is not None:
+            client = panel.GetClientSize()
+            if client.x > 0 and client.y > 0:
+                side = min(client.x, client.y)
+                return wx.Size(side, side)
+        return wx.Size(MainFrame.WEBCAM_PREVIEW_SIZE, MainFrame.WEBCAM_PREVIEW_SIZE)
+
+    def _ensure_webcam_capture_bitmap_size(self) -> int:
+        target = self._webcam_preview_target_size()
+        side = max(1, target.x)
+        if (
+                not getattr(self, "webcam_capture_bitmap", None)
+                or not self.webcam_capture_bitmap.IsOk()
+                or self.webcam_capture_bitmap.GetWidth() != side
+                or self.webcam_capture_bitmap.GetHeight() != side):
+            self.webcam_capture_bitmap = wx.Bitmap(side, side)
+            MainFrame.fill_bitmap_solid(self.webcam_capture_bitmap, MainFrame.PREVIEW_IDLE_BACKGROUND)
+        return side
+
     def update_capture_preview_bitmap(self, bgr_frame):
-        preview_w = MainFrame.WEBCAM_PREVIEW_WIDTH
-        preview_h = MainFrame.WEBCAM_PREVIEW_HEIGHT
+        preview_side = self._ensure_webcam_capture_bitmap_size()
         wx_bitmap = self.bgr_frame_to_preview_bitmap(
             bgr_frame,
-            preview_w,
-            preview_h,
+            preview_side,
+            preview_side,
             mirror=self.should_mirror_capture_preview())
-        dc = wx.MemoryDC()
-        dc.SelectObject(self.webcam_capture_bitmap)
-        dc.Clear()
-        dc.DrawBitmap(wx_bitmap, 0, 0, True)
-        del dc
+        if wx_bitmap.IsOk():
+            MainFrame.fill_bitmap_solid(self.webcam_capture_bitmap, MainFrame.PREVIEW_IDLE_BACKGROUND)
+            dc = wx.MemoryDC()
+            dc.SelectObject(self.webcam_capture_bitmap)
+            dc.DrawBitmap(wx_bitmap, 0, 0, True)
+            del dc
 
         if self.is_webcam_popup_visible():
             self.webcam_preview_popup_frame.preview_panel.Refresh(False)
@@ -5733,20 +6870,37 @@ class MainFrame(wx.Frame):
                                     preview_width: int,
                                     preview_height: int,
                                     mirror: bool = True) -> wx.Bitmap:
+        """Scale frame to fit inside preview box; letterbox with black when aspect differs."""
         bgr_frame = self.normalize_bgr_frame(bgr_frame)
         if bgr_frame is None:
             return self.webcam_capture_bitmap
 
+        preview_width = max(1, int(preview_width))
+        preview_height = max(1, int(preview_height))
         rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
         if mirror:
             rgb_frame = cv2.flip(rgb_frame, 1)
+        frame_h, frame_w = rgb_frame.shape[:2]
+        if frame_w <= 0 or frame_h <= 0:
+            return self.webcam_capture_bitmap
+
+        scale = min(preview_width / frame_w, preview_height / frame_h)
+        scaled_w = max(1, int(round(frame_w * scale)))
+        scaled_h = max(1, int(round(frame_h * scale)))
         resized_frame = cv2.resize(
             rgb_frame,
-            (preview_width, preview_height),
+            (scaled_w, scaled_h),
             interpolation=cv2.INTER_AREA)
-        resized_frame = numpy.ascontiguousarray(resized_frame, dtype=numpy.uint8)
+        if scaled_w == preview_width and scaled_h == preview_height:
+            output_frame = resized_frame
+        else:
+            output_frame = numpy.zeros((preview_height, preview_width, 3), dtype=numpy.uint8)
+            offset_x = (preview_width - scaled_w) // 2
+            offset_y = (preview_height - scaled_h) // 2
+            output_frame[offset_y:offset_y + scaled_h, offset_x:offset_x + scaled_w] = resized_frame
+        output_frame = numpy.ascontiguousarray(output_frame, dtype=numpy.uint8)
         wx_image = wx.Image(preview_width, preview_height)
-        wx_image.SetData(resized_frame.tobytes())
+        wx_image.SetData(output_frame.tobytes())
         return wx_image.ConvertToBitmap()
 
     def create_postprocess_panel(self, parent):
@@ -5756,10 +6910,6 @@ class MainFrame(wx.Frame):
         self.postprocess_panel.SetAutoLayout(1)
         self.postprocess_panel.SetDoubleBuffered(True)
 
-        enable_direction_calibration = self.enable_direction_calibration_checkbox.GetValue()
-        direction_interval_seconds = self.auto_direction_calibration_interval_seconds_ctrl.GetValue()
-        enable_scale_calibration = self.enable_scale_calibration_checkbox.GetValue()
-        scale_interval_seconds = self.auto_scale_calibration_interval_seconds_ctrl.GetValue()
         output_background_hex = self.get_output_background_hex()
         output_background_mode = self.get_output_background_mode()
         if not self.get_output_background_image_path():
@@ -5792,7 +6942,7 @@ class MainFrame(wx.Frame):
         smooth_affine_30hz = bool(self.persistent_ui_state.get("smooth_affine_30hz", True))
 
         postprocess_text = wx.StaticText(
-            self.postprocess_panel, label="--- 后处理和其他 / Postprocess & Other ---", style=wx.ALIGN_CENTER)
+            self.postprocess_panel, label="--- 后处理和其他 / Postprocess & Other (D 下) ---", style=wx.ALIGN_CENTER)
         self.postprocess_panel_sizer.Add(postprocess_text, 0, wx.EXPAND)
 
         self.tha3_variant_panel = wx.Panel(self.postprocess_panel)
@@ -5823,102 +6973,6 @@ class MainFrame(wx.Frame):
         self.postprocess_panel_sizer.Add(
             self.tha3_variant_panel,
             wx.SizerFlags().Expand().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
-
-        self.direction_calibration_panel = wx.Panel(self.postprocess_panel)
-        direction_calibration_sizer = wx.BoxSizer(wx.VERTICAL)
-        self.direction_calibration_panel.SetSizer(direction_calibration_sizer)
-        self.direction_calibration_panel.SetAutoLayout(1)
-
-        self.enable_direction_calibration_checkbox = wx.CheckBox(
-            self.direction_calibration_panel,
-            label="周期执行「我正看前方」/ Auto Calibrate Forward Gaze")
-        self.enable_direction_calibration_checkbox.SetValue(enable_direction_calibration)
-        self.enable_direction_calibration_checkbox.Bind(wx.EVT_CHECKBOX, self.on_display_transform_control_changed)
-        direction_calibration_sizer.Add(
-            self.enable_direction_calibration_checkbox,
-            0, wx.EXPAND | wx.BOTTOM, 4)
-
-        self.calibrate_neutral_button = wx.Button(
-            self.direction_calibration_panel,
-            label="标定朝向 / Calibrate Head Orientation")
-        self.calibrate_neutral_button.Bind(wx.EVT_BUTTON, self.calibrate_neutral_clicked)
-        direction_calibration_sizer.Add(
-            self.calibrate_neutral_button,
-            0, wx.EXPAND | wx.BOTTOM, 4)
-
-        self.direction_calibration_interval_panel = wx.Panel(self.direction_calibration_panel)
-        direction_calibration_interval_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        self.direction_calibration_interval_panel.SetSizer(direction_calibration_interval_sizer)
-        self.direction_calibration_interval_panel.SetAutoLayout(1)
-        direction_calibration_sizer.Add(self.direction_calibration_interval_panel, 0, wx.EXPAND)
-
-        self.postprocess_panel_sizer.Add(
-            self.direction_calibration_panel,
-            wx.SizerFlags().Expand().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
-
-        direction_interval_label = wx.StaticText(
-            self.direction_calibration_interval_panel,
-            label=slider_label("朝向前方周期", "Forward Gaze Interval", "秒", "s"))
-        direction_calibration_interval_sizer.Add(
-            direction_interval_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-
-        self.auto_direction_calibration_interval_seconds_ctrl = wx.SpinCtrlDouble(
-            self.direction_calibration_interval_panel,
-            wx.ID_ANY,
-            min=1.0,
-            max=3600.0,
-            initial=direction_interval_seconds,
-            inc=1.0,
-            style=wx.SP_ARROW_KEYS)
-        self.auto_direction_calibration_interval_seconds_ctrl.SetDigits(0)
-        self.auto_direction_calibration_interval_seconds_ctrl.Bind(wx.EVT_SPINCTRLDOUBLE, self.on_display_transform_control_changed)
-        self.auto_direction_calibration_interval_seconds_ctrl.Bind(wx.EVT_TEXT, self.on_display_transform_control_changed)
-        direction_calibration_interval_sizer.Add(
-            self.auto_direction_calibration_interval_seconds_ctrl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-
-        self.enable_scale_calibration_checkbox = wx.CheckBox(
-            self.postprocess_panel,
-            label="启用输出动态增强自动校准 / Enable Auto Output Dynamic Enhancement Calibration")
-        self.enable_scale_calibration_checkbox.SetValue(enable_scale_calibration)
-        self.enable_scale_calibration_checkbox.Bind(wx.EVT_CHECKBOX, self.on_display_transform_control_changed)
-        self.postprocess_panel_sizer.Add(
-            self.enable_scale_calibration_checkbox,
-            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
-
-        self.calibrate_scale_button = wx.Button(
-            self.postprocess_panel,
-            label="输出动态增强校准 / Output Dynamic Enhancement Calibration")
-        self.calibrate_scale_button.Bind(wx.EVT_BUTTON, self.calibrate_scale_clicked)
-        self.postprocess_panel_sizer.Add(
-            self.calibrate_scale_button,
-            wx.SizerFlags().Expand().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
-
-        self.scale_calibration_interval_panel = wx.Panel(self.postprocess_panel)
-        scale_calibration_interval_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        self.scale_calibration_interval_panel.SetSizer(scale_calibration_interval_sizer)
-        self.scale_calibration_interval_panel.SetAutoLayout(1)
-        self.postprocess_panel_sizer.Add(self.scale_calibration_interval_panel,
-                                         wx.SizerFlags().Expand().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
-
-        scale_interval_label = wx.StaticText(
-            self.scale_calibration_interval_panel,
-            label=slider_label("增强校准周期", "Enhancement Interval", "秒", "s"))
-        scale_calibration_interval_sizer.Add(
-            scale_interval_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-
-        self.auto_scale_calibration_interval_seconds_ctrl = wx.SpinCtrlDouble(
-            self.scale_calibration_interval_panel,
-            wx.ID_ANY,
-            min=1.0,
-            max=3600.0,
-            initial=scale_interval_seconds,
-            inc=1.0,
-            style=wx.SP_ARROW_KEYS)
-        self.auto_scale_calibration_interval_seconds_ctrl.SetDigits(0)
-        self.auto_scale_calibration_interval_seconds_ctrl.Bind(wx.EVT_SPINCTRLDOUBLE, self.on_display_transform_control_changed)
-        self.auto_scale_calibration_interval_seconds_ctrl.Bind(wx.EVT_TEXT, self.on_display_transform_control_changed)
-        scale_calibration_interval_sizer.Add(
-            self.auto_scale_calibration_interval_seconds_ctrl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
 
         background_label = wx.StaticText(self.postprocess_panel, label="背景 / Background")
         self.postprocess_panel_sizer.Add(background_label, wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
@@ -6240,8 +7294,41 @@ class MainFrame(wx.Frame):
         wx.CallAfter(self.refresh_image_source_ui_visibility)
         wx.CallAfter(self.schedule_postprocess_layout_refresh)
 
-    def paint_webcam_capture_panel(self, event: wx.Event):
-        wx.BufferedPaintDC(self.webcam_capture_panel, self.webcam_capture_bitmap)
+    def on_webcam_capture_panel_show(self, event: wx.ShowEvent) -> None:
+        if event.IsShown():
+            self._ensure_webcam_capture_bitmap_size()
+            self.webcam_capture_panel.Refresh(False)
+        event.Skip()
+
+    def on_webcam_capture_panel_size(self, event: wx.SizeEvent) -> None:
+        self._ensure_webcam_capture_bitmap_size()
+        self.webcam_capture_panel.Refresh(False)
+        event.Skip()
+
+    def paint_webcam_capture_panel(self, event: wx.Event) -> None:
+        panel = self.webcam_capture_panel
+        client = panel.GetClientSize()
+        if client.x <= 0 or client.y <= 0:
+            return
+        dc = wx.BufferedPaintDC(panel)
+        dc.SetBackground(wx.Brush(MainFrame.PREVIEW_IDLE_BACKGROUND))
+        dc.SetBackgroundMode(wx.SOLID)
+        dc.Clear()
+        bitmap = getattr(self, "webcam_capture_bitmap", None)
+        if bitmap is None or not bitmap.IsOk():
+            return
+        viewport_side = min(client.x, client.y)
+        bitmap_side = min(bitmap.GetWidth(), bitmap.GetHeight())
+        if bitmap_side <= 0:
+            return
+        draw_x = (client.x - viewport_side) // 2
+        draw_y = (client.y - viewport_side) // 2
+        if viewport_side == bitmap_side:
+            dc.DrawBitmap(bitmap, draw_x, draw_y, True)
+        else:
+            scaled = bitmap.ConvertToImage().Scale(
+                viewport_side, viewport_side, wx.IMAGE_QUALITY_HIGH).ConvertToBitmap()
+            dc.DrawBitmap(scaled, draw_x, draw_y, True)
 
     def create_rotation_column(self, parent, rotation_names):
         column_panel = wx.Panel(parent, style=wx.SIMPLE_BORDER)
@@ -6304,8 +7391,6 @@ class MainFrame(wx.Frame):
 
     def show_full_controls_window(self):
         show_start_time = time.time()
-        if not self._restoring_window_geometry:
-            self.save_persistent_ui_state()
         self.reload_persistent_ui_state_from_disk()
         self.apply_mouth_persistent_state_to_args()
         self.apply_persistent_slider_value_states()
@@ -6318,9 +7403,7 @@ class MainFrame(wx.Frame):
         self.refresh_output_frame_chrome()
         if getattr(self, "output_frame", None) is not None:
             self.output_frame.result_image_panel.Refresh(False)
-        wx.CallAfter(self.initialize_adjustable_columns)
-        wx.CallAfter(lambda: self.adapt_main_window_to_controls(initial=not self._controls_geometry_restored))
-        self.schedule_refresh_controls_scrolling()
+        wx.CallAfter(self._post_show_controls_setup)
 
     def show_compact_launcher(self):
         if not self._restoring_window_geometry:
@@ -6364,6 +7447,23 @@ class MainFrame(wx.Frame):
         event.Skip()
 
     def calibrate_scale_clicked(self, event: wx.Event):
+        if self.is_mouse_audio_mocap_mode():
+            if self.calibrate_mouse_dynamic_enhancement(
+                    self._last_mouse_mocap_nx, self._last_mouse_mocap_ny):
+                self.refresh_scale_curve_status()
+                self.request_scale_curve_repaint(force=True)
+                self.update_display_transform_state(
+                    snap_to_target=not self.enable_auto_transform_checkbox.GetValue())
+                self.refresh_auto_transform_status(
+                    "READY" if self.enable_auto_transform_checkbox.GetValue() else "OFF")
+                if self.last_output_wx_image is not None:
+                    self.draw_cached_result_image(self.last_banner_text)
+                self.save_persistent_ui_state()
+            else:
+                self.refresh_auto_transform_status("NO FACE")
+            event.Skip()
+            return
+
         if self.latest_face_screen_motion is None:
             self.refresh_auto_transform_status("NO FACE")
             event.Skip()
@@ -7052,8 +8152,41 @@ class MainFrame(wx.Frame):
     def convert_to_100(x):
         return int(max(0.0, min(1.0, x)) * 100)
 
-    def paint_source_image_panel(self, event: wx.Event):
-        wx.BufferedPaintDC(self.source_image_panel, self.source_image_bitmap)
+    def _source_preview_target_size(self) -> wx.Size:
+        panel = getattr(self, "source_image_panel", None)
+        if panel is not None:
+            client = panel.GetClientSize()
+            if client.x > 0 and client.y > 0:
+                return client
+        return wx.Size(MainFrame.SOURCE_PREVIEW_SIZE, MainFrame.SOURCE_PREVIEW_SIZE)
+
+    def on_source_image_panel_show(self, event: wx.ShowEvent) -> None:
+        if event.IsShown():
+            wx.CallAfter(self.update_source_image_bitmap, True)
+        event.Skip()
+
+    def on_source_image_panel_size(self, event: wx.SizeEvent) -> None:
+        wx.CallAfter(self.update_source_image_bitmap, True)
+        event.Skip()
+
+    def paint_source_image_panel(self, event: wx.Event) -> None:
+        panel = self.source_image_panel
+        client = panel.GetClientSize()
+        if client.x <= 0 or client.y <= 0:
+            return
+        dc = wx.BufferedPaintDC(panel)
+        dc.SetBackground(wx.Brush(MainFrame.PREVIEW_IDLE_BACKGROUND))
+        dc.SetBackgroundMode(wx.SOLID)
+        dc.Clear()
+        if self.wx_source_image is None:
+            return
+        bitmap = getattr(self, "source_image_bitmap", None)
+        if bitmap is None or not bitmap.IsOk():
+            return
+        if bitmap.GetWidth() != client.x or bitmap.GetHeight() != client.y:
+            wx.CallAfter(self.update_source_image_bitmap, True)
+            return
+        dc.DrawBitmap(bitmap, 0, 0, True)
 
     def _invalidate_source_preview_cache(self) -> None:
         self._source_preview_cache_key = None
@@ -7062,13 +8195,16 @@ class MainFrame(wx.Frame):
 
     def update_source_image_bitmap(self, *, force: bool = False) -> None:
         """立绘预览：仅显示默认立绘静态图；加载成功后绘制一次并缓存。"""
-        if hasattr(self, "source_image_panel"):
-            source_panel_size = self.source_image_panel.GetClientSize()
-            width = max(1, source_panel_size.x)
-            height = max(1, source_panel_size.y)
-            if self.source_image_bitmap.GetWidth() != width or self.source_image_bitmap.GetHeight() != height:
-                self.source_image_bitmap = wx.Bitmap(width, height)
-                force = True
+        target = self._source_preview_target_size()
+        width = max(1, target.x)
+        height = max(1, target.y)
+        if (
+                not getattr(self, "source_image_bitmap", None)
+                or not self.source_image_bitmap.IsOk()
+                or self.source_image_bitmap.GetWidth() != width
+                or self.source_image_bitmap.GetHeight() != height):
+            self.source_image_bitmap = wx.Bitmap(width, height)
+            force = True
         preview_width = self.source_image_bitmap.GetWidth()
         preview_height = self.source_image_bitmap.GetHeight()
         cache_key = (id(self.wx_source_image), preview_width, preview_height)
@@ -7076,11 +8212,11 @@ class MainFrame(wx.Frame):
             if hasattr(self, "source_image_panel"):
                 self.source_image_panel.Refresh(False)
             return
-        dc = wx.MemoryDC()
-        dc.SelectObject(self.source_image_bitmap)
         if self.wx_source_image is None:
-            self.draw_nothing_yet_string(dc)
+            MainFrame.fill_bitmap_solid(self.source_image_bitmap, MainFrame.PREVIEW_IDLE_BACKGROUND)
         else:
+            dc = wx.MemoryDC()
+            dc.SelectObject(self.source_image_bitmap)
             dc.Clear()
             scaled_key = getattr(self, "_source_preview_scaled_key", None)
             if scaled_key != cache_key or not getattr(self, "_source_preview_scaled_bitmap", None):
@@ -7094,7 +8230,7 @@ class MainFrame(wx.Frame):
                 self._source_preview_scaled_bitmap = draw_bitmap
                 self._source_preview_scaled_key = cache_key
             dc.DrawBitmap(self._source_preview_scaled_bitmap, 0, 0, True)
-        del dc
+            del dc
         self._source_preview_cache_key = cache_key
         if hasattr(self, "source_image_panel"):
             self.source_image_panel.Refresh(False)

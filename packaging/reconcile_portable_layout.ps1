@@ -27,7 +27,6 @@ function Ensure-Tha3PythonPackageLink {
     $src = Join-Path $PortableRoot "deps\tha3\tha3_src"
     $link = Join-Path $PortableRoot "deps\tha3\tha3"
     if (-not (Test-Path $src)) { return }
-    if (Test-Path $link) { return }
     Ensure-JunctionLink -LinkPath $link -TargetPath $src | Out-Null
 }
 

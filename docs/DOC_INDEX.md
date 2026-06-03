@@ -1,8 +1,8 @@
 ﻿# EasyVtuberStudio — 文档总索引
 
 > **软件名称：** **EasyVtuberStudio**（主程序 `EasyVtuberStudio.exe`）  
-> **发布总库** `E:\tha4fork` 根目录仅保留 `README.md` + `EasyVtuberStudio.exe` + 文件夹；说明文档集中在 `docs/`。  
-> 研发主仓 `E:\tha4fork-develop` 代码可能领先；稳定后 `scripts\maint\sync_develop_to_fork.ps1` 合并到 fork 再 push。
+> **发布总库** `E:\easyvtuberstudio-main` 根目录仅保留 `README.md` + `EasyVtuberStudio.exe` + 文件夹；说明文档集中在 `docs/`。  
+> 研发主仓 `E:\easyvtuberstudio-develop` 代码可能领先；稳定后 `scripts\maint\sync_develop_to_fork.ps1` 合并到 fork 再 push。
 
 ---
 

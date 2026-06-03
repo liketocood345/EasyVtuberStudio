@@ -1,5 +1,5 @@
-# Sync tha4fork-develop -> tha4fork (code, docs, packaging, scripts).
-# Preserves fork .git; skips local-only heavy state (venv, runtime, addons payloads, workspace).
+# Sync easyvtuberstudio-develop -> easyvtuberstudio-main (code, docs, packaging, scripts).
+# Preserves main .git; skips local-only heavy state (venv, runtime, addons payloads, workspace).
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\maint\sync_develop_to_fork.ps1
 
@@ -9,16 +9,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if (-not $DevRoot) {
-    $DevRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-} else {
-    $DevRoot = (Resolve-Path $DevRoot).Path
-}
-if (-not $ForkRoot) {
-    $ForkRoot = (Resolve-Path (Join-Path $DevRoot "..\tha4fork")).Path
-} else {
-    $ForkRoot = (Resolve-Path $ForkRoot).Path
-}
+. (Join-Path $PSScriptRoot "repo_paths.ps1")
+$roots = Resolve-DevelopForkRoots -DevRoot $DevRoot -ForkRoot $ForkRoot
+$DevRoot = $roots.DevRoot
+$ForkRoot = $roots.ForkRoot
 
 if (-not (Test-Path (Join-Path $ForkRoot ".git"))) {
     throw "Fork git repo not found: $ForkRoot"

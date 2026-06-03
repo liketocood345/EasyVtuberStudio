@@ -8,26 +8,21 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "repo_paths.ps1")
 $here = (Resolve-Path $PSScriptRoot).Path
 $repoFromScript = (Resolve-Path (Join-Path $here "..\..")).Path
+$repoLeaf = Split-Path $repoFromScript -Leaf
 
 if (-not $DevRoot -and -not $ForkRoot) {
-    if ((Split-Path $repoFromScript -Leaf) -eq "tha4fork") {
+    if ($repoLeaf -in $script:ForkDirCandidates) {
         $ForkRoot = $repoFromScript
-        $DevRoot = Join-Path (Split-Path $ForkRoot -Parent) "tha4fork-develop"
     } else {
         $DevRoot = $repoFromScript
-        $ForkRoot = Join-Path (Split-Path $DevRoot -Parent) "tha4fork"
     }
 }
-if (-not $DevRoot) {
-    $DevRoot = (Resolve-Path (Join-Path $ForkRoot "..\tha4fork-develop")).Path
-}
-if (-not $ForkRoot) {
-    $ForkRoot = (Resolve-Path (Join-Path $DevRoot "..\tha4fork")).Path
-}
-$DevRoot = (Resolve-Path $DevRoot).Path
-$ForkRoot = (Resolve-Path $ForkRoot).Path
+$roots = Resolve-DevelopForkRoots -DevRoot $DevRoot -ForkRoot $ForkRoot
+$DevRoot = $roots.DevRoot
+$ForkRoot = $roots.ForkRoot
 
 Write-Host ""
 Write-Host "=== Reconcile both repos ==="

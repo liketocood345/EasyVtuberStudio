@@ -1,7 +1,7 @@
 ﻿# EasyVtuberStudio — 排障与常见误解 Q&A / Troubleshooting FAQ
 
 基于 EasyVtuberStudio 面捕增强版、camfix 隔离测试与排障经历整理。  
-**文档权威副本（本文件）：** `E:\tha4fork\` · **活跃代码开发：** `E:\tha4fork-develop\`（稳定后合并到 fork 再 push）。
+**文档权威副本（本文件）：** `E:\easyvtuberstudio-main\` · **活跃代码开发：** `E:\easyvtuberstudio-develop\`（稳定后合并到 fork 再 push）。
 
 相关文档：[HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md) · [BACKUP.md](BACKUP.md) · [CHANGELOG.md](CHANGELOG.md) · [DOC_INDEX.md](DOC_INDEX.md)
 
@@ -25,8 +25,8 @@
 
 | 常见目标 | 含义 |
 |----------|------|
-| `E:\tha4fork\scripts\launch\run_load_preview_puppeteer.bat` 或根目录 **EasyVtuberStudio.exe** | **发布总库**（定制客户部署、GitHub 推送） |
-| `E:\tha4fork-develop\scripts\launch\run_load_preview_puppeteer.bat` | **研发主仓**（日常改代码） |
+| `E:\easyvtuberstudio-main\scripts\launch\run_load_preview_puppeteer.bat` 或根目录 **EasyVtuberStudio.exe** | **发布总库**（定制客户部署、GitHub 推送） |
+| `E:\easyvtuberstudio-develop\scripts\launch\run_load_preview_puppeteer.bat` | **研发主仓**（日常改代码） |
 
 两者脚本路径、`PYTHONPATH` 不同，**不要混用**后抱怨「改了代码没生效」。~~`E:\THA4_bundle_bai_custom`~~ 已废弃。
 
@@ -34,7 +34,7 @@
 
 ### Q2：我改了 fork 里的代码，为什么运行 develop 没变化（或反过来）？
 
-**A：** fork 与 develop 是两套目录。日常开发在 **`E:\tha4fork-develop`**；稳定后手动合并到 **`E:\tha4fork`** 再 push。只改其中一侧不会自动同步到另一侧。
+**A：** fork 与 develop 是两套目录。日常开发在 **`E:\easyvtuberstudio-develop`**；稳定后手动合并到 **`E:\easyvtuberstudio-main`** 再 push。只改其中一侧不会自动同步到另一侧。
 
 ---
 
@@ -42,8 +42,8 @@
 
 **A：** 看 bat 里 `LOG_FILE`。常见位置：
 
-- **fork：** `E:\tha4fork\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\run_load_preview_runtime.log`
-- **develop：** `E:\tha4fork-develop\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\run_load_preview_runtime.log`
+- **fork：** `E:\easyvtuberstudio-main\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\run_load_preview_runtime.log`
+- **develop：** `E:\easyvtuberstudio-develop\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\run_load_preview_runtime.log`
 
 先查 **CUDA / 模型路径 / MediaPipe .task 是否存在**。
 
@@ -269,7 +269,7 @@
 
 ### Q14：「加载上次模型」无效或弹路径失效？
 
-**A：** 路径记在 `load_preview_ui_state.json`（与脚本同目录）。移动/删除模型包后会提示重选，**属正常**。用「加载其他模型」重新指定 `character_model.yaml`。
+**A：** 路径记在 `workspace/load_preview_ui_state.json`（首选；旧版可能在 `experiments/puppeteer_load_preview/` 下）。移动/删除模型包后会提示重选，**属正常**。用「加载其他模型」重新指定 `character_model.yaml`。
 
 ---
 
@@ -330,7 +330,7 @@
 
 ### Q22：滑块数值重启后没了，但开关还在？
 
-**A：** 当前版本会记忆滑块：动态输出/后处理写入 `display_transform_settings`，模型输入栏（呼吸、嘴部、转换参数、虹膜等）写入 `mouth_settings`。若仍丢失，确认已正常退出程序（触发保存），且 `experiments/puppeteer_load_preview/load_preview_ui_state.json` 可写、未被旧版覆盖。
+**A：** 当前版本会记忆滑块：动态输出/后处理写入 `display_transform_settings`，模型输入栏（呼吸、嘴部、转换参数、虹膜等）写入 `mouth_settings`；三栏分割条比例写入 `main_splitter_sash_ratio` 等。若仍丢失，确认已正常退出程序（触发保存），且 `workspace/load_preview_ui_state.json` 可写、未被旧版覆盖。
 
 ---
 
@@ -429,13 +429,13 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 
 ### Q35：fork 和 develop 哪个是「正版」？
 
-**A：** **`E:\tha4fork-develop` = 活跃研发**；**`E:\tha4fork` = 对外发布总库**。Markdown 说明以 **fork 的 `docs/`** 为准（本文件、[HANDOVER.md](HANDOVER.md)、[DOC_INDEX.md](DOC_INDEX.md)）；代码以你实际运行的 exe/bat 为准。
+**A：** **`E:\easyvtuberstudio-develop` = 活跃研发**；**`E:\easyvtuberstudio-main` = 对外发布总库**。Markdown 说明以 **fork 的 `docs/`** 为准（本文件、[HANDOVER.md](HANDOVER.md)、[DOC_INDEX.md](DOC_INDEX.md)）；代码以你实际运行的 exe/bat 为准。
 
 ---
 
 ### Q36：如何备份 fork 代码包当前版本？
 
-**A：** 见 [BACKUP.md](BACKUP.md)：在 `face-puppeteer-ui-enhancements-ai-code\` 运行 `archive_to_his.ps1`，内容移入 `his/yyyy-MM-dd_HH-mm-ss/`（秒级时间戳）。Git 提交前也可直接在 `E:\tha4fork` 做 `git commit`。
+**A：** 见 [BACKUP.md](BACKUP.md)：在 `face-puppeteer-ui-enhancements-ai-code\` 运行 `archive_to_his.ps1`，内容移入 `his/yyyy-MM-dd_HH-mm-ss/`（秒级时间戳）。Git 提交前也可直接在 `E:\easyvtuberstudio-main` 做 `git commit`。
 
 ---
 
@@ -443,8 +443,8 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 
 **A：** **`sync_from_bai_custom.ps1` 已废弃**（仅打印提示）。当前流程：
 
-1. 在 **`E:\tha4fork-develop`** 完成开发与自测；  
-2. 将变更文件复制或 diff 合并到 **`E:\tha4fork`** 对应路径；  
+1. 在 **`E:\easyvtuberstudio-develop`** 完成开发与自测；  
+2. 将变更文件复制或 diff 合并到 **`E:\easyvtuberstudio-main`** 对应路径；  
 3. 更新 fork 根目录文档（尤其本 Q&A、`README.md`）；  
 4. `git add` → `commit` → `push origin main`。
 
@@ -522,7 +522,7 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 2. 曾在 **develop / 另一仓库目录** 下加载，json 里留下 **绝对路径**，在 fork 发布目录下无效；  
 3. 相对路径是相对 **当前 fork 根目录** 解析的，模型实际只放在别的目录。
 
-**正常处理：** 点一次 Load Last，程序会提示并**清空该条无效记忆**（THA4 / THA3 均如此）；或手动备份后删除 `experiments/puppeteer_load_preview/load_preview_ui_state.json` 再启动。  
+**正常处理：** 点一次 Load Last，程序会提示并**清空该条无效记忆**（THA4 / THA3 均如此）；或手动备份后删除 `workspace/load_preview_ui_state.json` 再启动。  
 **不是** json 读失败——文件往往「读得挺好，只是里面的路径不对」。
 
 ---
@@ -547,7 +547,13 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 
 ### Q41：THA3 模式下后处理区控件挤在一起？
 
-**A：** 右侧栏**过窄**时，长双语标签可能与下拉、按钮叠行。拉宽 **主分割条** 增加右侧宽度即可；THA3 变体与「标定朝向」已分子面板布局，极窄时仍可能显得紧，属布局限制而非功能失效。
+**A：** 右侧栏**过窄**时，长双语标签可能与下拉、按钮叠行。拉宽 **主分割条** 增加右侧宽度即可。**THA3 模型变体**下拉仍在后处理栏；**标定朝向 / 输出动态增强校准**已迁至预览行**最右侧校准列**（2026-06-04），不再占后处理垂直空间。极窄时后处理区仍可能显得紧，属布局限制而非功能失效。
+
+---
+
+### Q42：完整调参窗四边拖不动或只能缩小？
+
+**A：** 若最小客户区宽度被设得过大（旧版曾 ≈2060px），在常见分辨率下会出现 **min≈max** 无法缩放。现行版 `CONTROLS_MIN_CLIENT_WIDTH` 约 **1124px**，四边应可拖动。若仍异常：确认运行的是 develop/main **2026-06-04 之后**构建；临时删除 json 中 `controls_frame_w/h` 后重启。
 
 ---
 
@@ -588,4 +594,4 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 
 ---
 
-*文档版本：2026-05-31 · 含窗口捕获、DroidCam 绕行（含电脑+手机双端硬重启）、定制化持久化预期（第九节）。活跃代码在 `E:\tha4fork-develop`；**本文档以 fork 根目录为权威副本**。*
+*文档版本：2026-06-04 · 含预览行校准列、分割条比例防抖持久化、窗口捕获、DroidCam 绕行、定制化持久化预期（第九节）。活跃代码在 `E:\easyvtuberstudio-develop`；**本文档以 fork 根目录 `docs/` 为权威副本**。*

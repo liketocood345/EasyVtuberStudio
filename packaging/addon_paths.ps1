@@ -256,6 +256,41 @@ function Test-IsReparsePoint {
     }
 }
 
+function Get-JunctionTargetPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-IsReparsePoint $Path)) { return $null }
+    try {
+        $item = Get-Item -LiteralPath $Path -Force
+        $target = $item.Target
+        if ($target -is [array]) {
+            $target = $target | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$target)) { return $null }
+        return [string]$target
+    } catch {
+        return $null
+    }
+}
+
+function Test-JunctionLinkPointsTo {
+    param(
+        [Parameter(Mandatory = $true)][string]$LinkPath,
+        [Parameter(Mandatory = $true)][string]$TargetPath
+    )
+    if (-not (Test-IsReparsePoint $LinkPath)) { return $false }
+    if (-not (Test-Path -LiteralPath $TargetPath)) { return $false }
+    $expected = (Resolve-Path -LiteralPath $TargetPath).Path
+    $currentTarget = Get-JunctionTargetPath $LinkPath
+    if ([string]::IsNullOrWhiteSpace($currentTarget)) { return $false }
+    if (-not (Test-Path -LiteralPath $currentTarget)) { return $false }
+    try {
+        $current = (Resolve-Path -LiteralPath $currentTarget).Path
+    } catch {
+        return $false
+    }
+    return ($current -eq $expected)
+}
+
 function Remove-PathForLayout {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not (Test-Path $Path)) { return }
@@ -303,7 +338,7 @@ function Ensure-JunctionLink {
     }
     $targetFull = (Resolve-Path -LiteralPath $TargetPath).Path
     if (Test-Path $LinkPath) {
-        if (Test-IsReparsePoint $LinkPath) {
+        if (Test-JunctionLinkPointsTo -LinkPath $LinkPath -TargetPath $TargetPath) {
             return $true
         }
         Remove-PathForLayout $LinkPath
@@ -335,7 +370,7 @@ function Ensure-FileJunctionLink {
     }
     $targetFull = (Resolve-Path -LiteralPath $TargetPath).Path
     if (Test-Path $LinkPath) {
-        if (Test-IsReparsePoint $LinkPath) {
+        if (Test-JunctionLinkPointsTo -LinkPath $LinkPath -TargetPath $TargetPath) {
             return $true
         }
         Remove-PathForLayout $LinkPath

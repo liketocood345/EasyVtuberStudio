@@ -22,8 +22,8 @@ Other launchers under `scripts\launch\` (e.g. `THA4Train.exe`, `THA4_DownloadAss
 
 ## What EasyVtuberStudio Is
 
-- **Release repo:** `E:\tha4fork` — deployment, GitHub push, docs under `docs/`
-- **Active development:** `E:\tha4fork-develop` — daily coding; sync to fork when stable
+- **Release repo:** `E:\easyvtuberstudio-main` — deployment, GitHub push, docs under `docs/`
+- **Active development:** `E:\easyvtuberstudio-develop` — daily coding; sync to fork when stable
 - Fork remote: [liketocood345/EasyVtuberStudio](https://github.com/liketocood345/EasyVtuberStudio)（formerly `EasyVtuber-with-THA3-THA4`)
 
 ## Quick Pointers

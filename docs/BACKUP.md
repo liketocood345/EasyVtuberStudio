@@ -1,7 +1,7 @@
 ﻿# 更新与备份规则 / Backup & Update Rules
 
 EasyVtuberStudio 仓库 **`face-puppeteer-ui-enhancements-ai-code/`** 内用 **`his/` = 只读历史快照** 留档。  
-日常开发在 **`E:\tha4fork-develop`**；稳定后合并到 **`E:\tha4fork`** 再 push。  
+日常开发在 **`E:\easyvtuberstudio-develop`**；稳定后合并到 **`E:\easyvtuberstudio-main`** 再 push。  
 ~~`E:\THA4_bundle_bai_custom`~~ 已废弃。
 
 ---
@@ -31,14 +31,14 @@ EasyVtuberStudio 仓库 **`face-puppeteer-ui-enhancements-ai-code/`** 内用 **`
 
 ## 标准流程（手动）
 
-在 **`E:\tha4fork\face-puppeteer-ui-enhancements-ai-code\`** 执行：
+在 **`E:\easyvtuberstudio-main\face-puppeteer-ui-enhancements-ai-code\`** 执行：
 
 ### 1. 归档当前代码包内容
 
 将**除 `his` 以外**的该目录内容移入新快照文件夹（不要移动 `his` 自身）：
 
 ```powershell
-$pkg = "E:\tha4fork\face-puppeteer-ui-enhancements-ai-code"
+$pkg = "E:\easyvtuberstudio-main\face-puppeteer-ui-enhancements-ai-code"
 $stamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 $dest = Join-Path $pkg "his\$stamp"
 New-Item -ItemType Directory -Force -Path $dest | Out-Null
@@ -56,9 +56,9 @@ Get-ChildItem -LiteralPath $pkg -Force | Where-Object {
 
 ### 3. 恢复或写入新版本
 
-从 **`E:\tha4fork-develop\face-puppeteer-ui-enhancements-ai-code\`** 复制需要纳入 fork 的文件/目录到 fork 代码包根，或按 diff 手动合并。
+从 **`E:\easyvtuberstudio-develop\face-puppeteer-ui-enhancements-ai-code\`** 复制需要纳入 fork 的文件/目录到 fork 代码包根，或按 diff 手动合并。
 
--fork **根目录**的 `README.md` 与 **`docs/`** 下说明不在 `his/` 快照内，需在 **`E:\tha4fork\`** 单独维护。
+-fork **根目录**的 `README.md` 与 **`docs/`** 下说明不在 `his/` 快照内，需在 **`E:\easyvtuberstudio-main\`** 单独维护。
 
 ### 4. 更新索引
 
@@ -70,14 +70,14 @@ Get-ChildItem -LiteralPath $pkg -Force | Where-Object {
 | 保留不动 | 说明 |
 |----------|------|
 | `his/` | 历史总目录，归档时**永不**移入子快照 |
-| `E:\tha4fork\.git/` | Git 仓库根 |
+| `E:\easyvtuberstudio-main\.git/` | Git 仓库根 |
 
 ---
 
 ## 一键脚本（推荐）
 
 ```bat
-powershell -ExecutionPolicy Bypass -File E:\tha4fork\face-puppeteer-ui-enhancements-ai-code\archive_to_his.ps1
+powershell -ExecutionPolicy Bypass -File E:\easyvtuberstudio-main\face-puppeteer-ui-enhancements-ai-code\archive_to_his.ps1
 ```
 
 ~~`sync_from_bai_custom.ps1`~~ **已废弃**（仅打印提示）。develop → fork 请手动合并 + 更新 fork 根文档。

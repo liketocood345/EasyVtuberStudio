@@ -19,7 +19,13 @@ if (-not $PSBoundParameters.ContainsKey("IncludeRuntime")) {
 }
 
 if (-not $RuntimeSource) {
-    $developRoot = Join-Path (Split-Path $ForkRoot -Parent) "tha4fork-develop"
+    $maintDir = Join-Path $ForkRoot "scripts\maint"
+    if (Test-Path (Join-Path $maintDir "repo_paths.ps1")) {
+        . (Join-Path $maintDir "repo_paths.ps1")
+        $developRoot = Find-SiblingRepo -ParentDir (Split-Path $ForkRoot -Parent) -DirNames $script:DevDirCandidates
+    } else {
+        $developRoot = Join-Path (Split-Path $ForkRoot -Parent) "easyvtuberstudio-develop"
+    }
     $venvCandidates = @(
         (Join-Path $developRoot "addons\face_puppeteer\venv"),
         (Join-Path $developRoot "runtime\venv"),

@@ -1,6 +1,6 @@
-# Fork 推送前检查清单
+﻿# Fork 推送前检查清单
 
-面向维护者：在 `E:\tha4fork` 执行 `git push origin main` 之前。
+面向维护者：在 `E:\easyvtuberstudio-main` 执行 `git push origin main` 之前。
 
 相关：[FORK_ROOT.md](FORK_ROOT.md) · [HANDOVER.md](HANDOVER.md) · [ADDONS_LAYOUT.md](ADDONS_LAYOUT.md)
 
@@ -10,9 +10,9 @@
 
 | 检查 | 命令 / 说明 |
 |------|-------------|
-| develop → fork 已同步 | `powershell -ExecutionPolicy Bypass -File E:\tha4fork-develop\scripts\maint\sync_develop_to_fork.ps1` |
-| 瘦包验收 | `packaging\verify_fresh_extract.ps1 -PortableRoot E:\tha4fork` |
-| GitHub ZIP 构建（可选） | `packaging\build_github_zip.ps1 -ForkRoot E:\tha4fork` |
+| develop → fork 已同步 | `powershell -ExecutionPolicy Bypass -File E:\easyvtuberstudio-develop\scripts\maint\sync_develop_to_fork.ps1` |
+| 瘦包验收 | `packaging\verify_fresh_extract.ps1 -PortableRoot E:\easyvtuberstudio-main` |
+| GitHub ZIP 构建（可选） | `packaging\build_github_zip.ps1 -ForkRoot E:\easyvtuberstudio-main` |
 | 双仓角色 | `scripts\maint\verify_repo_roles.ps1` |
 | 路径引用扫描 | `scripts\maint\verify_path_refs.ps1` |
 
@@ -51,7 +51,7 @@
 ## 4. Git 推送（发布总库）
 
 ```bat
-cd /d E:\tha4fork
+cd /d E:\easyvtuberstudio-main
 git status
 git add -A
 git commit -m "your message"

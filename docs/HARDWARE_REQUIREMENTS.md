@@ -291,7 +291,7 @@ flowchart LR
 
 ## 9. 文档维护
 
-- **活跃开发目录：** `E:\tha4fork-develop\`  
+- **活跃开发目录：** `E:\easyvtuberstudio-develop\`  
 - **本文件位置（fork 权威副本）：** `HARDWARE_REQUIREMENTS.md`  
 - 重大功能变更（分辨率默认、AA 算法、CUDA 可选等）后应更新第 4、7、8 节。  
 - develop 与 fork 内容应保持一致；以 **fork 根目录** 为对外发布副本。

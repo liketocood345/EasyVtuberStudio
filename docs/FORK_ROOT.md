@@ -1,51 +1,53 @@
-﻿# Git 与本地路径说明（发布总库 `E:\tha4fork`）
+# Git 与本地路径说明（发布总库 `E:\easyvtuberstudio-main`）
 
-本文件位于 **fork 发布总库** `docs/`。日常开发在 **`E:\tha4fork-develop`**，稳定后运行 `scripts/maint/sync_develop_to_fork.ps1` 再 push。
+本文件位于 **main 发布总库** `docs/`。日常开发在 **`E:\easyvtuberstudio-develop`**，稳定后运行 `scripts/maint/sync_develop_to_fork.ps1` 再 push。
 
-## 远程
+## 远程（GitHub，大小写与仓库名一致）
 
-| 远程名 | 地址 | 用途 |
+| 远程名 | 仓库 | 用途 |
 |--------|------|------|
-| **origin** | https://github.com/liketocood345/EasyVtuberStudio | EasyVtuberStudio 发布仓库（默认 push/pull） |
+| **origin** | https://github.com/liketocood345/easyvtuberstudio-main | 发布总库（默认 push/pull） |
 | **upstream** | https://github.com/pkhungurn/talking-head-anime-4-demo | 官方上游（`git fetch upstream`） |
 
-## 仓库更名（2026-05-31）
+研发主仓（无根目录 `.git` 时）对应：**https://github.com/liketocood345/easyvtuberstudio-develop**
+
+### 曾用名
 
 | 项 | 值 |
 |----|-----|
-| **现用 GitHub 名** | **`EasyVtuberStudio`** |
-| **曾用名** | `EasyVtuber-with-THA3-THA4` |
-| **主页** | https://github.com/liketocood345/EasyVtuberStudio |
+| 本地目录曾用名 | `E:\tha4fork` / `E:\tha4fork-develop` |
+| GitHub 曾用 slug | `EasyVtuberStudio`、`EasyVtuber-with-THA3-THA4` |
 
-本地目录 **`E:\tha4fork`** / **`E:\tha4fork-develop`** 名称不变；仅远程仓库 slug 变更。若 clone 过旧地址，执行：
+main 仓库更新 origin：
 
 ```bat
-git remote set-url origin https://github.com/liketocood345/EasyVtuberStudio.git
+cd /d E:\easyvtuberstudio-main
+git remote set-url origin https://github.com/liketocood345/easyvtuberstudio-main.git
 ```
 
 ## 本地目录
 
 | 路径 | 角色 |
 |------|------|
-| **`E:\tha4fork`** | **对外发布总库**（根目录仅 `README.md` + `EasyVtuberStudio.exe` + 文件夹） |
-| **`E:\tha4fork-develop`** | 研发主仓（功能先行，同步到 fork 后发布） |
+| **`E:\easyvtuberstudio-main`** | **对外发布总库**（含 `.git`；根目录 `README.md` + `EasyVtuberStudio.exe` + 文件夹） |
+| **`E:\easyvtuberstudio-develop`** | **研发主仓**（三模块全装；改代码后 `sync_develop_to_fork.ps1` 合并到 main） |
 
 文档索引：[DOC_INDEX.md](DOC_INDEX.md)
 
 ## 常用命令（发布总库）
 
 ```bat
-cd /d E:\tha4fork
+cd /d E:\easyvtuberstudio-main
 git pull origin main
 git add -A
 git commit -m "your message"
 git push origin main
 ```
 
-## develop → fork 同步
+## develop → main 同步
 
 ```powershell
-cd E:\tha4fork-develop
+cd E:\easyvtuberstudio-develop
 powershell -ExecutionPolicy Bypass -File scripts\maint\sync_develop_to_fork.ps1
 ```
 
@@ -60,8 +62,6 @@ powershell -ExecutionPolicy Bypass -File scripts\maint\sync_develop_to_fork.ps1
 ```bat
 scripts\launch\run_load_preview_puppeteer.bat
 ```
-
-或 `scripts\launch\run_load_preview_puppeteer.bat`（优先启动根目录 exe）。
 
 ## 已知问题与策略（2026-05-29）
 

@@ -1,7 +1,7 @@
 ﻿# EasyVtuberStudio — 详细说明
 
 > **文档位于 `docs/`；fork 根目录仅 `README.md` + `EasyVtuberStudio.exe` + 文件夹。**  
-> 日常代码开发在 **`E:\tha4fork-develop`**，稳定后 `scripts\maint\sync_develop_to_fork.ps1` 合并到 fork。  
+> 日常代码开发在 **`E:\easyvtuberstudio-develop`**，稳定后 `scripts\maint\sync_develop_to_fork.ps1` 合并到 fork。  
 > 完整索引：[DOC_INDEX.md](DOC_INDEX.md)
 
 > **从 GitHub ZIP 首次部署请读 [DEPLOY.md](DEPLOY.md)。**
@@ -9,7 +9,7 @@
 ## Layout
 
 ```
-E:\tha4fork/
+E:\easyvtuberstudio-main/
 ├── README.md
 ├── EasyVtuberStudio.exe
 ├── docs/                        ← 全部 Markdown（本文件在此）
@@ -26,14 +26,14 @@ E:\tha4fork/
 **发布 / 定制环境（fork）：**
 
 ```bat
-cd /d E:\tha4fork
+cd /d E:\easyvtuberstudio-main
 EasyVtuberStudio.exe
 ```
 
 **研发（develop）：**
 
 ```bat
-cd /d E:\tha4fork-develop
+cd /d E:\easyvtuberstudio-develop
 scripts\launch\run_load_preview_puppeteer.bat
 ```
 

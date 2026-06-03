@@ -2,7 +2,7 @@
 
 **便携版（推荐最终用户）：** GitHub Download ZIP（CORE）→ 解压 → **`DEPLOY.bat`**（四档 Y/N）或环境已就绪时直接 **`EasyVtuberStudio.exe`**。详见 [docs/DEPLOY.md](docs/DEPLOY.md)。
 
-**本仓库 = GitHub 发布总库（CORE 刚解压态）**；本地全装研发在 `E:\tha4fork-develop`（三模块 `addons/*` 实体文件，不入本 ZIP）。见 [docs/HANDOVER.md](docs/HANDOVER.md) §0.1 · [docs/ADDONS_LAYOUT.md](docs/ADDONS_LAYOUT.md) · 推送前 [docs/PREP_PUSH.md](docs/PREP_PUSH.md)。
+**本仓库 = GitHub 发布总库（CORE 刚解压态）**；本地全装研发在 `E:\easyvtuberstudio-develop`（三模块 `addons/*` 实体文件，不入本 ZIP）。见 [docs/HANDOVER.md](docs/HANDOVER.md) §0.1 · [docs/ADDONS_LAYOUT.md](docs/ADDONS_LAYOUT.md) · 推送前 [docs/PREP_PUSH.md](docs/PREP_PUSH.md)。
 
 [English Guide for EasyVtuberStudio](docs/README-EN.md)
 
@@ -20,12 +20,11 @@
 
 **骚年，想玩虚拟皮套直播但没钱定制自己的角色？你的显卡该出场了！（虽然本项目能在无显卡电脑上跑出惊人的1fps）**
 
+~~这个项目是面向游戏主播等不以虚拟皮套为卖点的主播，**不要敷衍你的观众！**~~
+
 ## 演示
 
-
-
 https://github.com/user-attachments/assets/498f7a42-ae24-44d9-ab0a-29763a80922b
-
 
 https://github.com/liketocood345/EasyVtuberStudio/releases/download/readme-demo-asset/demo.mp4
 
@@ -34,9 +33,10 @@ https://github.com/liketocood345/EasyVtuberStudio/releases/download/readme-demo-
 | 项 | 说明 |
 |----|------|
 | **GitHub 仓库** | **[liketocood345/EasyVtuberStudio](https://github.com/liketocood345/EasyVtuberStudio)** |
-| **本仓库（GitHub CORE）** | 当前解压目录；本地示例 `E:\tha4fork`（`addons/` 初始为空） |
-| **研发主仓（非本仓库）** | `E:\tha4fork-develop` — **三模块全装**，日常改代码后 `scripts\maint\sync_develop_to_fork.ps1` |
-| 曾用仓库名 | ~~`EasyVtuber-with-THA3-THA4`~~（2026-05 更名为 **EasyVtuberStudio**） |
+| **本仓库（GitHub CORE）** | 当前解压目录；本地示例 `E:\easyvtuberstudio-main`（`addons/` 初始为空） |
+| **研发主仓（非 GitHub 仓库）** | `E:\easyvtuberstudio-develop` — **三模块全装**，日常改代码后 `scripts\maint\sync_develop_to_fork.ps1` 再 push 到上表 GitHub |
+| 曾用 GitHub 仓库名 | ~~EasyVtuber-with-THA3-THA4~~（2026-05 更名为 **EasyVtuberStudio**） |
+| 曾用本地目录 | `E:\tha4fork` / `E:\tha4fork-develop` |
 | 定制代码包 | `face-puppeteer-ui-enhancements-ai-code/` |
 | **新 Agent 入口** | **[docs/HANDOVER.md](docs/HANDOVER.md)** |
 | **首次部署（ZIP 下载）** | **[docs/DEPLOY.md](docs/DEPLOY.md)** |
@@ -68,7 +68,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 
 - **默认完整调参窗**启动（`startup_show_full_controls`）；可选 **精简小窗**（3 快捷按钮）与完整窗来回切换
 - 角色输出独立无边框窗口，可拖动画布，几何与状态可持久化
-- 控件分栏：模型传入 / 输出动态增强 / 后处理；竖滑块、分割条位置记忆
+- 控件分栏：模型传入 / 输出动态增强 / 后处理；预览行含立绘+摄像头+**右侧校准列**；竖滑块、分割条比例记忆（250ms 防抖写盘）
 
 ### 2. 显示与跟踪
 
@@ -109,7 +109,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 ### 8. 其它交互
 
 - 滑块悬停约 1 秒后才可用滚轮微调（高亮 + 提示）
-- 「标定朝向」等校准按钮；已去掉「点任意控件置顶输出窗」（避免控件失效）
+- 预览行右侧：**标定朝向**、**输出动态增强校准**及周期自动校准；精简窗保留 3 快捷校准按钮；已去掉「点任意控件置顶输出窗」（避免控件失效）
 
 ### 9. 附带内容
 
@@ -160,7 +160,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 ## 日常流程
 
 1. **用户**：双击根目录 **`EasyVtuberStudio.exe`**
-2. **开发**：在 `E:\tha4fork-develop` 改代码 → `scripts\maint\sync_develop_to_fork.ps1` → fork push
+2. **开发**：在 `E:\easyvtuberstudio-develop` 改代码 → `scripts\maint\sync_develop_to_fork.ps1` → fork push
 3. **维护者编译 exe**：`scripts\build_launchers.bat`
 
 ---
