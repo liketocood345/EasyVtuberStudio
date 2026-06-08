@@ -15,7 +15,15 @@ from layer_runtime import (
     BIND_RAY_PERCENT_UI_MIN,
     CHARACTER_STACK_POS,
     HEAD_ANCHOR_RATIO,
+    MOTION_MODE_NONE,
+    MOTION_MODE_SIMPLE_SWING,
     NECK_ANCHOR_RATIO_DEFAULT,
+    SWING_AMPLITUDE_MAX_DEG,
+    SWING_AMPLITUDE_MIN_DEG,
+    SWING_SPEED_MAX_DEG_PER_SEC,
+    SWING_SPEED_MIN_DEG_PER_SEC,
+    SWING_SPEED_PROFILE_CONSTANT,
+    SWING_SPEED_PROFILE_EASE_ENDS,
     BasicLayerSlot,
     BasicLayersState,
     LAYER_ASSET_FILE_WILDCARD,
@@ -24,6 +32,8 @@ from layer_runtime import (
     center_layer_transform,
     clamp_binding_smooth_alpha,
     clamp_neck_anchor_ratio,
+    clamp_swing_amplitude_deg,
+    clamp_swing_speed_deg_per_sec,
     build_spine_diagram_points,
     collect_spine_binding_markers,
     compute_spine_diagram_layout,
@@ -39,6 +49,7 @@ from layer_runtime import (
     stack_position_can_move_up,
     truncate_display_filename,
 )
+from layer_swing_pivot_dialog import show_swing_pivot_edit_dialog
 
 if TYPE_CHECKING:
     from character_model_mediapipe_puppeteer_load_preview import MainFrame
@@ -650,6 +661,78 @@ class LayerDetailDock(wx.Panel):
         bind_row.Add(self.binding_choice, 1, wx.EXPAND)
         layer_sizer.Add(bind_row, 0, wx.EXPAND | wx.ALL, 4)
 
+        motion_row = wx.BoxSizer(wx.HORIZONTAL)
+        motion_row.Add(
+            wx.StaticText(self.layer_block, label="运动 / Motion"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            6)
+        self.motion_choice = wx.Choice(
+            self.layer_block,
+            choices=[
+                "无 / None",
+                "简单摇摆 / Simple swing",
+            ])
+        motion_row.Add(self.motion_choice, 1, wx.EXPAND)
+        layer_sizer.Add(motion_row, 0, wx.EXPAND | wx.ALL, 4)
+
+        self.motion_panel = wx.Panel(self.layer_block)
+        motion_panel_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.motion_panel.SetSizer(motion_panel_sizer)
+
+        amp_row = wx.BoxSizer(wx.HORIZONTAL)
+        amp_row.Add(
+            wx.StaticText(self.motion_panel, label="幅度 / Amplitude"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            6)
+        self.swing_amplitude_slider = wx.Slider(
+            self.motion_panel,
+            value=int(SWING_AMPLITUDE_MIN_DEG),
+            minValue=int(SWING_AMPLITUDE_MIN_DEG),
+            maxValue=int(SWING_AMPLITUDE_MAX_DEG),
+            style=wx.SL_HORIZONTAL)
+        amp_row.Add(self.swing_amplitude_slider, 1, wx.EXPAND)
+        self.swing_amplitude_label = wx.StaticText(self.motion_panel, label="15°")
+        amp_row.Add(self.swing_amplitude_label, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 8)
+        motion_panel_sizer.Add(amp_row, 0, wx.EXPAND | wx.ALL, 4)
+
+        speed_row = wx.BoxSizer(wx.HORIZONTAL)
+        speed_row.Add(
+            wx.StaticText(self.motion_panel, label="速度 / Speed"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            6)
+        self.swing_speed_slider = wx.Slider(
+            self.motion_panel,
+            value=int(SWING_SPEED_MIN_DEG_PER_SEC),
+            minValue=int(SWING_SPEED_MIN_DEG_PER_SEC),
+            maxValue=int(SWING_SPEED_MAX_DEG_PER_SEC),
+            style=wx.SL_HORIZONTAL)
+        self.swing_speed_slider.SetToolTip("度/秒 / degrees per second")
+        speed_row.Add(self.swing_speed_slider, 1, wx.EXPAND)
+        self.swing_speed_label = wx.StaticText(self.motion_panel, label="30°/s")
+        speed_row.Add(self.swing_speed_label, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 8)
+        motion_panel_sizer.Add(speed_row, 0, wx.EXPAND | wx.ALL, 4)
+
+        self.swing_speed_profile_radio = wx.RadioBox(
+            self.motion_panel,
+            label="速度曲线 / Speed profile",
+            choices=[
+                "全程匀速 / Constant",
+                "到两侧放缓 / Ease at ends",
+            ],
+            majorDimension=1,
+            style=wx.RA_SPECIFY_ROWS)
+        motion_panel_sizer.Add(self.swing_speed_profile_radio, 0, wx.EXPAND | wx.ALL, 4)
+
+        self.edit_swing_pivot_btn = wx.Button(
+            self.motion_panel,
+            label="编辑摇摆点 / Edit swing pivot")
+        motion_panel_sizer.Add(self.edit_swing_pivot_btn, 0, wx.ALL, 4)
+
+        layer_sizer.Add(self.motion_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+
         follow_rot_row = wx.BoxSizer(wx.VERTICAL)
         self.binding_follow_rotation_radio = wx.RadioBox(
             self.layer_block,
@@ -842,6 +925,11 @@ class BasicLayerWindow(wx.Frame):
             wx.EVT_SLIDER, self._on_smooth_alpha_changed)
         dock.binding_follow_mocap_position_cb.Bind(wx.EVT_CHECKBOX, self._on_detail_changed)
         dock.binding_follow_mocap_roll_cb.Bind(wx.EVT_CHECKBOX, self._on_detail_changed)
+        dock.motion_choice.Bind(wx.EVT_CHOICE, self._on_motion_changed)
+        dock.swing_amplitude_slider.Bind(wx.EVT_SLIDER, self._on_swing_amplitude_changed)
+        dock.swing_speed_slider.Bind(wx.EVT_SLIDER, self._on_swing_speed_changed)
+        dock.swing_speed_profile_radio.Bind(wx.EVT_RADIOBOX, self._on_motion_profile_changed)
+        dock.edit_swing_pivot_btn.Bind(wx.EVT_BUTTON, self._on_edit_swing_pivot)
 
     def rebuild_rows(self) -> None:
         selected = self.main_frame.basic_layers_state.selected_slot_id
@@ -908,20 +996,32 @@ class BasicLayerWindow(wx.Frame):
         if hasattr(self, "spine_reference"):
             self.spine_reference.refresh_diagram_live()
 
+    def _character_preview_bitmap(self) -> Optional[wx.Bitmap]:
+        source_bitmap = self.main_frame.wx_source_image
+        if source_bitmap is not None and source_bitmap.IsOk():
+            return source_bitmap
+        output_image = getattr(self.main_frame, "last_output_wx_image", None)
+        if output_image is not None and output_image.IsOk():
+            return output_image.ConvertToBitmap()
+        return None
+
+    def _character_row_display_name(self) -> str:
+        if self.main_frame.last_loaded_model_path:
+            return os.path.basename(self.main_frame.last_loaded_model_path)
+        if self.main_frame.last_tha3_character_png:
+            return os.path.basename(self.main_frame.last_tha3_character_png)
+        return "角色立绘"
+
     def _refresh_character_row(self) -> None:
         if self._character_row is None:
             return
-        source_bitmap = self.main_frame.wx_source_image
-        if source_bitmap is not None and source_bitmap.IsOk():
+        loaded = self.main_frame.is_model_loaded()
+        source_bitmap = self._character_preview_bitmap()
+        if loaded and source_bitmap is not None and source_bitmap.IsOk():
             thumb = source_bitmap.ConvertToImage().Scale(
                 THUMB_SIZE, THUMB_SIZE, wx.IMAGE_QUALITY_HIGH)
             self._character_row.thumb.set_bitmap(thumb.ConvertToBitmap())
-            if self.main_frame.last_loaded_model_path:
-                name = os.path.basename(self.main_frame.last_loaded_model_path)
-            elif self.main_frame.last_tha3_character_png:
-                name = os.path.basename(self.main_frame.last_tha3_character_png)
-            else:
-                name = "角色立绘"
+            name = self._character_row_display_name()
             self._character_row.title_text.SetLabel(
                 f"原图 · {truncate_display_filename(name)}")
             self._character_row.path_text.SetLabel(
@@ -994,6 +1094,21 @@ class BasicLayerWindow(wx.Frame):
             bool(layer.binding_follow_mocap_position) if is_head_binding else False)
         dock.binding_follow_mocap_roll_cb.SetValue(
             bool(layer.binding_follow_mocap_roll) if is_head_binding else False)
+        motion_index = 1 if layer.motion_mode == MOTION_MODE_SIMPLE_SWING else 0
+        dock.motion_choice.SetSelection(motion_index)
+        amp = int(round(clamp_swing_amplitude_deg(layer.swing_amplitude_deg)))
+        dock.swing_amplitude_slider.SetValue(amp)
+        dock.swing_amplitude_label.SetLabel(f"{amp}°")
+        speed = int(round(clamp_swing_speed_deg_per_sec(layer.swing_speed_deg_per_sec)))
+        dock.swing_speed_slider.SetValue(speed)
+        dock.swing_speed_label.SetLabel(f"{speed}°/s")
+        profile_index = (
+            0 if layer.swing_speed_profile == SWING_SPEED_PROFILE_CONSTANT else 1)
+        dock.swing_speed_profile_radio.SetSelection(profile_index)
+        has_asset = bool(layer.asset_path)
+        swing_enabled = layer.motion_mode == MOTION_MODE_SIMPLE_SWING
+        dock.motion_panel.Enable(swing_enabled)
+        dock.edit_swing_pivot_btn.Enable(swing_enabled and has_asset)
         self._refresh_layout()
 
     def apply_selection(self, slot_id: Optional[int]) -> None:
@@ -1097,6 +1212,83 @@ class BasicLayerWindow(wx.Frame):
         center_layer_transform(layer.transform)
         self.main_frame.persist_basic_layers_state()
         self._refresh_detail_dock()
+        self.main_frame.on_layer_state_changed()
+        event.Skip()
+
+    def _on_motion_changed(self, event: wx.Event) -> None:
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            return
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        layer.motion_mode = (
+            MOTION_MODE_SIMPLE_SWING
+            if self.detail_dock.motion_choice.GetSelection() == 1
+            else MOTION_MODE_NONE)
+        self.main_frame.persist_basic_layers_state()
+        self._refresh_detail_dock()
+        self.refresh_all()
+        self.main_frame.on_layer_state_changed()
+        event.Skip()
+
+    def _on_swing_amplitude_changed(self, event: wx.Event) -> None:
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            return
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        amp = clamp_swing_amplitude_deg(float(self.detail_dock.swing_amplitude_slider.GetValue()))
+        layer.swing_amplitude_deg = amp
+        self.detail_dock.swing_amplitude_label.SetLabel(f"{amp:.0f}°")
+        self.main_frame.persist_basic_layers_state()
+        self.main_frame.on_layer_state_changed()
+        event.Skip()
+
+    def _on_swing_speed_changed(self, event: wx.Event) -> None:
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            return
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        speed = clamp_swing_speed_deg_per_sec(
+            float(self.detail_dock.swing_speed_slider.GetValue()))
+        layer.swing_speed_deg_per_sec = speed
+        self.detail_dock.swing_speed_label.SetLabel(f"{speed:.0f}°/s")
+        self.main_frame.persist_basic_layers_state()
+        self.main_frame.on_layer_state_changed()
+        event.Skip()
+
+    def _on_motion_profile_changed(self, event: wx.Event) -> None:
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            return
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        layer.swing_speed_profile = (
+            SWING_SPEED_PROFILE_CONSTANT
+            if self.detail_dock.swing_speed_profile_radio.GetSelection() == 0
+            else SWING_SPEED_PROFILE_EASE_ENDS)
+        self.main_frame.persist_basic_layers_state()
+        self.main_frame.on_layer_state_changed()
+        event.Skip()
+
+    def _on_edit_swing_pivot(self, event: wx.Event) -> None:
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            return
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        if not layer.asset_path:
+            return
+        image = self.main_frame.layer_asset_cache.load_image(layer)
+        if image is None:
+            wx.MessageBox(
+                "无法加载图层素材 / Failed to load layer asset",
+                "编辑摇摆点 / Edit swing pivot",
+                wx.OK | wx.ICON_WARNING,
+                parent=self)
+            return
+        if not show_swing_pivot_edit_dialog(self, layer, image):
+            event.Skip()
+            return
+        self.main_frame.persist_basic_layers_state()
+        self._refresh_detail_dock()
+        self.refresh_all()
         self.main_frame.on_layer_state_changed()
         event.Skip()
 

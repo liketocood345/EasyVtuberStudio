@@ -11,6 +11,10 @@ from layer_interaction import LayerEditMode, hit_test_layer_edit
 from layer_runtime import (
     BINDING_CHARACTER_BODY,
     BINDING_CHARACTER_HEAD,
+    MOTION_MODE_NONE,
+    MOTION_MODE_SIMPLE_SWING,
+    SWING_SPEED_PROFILE_CONSTANT,
+    SWING_SPEED_PROFILE_EASE_ENDS,
     BasicLayerSlot,
     BasicLayersState,
     BindingContext,
@@ -18,6 +22,8 @@ from layer_runtime import (
     LayerBindingSmoother,
     LayerGeometryResolver,
     LayerTransform,
+    basic_layers_state_has_active_motion,
+    compute_swing_angle_deg,
     contrast_highlight_colour,
     _load_gif_composited_frames,
     classify_layer_asset_kind,
@@ -28,6 +34,7 @@ from layer_runtime import (
     bind_ray_percent_to_ratio,
     layer_asset_kind_label,
     layer_binding_ray_percent,
+    layer_has_active_swing,
     collect_spine_binding_markers,
     build_spine_diagram_points,
     effective_layer_rotation_deg,
@@ -659,6 +666,99 @@ def test_spine_diagram_follows_tilt() -> None:
     assert abs(opposite.spine_lower_angle_deg() - (-30.0)) < 1e-3
 
 
+def test_swing_ease_ends_starts_at_zero() -> None:
+    layer = BasicLayerSlot(
+        slot_id=0,
+        motion_mode=MOTION_MODE_SIMPLE_SWING,
+        swing_amplitude_deg=20.0,
+        swing_speed_deg_per_sec=40.0,
+        swing_speed_profile=SWING_SPEED_PROFILE_EASE_ENDS,
+        swing_phase_rad=0.0)
+    assert abs(compute_swing_angle_deg(layer, 0.0)) < 1e-6
+
+
+def test_swing_ease_ends_peak_velocity() -> None:
+    layer = BasicLayerSlot(
+        slot_id=0,
+        motion_mode=MOTION_MODE_SIMPLE_SWING,
+        swing_amplitude_deg=10.0,
+        swing_speed_deg_per_sec=30.0,
+        swing_speed_profile=SWING_SPEED_PROFILE_EASE_ENDS,
+        swing_phase_rad=0.0)
+    dt = 0.01
+    angle0 = compute_swing_angle_deg(layer, 0.0)
+    angle1 = compute_swing_angle_deg(layer, dt)
+    approx_velocity = (angle1 - angle0) / dt
+    assert abs(approx_velocity - 30.0) < 2.0
+
+
+def test_swing_constant_triangle_bounds() -> None:
+    layer = BasicLayerSlot(
+        slot_id=0,
+        motion_mode=MOTION_MODE_SIMPLE_SWING,
+        swing_amplitude_deg=12.0,
+        swing_speed_deg_per_sec=24.0,
+        swing_speed_profile=SWING_SPEED_PROFILE_CONSTANT,
+        swing_phase_rad=0.0)
+    half_period = (2.0 * layer.swing_amplitude_deg) / layer.swing_speed_deg_per_sec
+    assert abs(compute_swing_angle_deg(layer, 0.0) + 12.0) < 1e-6
+    assert abs(compute_swing_angle_deg(layer, half_period) - 12.0) < 1e-3
+
+
+def test_swing_constant_velocity_segment() -> None:
+    layer = BasicLayerSlot(
+        slot_id=0,
+        motion_mode=MOTION_MODE_SIMPLE_SWING,
+        swing_amplitude_deg=10.0,
+        swing_speed_deg_per_sec=20.0,
+        swing_speed_profile=SWING_SPEED_PROFILE_CONSTANT,
+        swing_phase_rad=0.0)
+    dt = 0.05
+    angle0 = compute_swing_angle_deg(layer, 0.0)
+    angle1 = compute_swing_angle_deg(layer, dt)
+    assert abs((angle1 - angle0) / dt - 20.0) < 0.5
+
+
+def test_swing_zero_amplitude() -> None:
+    layer = BasicLayerSlot(
+        slot_id=0,
+        motion_mode=MOTION_MODE_SIMPLE_SWING,
+        swing_amplitude_deg=0.0,
+        swing_speed_deg_per_sec=30.0)
+    assert compute_swing_angle_deg(layer, 1.0) == 0.0
+    assert not layer_has_active_swing(layer)
+
+
+def test_swing_motion_active_flag() -> None:
+    state = BasicLayersState()
+    layer = state.layers[0]
+    layer.asset_path = "tail.png"
+    layer.motion_mode = MOTION_MODE_SIMPLE_SWING
+    assert basic_layers_state_has_active_motion(state)
+    layer.motion_mode = MOTION_MODE_NONE
+    assert not basic_layers_state_has_active_motion(state)
+
+
+def test_swing_serialization_round_trip() -> None:
+    layer = BasicLayerSlot(
+        slot_id=1,
+        motion_mode=MOTION_MODE_SIMPLE_SWING,
+        swing_pivot_u=0.25,
+        swing_pivot_v=0.8,
+        swing_amplitude_deg=22.0,
+        swing_speed_deg_per_sec=55.0,
+        swing_speed_profile=SWING_SPEED_PROFILE_CONSTANT,
+        swing_phase_rad=1.2)
+    data = layer.to_dict()
+    restored = BasicLayerSlot.from_dict(data, slot_id=1)
+    assert restored.motion_mode == MOTION_MODE_SIMPLE_SWING
+    assert abs(restored.swing_pivot_u - 0.25) < 1e-6
+    assert abs(restored.swing_pivot_v - 0.8) < 1e-6
+    assert abs(restored.swing_amplitude_deg - 22.0) < 1e-6
+    assert abs(restored.swing_speed_deg_per_sec - 55.0) < 1e-6
+    assert restored.swing_speed_profile == SWING_SPEED_PROFILE_CONSTANT
+
+
 def test_basic_layers_persistence_round_trip(tmp_root: Path | None = None) -> None:
     import tempfile
     from layer_runtime import (
@@ -742,6 +842,13 @@ def main() -> None:
     test_global_neck_ratio_does_not_move_layer()
     test_neck_anchor_ratio_full_height_range()
     test_global_bind_percent_does_not_move_layer()
+    test_swing_ease_ends_starts_at_zero()
+    test_swing_ease_ends_peak_velocity()
+    test_swing_constant_triangle_bounds()
+    test_swing_constant_velocity_segment()
+    test_swing_zero_amplitude()
+    test_swing_motion_active_flag()
+    test_swing_serialization_round_trip()
     print("smoke_layer_runtime_ok")
 
 

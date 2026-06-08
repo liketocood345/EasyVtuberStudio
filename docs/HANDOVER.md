@@ -226,7 +226,8 @@ E:\easyvtuberstudio-main\
 | 五层混合 UI | 后处理区：**启用图层混合** → `BasicLayerWindow` |
 | 无限层占位 | 后处理区：**启动无限图层系统**（无功能，L2 预留） |
 | 持久化 | `layer_blend_enabled`、`unlimited_layers_enabled`；`basic_layers/` |
-| 模块 | `layer_runtime.py`、`basic_layer_window.py` |
+| 模块 | `layer_runtime.py`、`basic_layer_window.py`、`layer_swing_pivot_dialog.py` |
+| 简单摇摆运动 | 图层详情 **运动** → 简单摇摆：支点编辑、幅度、速度（度/秒）、全程匀速/到两侧放缓；叠加在容器绑定/旋转/缩放之后 |
 
 合成在 `draw_result_wx_image()` 内完成，输出至内置 `OutputFrame`。**已无**向外挂进程写 bridge 文件。
 

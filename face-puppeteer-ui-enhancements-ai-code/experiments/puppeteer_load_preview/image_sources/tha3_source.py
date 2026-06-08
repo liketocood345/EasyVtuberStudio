@@ -88,6 +88,8 @@ class Tha3Source:
                 fast_affine_only=not main_frame.is_layer_blend_enabled())
             main_frame._load_preview_shown = True
         main_frame.save_persistent_ui_state()
+        if hasattr(main_frame, "refresh_basic_layer_window_if_visible"):
+            main_frame.refresh_basic_layer_window_if_visible()
         return True
 
     def tick(self, main_frame) -> Optional[str]:
