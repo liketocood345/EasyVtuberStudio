@@ -153,6 +153,7 @@ from layer_runtime import (
     normalize_bind_ray_percent,
     clamp_neck_anchor_ratio,
     contrast_highlight_colour,
+    basic_layers_state_has_active_motion,
     load_basic_layers_state,
     resolve_layer_rects,
     resolved_layer_rotation_deg,
@@ -1382,13 +1383,17 @@ class MainFrame(wx.Frame):
             if window is not None:
                 window.refresh_spine_diagram()
 
+    def refresh_basic_layer_window_if_visible(self) -> None:
+        if not self._basic_layer_window_visible():
+            return
+        window = self._get_basic_layer_window()
+        if window is not None:
+            window.refresh_all()
+
     def on_layer_state_changed(self) -> None:
         if self.last_output_wx_image is not None:
             self.draw_cached_result_image(self.last_banner_text)
-        if self._basic_layer_window_visible():
-            window = self._get_basic_layer_window()
-            if window is not None:
-                window.refresh_all()
+        self.refresh_basic_layer_window_if_visible()
         self.refresh_layer_blend_status()
         self.persist_basic_layers_state()
         self.save_persistent_ui_state()
@@ -8256,6 +8261,7 @@ class MainFrame(wx.Frame):
             body_tilt_opposite_to_head=self.is_body_tilt_opposite_to_head_enabled(),
             force_full_layer_follow=self.is_layer_force_full_follow_enabled(),
             binding_smoother=self.layer_binding_smoother,
+            motion_time_s=time.time(),
         )
     def _select_layer_slot(self, slot_id: Optional[int]) -> None:
         self.basic_layers_state.selected_slot_id = slot_id
@@ -8958,7 +8964,16 @@ class MainFrame(wx.Frame):
     def on_display_timer(self, event: Optional[wx.Event] = None):
         if self.is_model_loaded():
             self.update_display_transform_state()
-        self._present_smooth_output_frame()
+        swing_active = (
+            self.is_layer_blend_enabled()
+            and basic_layers_state_has_active_motion(self.basic_layers_state)
+            and self.last_output_wx_image is not None)
+        if swing_active:
+            # Single full composite per tick (avoids duplicate draw when affine also changed).
+            self.draw_cached_result_image(self.last_banner_text)
+            self._maybe_schedule_transparent_capture_update()
+        else:
+            self._present_smooth_output_frame()
         if self._basic_layer_window_visible():
             if self.should_refresh_auxiliary_preview(self._last_spine_diagram_refresh_time_ns):
                 self._last_spine_diagram_refresh_time_ns = time.time_ns()
@@ -9082,6 +9097,7 @@ class MainFrame(wx.Frame):
             self.source_image_panel.Update()
         if getattr(self, "output_frame", None) is not None and self.output_frame:
             self.output_frame.result_image_panel.Update()
+        self.refresh_basic_layer_window_if_visible()
         return True
 
     def load_model(self, event: wx.Event):

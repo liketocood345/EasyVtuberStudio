@@ -68,6 +68,20 @@ BINDING_CHARACTER_BODY = "character:body"
 BINDING_CHARACTER_HEAD = "character:head"
 BINDING_LAYER_PREFIX = "layer:"
 
+MOTION_MODE_NONE = "none"
+MOTION_MODE_SIMPLE_SWING = "simple_swing"
+SWING_SPEED_PROFILE_CONSTANT = "constant"
+SWING_SPEED_PROFILE_EASE_ENDS = "ease_ends"
+DEFAULT_SWING_PIVOT_U = 0.5
+DEFAULT_SWING_PIVOT_V = 1.0
+DEFAULT_SWING_AMPLITUDE_DEG = 15.0
+DEFAULT_SWING_SPEED_DEG_PER_SEC = 30.0
+SWING_AMPLITUDE_MIN_DEG = 1.0
+SWING_AMPLITUDE_MAX_DEG = 90.0
+SWING_SPEED_MIN_DEG_PER_SEC = 5.0
+SWING_SPEED_MAX_DEG_PER_SEC = 180.0
+SWING_MIN_AMPLITUDE_EPS = 1e-6
+
 
 def clamp_binding_smooth_alpha(value: float) -> float:
     return max(
@@ -244,6 +258,11 @@ def format_layer_row_summary(layer: BasicLayerSlot) -> str:
         parts.append("·".join(tags))
     else:
         parts.append("未绑")
+    if layer.motion_mode == MOTION_MODE_SIMPLE_SWING:
+        profile_tag = "匀" if layer.swing_speed_profile == SWING_SPEED_PROFILE_CONSTANT else "缓"
+        parts.append(
+            f"摆±{layer.swing_amplitude_deg:.0f}°"
+            f"@{layer.swing_speed_deg_per_sec:.0f}°/s·{profile_tag}")
     parts.append(f"scl{layer.transform.scale:.1f}")
     parts.append(f"rot{layer.transform.rotation_deg:.0f}°")
     parts.append("显" if layer.visible else "隐")
@@ -405,6 +424,13 @@ class BasicLayerSlot:
     binding_follow_smooth_alpha: float = BINDING_SMOOTH_ALPHA
     binding_ray_percent: Optional[float] = None
     binding_neck_anchor_ratio: Optional[float] = None
+    motion_mode: str = MOTION_MODE_NONE
+    swing_pivot_u: float = DEFAULT_SWING_PIVOT_U
+    swing_pivot_v: float = DEFAULT_SWING_PIVOT_V
+    swing_amplitude_deg: float = DEFAULT_SWING_AMPLITUDE_DEG
+    swing_speed_deg_per_sec: float = DEFAULT_SWING_SPEED_DEG_PER_SEC
+    swing_speed_profile: str = SWING_SPEED_PROFILE_EASE_ENDS
+    swing_phase_rad: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -426,6 +452,16 @@ class BasicLayerSlot:
         if normalize_binding_target(self.binding_parent) is not None:
             payload["binding_ray_percent"] = layer_binding_ray_percent(self)
             payload["binding_neck_anchor_ratio"] = layer_binding_neck_anchor_ratio(self)
+        payload["motion_mode"] = normalize_motion_mode(self.motion_mode)
+        if self.motion_mode == MOTION_MODE_SIMPLE_SWING:
+            payload["swing_pivot_u"] = clamp_swing_pivot_u(self.swing_pivot_u)
+            payload["swing_pivot_v"] = clamp_swing_pivot_v(self.swing_pivot_v)
+            payload["swing_amplitude_deg"] = clamp_swing_amplitude_deg(self.swing_amplitude_deg)
+            payload["swing_speed_deg_per_sec"] = clamp_swing_speed_deg_per_sec(
+                self.swing_speed_deg_per_sec)
+            payload["swing_speed_profile"] = normalize_swing_speed_profile(
+                self.swing_speed_profile)
+            payload["swing_phase_rad"] = float(self.swing_phase_rad)
         return payload
 
     @classmethod
@@ -457,6 +493,18 @@ class BasicLayerSlot:
                 clamp_neck_anchor_ratio(float(data["binding_neck_anchor_ratio"]))
                 if data.get("binding_neck_anchor_ratio") is not None
                 else None),
+            motion_mode=normalize_motion_mode(data.get("motion_mode")),
+            swing_pivot_u=clamp_swing_pivot_u(
+                float(data.get("swing_pivot_u", DEFAULT_SWING_PIVOT_U))),
+            swing_pivot_v=clamp_swing_pivot_v(
+                float(data.get("swing_pivot_v", DEFAULT_SWING_PIVOT_V))),
+            swing_amplitude_deg=clamp_swing_amplitude_deg(
+                float(data.get("swing_amplitude_deg", DEFAULT_SWING_AMPLITUDE_DEG))),
+            swing_speed_deg_per_sec=clamp_swing_speed_deg_per_sec(
+                float(data.get("swing_speed_deg_per_sec", DEFAULT_SWING_SPEED_DEG_PER_SEC))),
+            swing_speed_profile=normalize_swing_speed_profile(
+                data.get("swing_speed_profile")),
+            swing_phase_rad=float(data.get("swing_phase_rad", default_swing_phase_rad(slot_id))),
         )
 
 
@@ -581,12 +629,81 @@ def stack_position_can_move_down(stack_pos: int) -> bool:
     return stack_pos > min(LAYER_STACK_POSITIONS)
 
 
+def default_swing_phase_rad(slot_id: int) -> float:
+    return float(slot_id) * 1.1
+
+
+def normalize_motion_mode(value: Optional[str]) -> str:
+    if value == MOTION_MODE_SIMPLE_SWING:
+        return MOTION_MODE_SIMPLE_SWING
+    return MOTION_MODE_NONE
+
+
+def normalize_swing_speed_profile(value: Optional[str]) -> str:
+    if value == SWING_SPEED_PROFILE_CONSTANT:
+        return SWING_SPEED_PROFILE_CONSTANT
+    return SWING_SPEED_PROFILE_EASE_ENDS
+
+
+def clamp_swing_pivot_u(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def clamp_swing_pivot_v(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def clamp_swing_amplitude_deg(value: float) -> float:
+    return max(SWING_AMPLITUDE_MIN_DEG, min(SWING_AMPLITUDE_MAX_DEG, float(value)))
+
+
+def clamp_swing_speed_deg_per_sec(value: float) -> float:
+    return max(SWING_SPEED_MIN_DEG_PER_SEC, min(SWING_SPEED_MAX_DEG_PER_SEC, float(value)))
+
+
+def layer_has_active_swing(layer: BasicLayerSlot) -> bool:
+    return (
+        layer.enabled
+        and layer.visible
+        and bool(layer.asset_path)
+        and layer.motion_mode == MOTION_MODE_SIMPLE_SWING
+        and layer.swing_amplitude_deg > SWING_MIN_AMPLITUDE_EPS
+        and layer.swing_speed_deg_per_sec > SWING_MIN_AMPLITUDE_EPS)
+
+
+def basic_layers_state_has_active_motion(state: BasicLayersState) -> bool:
+    return any(layer_has_active_swing(layer) for layer in state.layers)
+
+
+def compute_swing_angle_deg(layer: BasicLayerSlot, time_s: float) -> float:
+    if layer.motion_mode != MOTION_MODE_SIMPLE_SWING:
+        return 0.0
+    if float(layer.swing_amplitude_deg) <= SWING_MIN_AMPLITUDE_EPS:
+        return 0.0
+    if float(layer.swing_speed_deg_per_sec) <= SWING_MIN_AMPLITUDE_EPS:
+        return 0.0
+    amplitude = clamp_swing_amplitude_deg(layer.swing_amplitude_deg)
+    speed = clamp_swing_speed_deg_per_sec(layer.swing_speed_deg_per_sec)
+    phase = float(layer.swing_phase_rad)
+    t = float(time_s)
+    if layer.swing_speed_profile == SWING_SPEED_PROFILE_CONSTANT:
+        span = 4.0 * amplitude
+        phase_dist = (phase / (2.0 * math.pi)) * span
+        s = (speed * t + phase_dist) % span
+        if s < 2.0 * amplitude:
+            return -amplitude + s
+        return amplitude - (s - 2.0 * amplitude)
+    omega = speed / amplitude
+    return amplitude * math.sin(omega * t + phase)
+
+
 def default_basic_layer_slot(slot_id: int) -> BasicLayerSlot:
     stack_pos = default_stack_position_for_slot(slot_id)
     return BasicLayerSlot(
         slot_id=slot_id,
         z_order=stack_pos,
         occlusion=occlusion_for_stack_position(stack_pos),
+        swing_phase_rad=default_swing_phase_rad(slot_id),
     )
 
 
@@ -620,6 +737,7 @@ class BindingContext:
     force_full_layer_follow: bool = False
     binding_smoother: Optional["LayerBindingSmoother"] = field(
         default=None, compare=False, repr=False)
+    motion_time_s: Optional[float] = None
 
     @property
     def scale_x(self) -> float:
@@ -1695,26 +1813,50 @@ class LayerCompositor:
             return
         if bitmap is None or not bitmap.IsOk():
             return
-        draw_x = int(round(rect.draw_x))
-        draw_y = int(round(rect.draw_y))
         draw_w = max(1, int(round(rect.draw_width)))
         draw_h = max(1, int(round(rect.draw_height)))
-        rotation_deg = float(layer.transform.rotation_deg)
+        container_rotation_deg = float(layer.transform.rotation_deg)
         if layers_state is not None:
-            rotation_deg = resolved_layer_rotation_deg(
+            container_rotation_deg = resolved_layer_rotation_deg(
                 layer, layers_state, rect, binding_context)
-        if abs(rotation_deg) > 1e-4:
+        swing_deg = 0.0
+        motion_time_s = None
+        if binding_context is not None:
+            motion_time_s = binding_context.motion_time_s
+        if (
+                motion_time_s is not None
+                and layer.asset_path
+                and layer.motion_mode == MOTION_MODE_SIMPLE_SWING):
+            swing_deg = compute_swing_angle_deg(layer, motion_time_s)
+        needs_transform = (
+            abs(container_rotation_deg) > 1e-4
+            or abs(swing_deg) > 1e-4)
+        if needs_transform:
             gc = wx.GraphicsContext.Create(dc)
             if gc is None:
-                dc.DrawBitmap(bitmap, draw_x, draw_y, True)
+                dc.DrawBitmap(
+                    bitmap,
+                    int(round(rect.draw_x)),
+                    int(round(rect.draw_y)),
+                    True)
                 return
             cx = rect.draw_x + rect.draw_width / 2.0
             cy = rect.draw_y + rect.draw_height / 2.0
+            pivot_off_x = (clamp_swing_pivot_u(layer.swing_pivot_u) - 0.5) * draw_w
+            pivot_off_y = (clamp_swing_pivot_v(layer.swing_pivot_v) - 0.5) * draw_h
             gc.Translate(cx, cy)
-            gc.Rotate(math.radians(rotation_deg))
+            gc.Rotate(math.radians(container_rotation_deg))
+            if abs(swing_deg) > 1e-4:
+                gc.Translate(pivot_off_x, pivot_off_y)
+                gc.Rotate(math.radians(swing_deg))
+                gc.Translate(-pivot_off_x, -pivot_off_y)
             gc.DrawBitmap(bitmap, -draw_w / 2.0, -draw_h / 2.0, draw_w, draw_h)
             return
-        dc.DrawBitmap(bitmap, draw_x, draw_y, True)
+        dc.DrawBitmap(
+            bitmap,
+            int(round(rect.draw_x)),
+            int(round(rect.draw_y)),
+            True)
 
     @classmethod
     def draw_layers_group(
