@@ -1,13 +1,24 @@
-"""Transparent capture: listable wx frame + layered desktop overlay."""
+"""Unified output window: single layered (per-pixel alpha) desktop overlay (ULW).
+
+This module is wx-free. The ULW (titled ``easyvtuberstudio_output``) is now the
+sole on-screen output + editing surface for *every* background mode: 真透 keeps
+per-pixel alpha for desktop-transparent output, while color/image/黑键 composite
+an opaque background plate into the same window. The wx OutputFrame is retired as
+an output surface. The window is a lone WS_EX_LAYERED popup driven by
+UpdateLayeredWindow; capture tools grab it via Windows Graphics Capture / game
+capture (with "allow transparency" for 真透, or colour-key #000000 for 黑键).
+Note: a layered window cannot be captured by legacy BitBlt window-capture, so
+BitBlt-only tools must use WGC instead.
+"""
 
 from __future__ import annotations
 
 import ctypes
+import os
 from ctypes import wintypes
 from typing import Callable, Optional, Tuple
 
 import numpy
-import wx
 
 _DEBUG_ERR_LOG_PATH = r"e:\debug-3353ed.log"
 
@@ -45,19 +56,55 @@ user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 kernel32 = ctypes.windll.kernel32
 
-WINDOW_TITLE = "THA4 Transparent Capture / 透明捕获输出"
+WINDOW_TITLE = "easyvtuberstudio_output"
 WINDOW_CLASS_NAME = "THA4TransparentCaptureWindow"
 
 WM_DESTROY = 0x0002
 WM_NCHITTEST = 0x0084
 WM_WINDOWPOSCHANGED = 0x0047
+WM_MOUSEMOVE = 0x0200
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
+WM_KEYDOWN = 0x0100
+WM_SETCURSOR = 0x0020
+WM_SETICON = 0x0080
+WM_ACTIVATE = 0x0006
+WA_INACTIVE = 0
+
+ICON_SMALL = 0
+ICON_BIG = 1
+IMAGE_ICON = 1
+LR_LOADFROMFILE = 0x00000010
+LR_DEFAULTSIZE = 0x00000040
+
+# Same artwork the packaged EasyVtuberStudio.exe uses for its icon.
+APP_ICON_RELPATH = os.path.join("assets", "branding", "app-icon-source.ico")
 
 HTCAPTION = 2
+HTCLIENT = 1
+
+MK_LBUTTON = 0x0001
+
+VK_SHIFT = 0x10
+VK_LEFT = 0x25
+VK_UP = 0x26
+VK_RIGHT = 0x27
+VK_DOWN = 0x28
+
+IDC_ARROW = 32512
 
 WS_POPUP = 0x80000000
 WS_EX_LAYERED = 0x00080000
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_APPWINDOW = 0x00040000
+WS_EX_TRANSPARENT = 0x00000020
+WS_EX_NOACTIVATE = 0x08000000
+
+# Decorative identification border drawn around the transparent output. It lives
+# in its own click-through, no-taskbar window so the streamed ULW stays clean
+# (capture software targets the ULW by title; this frame is never the target).
+BORDER_THICKNESS_PX = 4
+BORDER_COLOR_RGBA = (0, 200, 255, 235)
 
 GWL_EXSTYLE = -20
 SWP_NOMOVE = 0x0002
@@ -80,6 +127,14 @@ HWND_TOPMOST = -1
 
 GeometryCallback = Callable[[], None]
 PositionCallback = Callable[[int, int], None]
+# Returns True if the click started a layer edit (overlay should not drag window).
+EditBeginCallback = Callable[[int, int], bool]
+EditMotionCallback = Callable[[int, int], None]
+EditEndCallback = Callable[[], None]
+# Returns True if the arrow key nudged a layer (overlay consumed the key).
+KeyNudgeCallback = Callable[[float, float], bool]
+# Fired when the overlay window loses activation (user clicked away from it).
+DeactivateCallback = Callable[[], None]
 
 LRESULT = ctypes.c_ssize_t
 _WNDPROC = ctypes.WINFUNCTYPE(
@@ -148,65 +203,12 @@ _overlay_wndproc_ref = None
 _overlay_class_registered = False
 _prototypes_initialized = False
 
-def _get_window_exstyle(hwnd: int) -> int:
-    if not hwnd:
-        return 0
-    return int(user32.GetWindowLongW(int(hwnd), GWL_EXSTYLE))
-
-
-def _ensure_list_frame_discoverable(hwnd: int) -> None:
-    """Borderless wx frames may omit WS_EX_APPWINDOW; live pickers often require it."""
-    if not hwnd:
-        return
-    style = _get_window_exstyle(hwnd)
-    style = (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
-    user32.SetWindowLongW(int(hwnd), GWL_EXSTYLE, style)
-    user32.ShowWindow(wintypes.HWND(int(hwnd)), 5)
-    user32.SetWindowPos(
-        wintypes.HWND(int(hwnd)),
-        None,
-        0,
-        0,
-        0,
-        0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE,
-    )
-
-
 def _raise_overlay_topmost(overlay_hwnd: int) -> None:
     if not overlay_hwnd:
         return
     user32.SetWindowPos(
         wintypes.HWND(int(overlay_hwnd)),
         wintypes.HWND(HWND_TOPMOST),
-        0,
-        0,
-        0,
-        0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-    )
-
-
-def _apply_list_frame_black_colorkey(list_hwnd: int) -> None:
-    """Make list-frame black pixels see-through on desktop; capture still gets black."""
-    if not list_hwnd:
-        return
-    style = _get_window_exstyle(list_hwnd)
-    user32.SetWindowLongW(int(list_hwnd), GWL_EXSTYLE, style | WS_EX_LAYERED)
-    user32.SetLayeredWindowAttributes(
-        wintypes.HWND(int(list_hwnd)),
-        COLORKEY_BLACK,
-        0,
-        LWA_COLORKEY,
-    )
-
-
-def _lower_list_frame_zorder(list_hwnd: int) -> None:
-    if not list_hwnd:
-        return
-    user32.SetWindowPos(
-        wintypes.HWND(int(list_hwnd)),
-        wintypes.HWND(HWND_BOTTOM),
         0,
         0,
         0,
@@ -298,6 +300,22 @@ def _init_win32_prototypes() -> None:
     gdi32.DeleteDC.restype = wintypes.BOOL
     gdi32.DeleteDC.argtypes = [wintypes.HDC]
 
+    # HANDLE/HICON must not be truncated to c_int on 64-bit.
+    user32.LoadImageW.restype = wintypes.HANDLE
+    user32.LoadImageW.argtypes = [
+        wintypes.HINSTANCE,
+        wintypes.LPCWSTR,
+        wintypes.UINT,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.UINT,
+    ]
+    user32.SendMessageW.restype = LRESULT
+    user32.SendMessageW.argtypes = [
+        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetForegroundWindow.argtypes = []
+
     _prototypes_initialized = True
 
 
@@ -315,174 +333,41 @@ def _straight_rgba_to_premultiplied_bgra(rgba: numpy.ndarray) -> numpy.ndarray:
     return numpy.ascontiguousarray(bgra)
 
 
-def _rgba_to_wx_bitmap(rgba: numpy.ndarray) -> wx.Bitmap:
-    rgba = numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
-    height, width = rgba.shape[0], rgba.shape[1]
-    return wx.Bitmap.FromBufferRGBA(width, height, rgba.tobytes())
+def _resolve_app_icon_path() -> Optional[str]:
+    """Walk up from this module looking for the bundled app icon (same artwork
+    the packaged exe uses). Returns None if not present (e.g. icon not deployed)."""
+    cur = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(8):
+        candidate = os.path.join(cur, APP_ICON_RELPATH)
+        if os.path.isfile(candidate):
+            return candidate
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    return None
 
 
-class _CaptureListFrame(wx.Frame):
-    """Normal wx top-level frame for window capture pickers (no WS_EX_LAYERED)."""
-
-    def __init__(
-            self,
-            width: int,
-            height: int,
-            *,
-            on_geometry_changed: Optional[GeometryCallback] = None) -> None:
-        self._on_geometry_changed = on_geometry_changed
-        self._geometry_suppress = False
-        self._destroyed = False
-        self._client_width = max(1, int(width))
-        self._client_height = max(1, int(height))
-        self._bitmap = wx.Bitmap(self._client_width, self._client_height, 32)
-        super().__init__(
-            None,
-            title=WINDOW_TITLE,
-            style=wx.BORDER_NONE,
-            name=WINDOW_CLASS_NAME)
-        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
-        self.SetDoubleBuffered(True)
-        locked_size = wx.Size(self._client_width, self._client_height)
-        self.SetMinClientSize(locked_size)
-        self.SetMaxClientSize(locked_size)
-        self.SetSizeHints(
-            self._client_width,
-            self._client_height,
-            self._client_width,
-            self._client_height,
-            self._client_width,
-            self._client_height)
-        self.SetClientSize(locked_size)
-        self.Bind(wx.EVT_ERASE_BACKGROUND, lambda _event: None)
-        self.Bind(wx.EVT_PAINT, self._on_paint)
-        self.Bind(wx.EVT_SIZE, self._on_size)
-        self.Bind(wx.EVT_MOVE, self._on_move)
-        self.Bind(wx.EVT_CLOSE, self._on_close)
-        self.Bind(wx.EVT_LEFT_DOWN, self._on_drag_start)
-        self.Bind(wx.EVT_MOTION, self._on_drag_motion)
-        self.Bind(wx.EVT_LEFT_UP, self._on_drag_end)
-        self._dragging = False
-        self._drag_offset = wx.Point(0, 0)
-        self.Show(True)
-        list_hwnd = int(self.GetHandle())
-        _ensure_list_frame_discoverable(list_hwnd)
-        _apply_list_frame_black_colorkey(list_hwnd)
-        _lower_list_frame_zorder(list_hwnd)
-
-    def _on_size(self, event: wx.Event) -> None:
-        if self._destroyed:
-            return
-        locked_size = wx.Size(self._client_width, self._client_height)
-        if self.GetClientSize() != locked_size:
-            self.SetClientSize(locked_size)
-        event.Skip()
-
-    def _on_paint(self, _event: wx.Event) -> None:
-        if self._destroyed:
-            return
-        try:
-            dc = wx.AutoBufferedPaintDC(self)
-            dc.SetBackground(wx.Brush(wx.Colour(0, 0, 0)))
-            dc.Clear()
-            if self._bitmap.IsOk():
-                dc.DrawBitmap(self._bitmap, 0, 0, True)
-        except RuntimeError:
-            pass
-
-    def _on_move(self, _event: wx.Event) -> None:
-        if self._destroyed or self._geometry_suppress:
-            return
-        if self._on_geometry_changed is not None:
-            self._on_geometry_changed()
-
-    def _on_drag_start(self, event: wx.MouseEvent) -> None:
-        if self._destroyed:
-            return
-        self._dragging = True
-        self._drag_offset = event.GetPosition()
-        self.CaptureMouse()
-        event.Skip()
-
-    def _on_drag_motion(self, event: wx.MouseEvent) -> None:
-        if self._destroyed or not self._dragging or not event.Dragging():
-            return
-        screen_pos = self.ClientToScreen(event.GetPosition())
-        self._geometry_suppress = True
-        try:
-            self.SetPosition(wx.Point(
-                int(screen_pos.x - self._drag_offset.x),
-                int(screen_pos.y - self._drag_offset.y)))
-        finally:
-            self._geometry_suppress = False
-        if self._on_geometry_changed is not None:
-            self._on_geometry_changed()
-        event.Skip()
-
-    def _on_drag_end(self, event: wx.MouseEvent) -> None:
-        if self._dragging:
-            self._dragging = False
-            if self.HasCapture():
-                self.ReleaseMouse()
-        event.Skip()
-
-    def _on_close(self, event: wx.CloseEvent) -> None:
-        event.Veto()
-        try:
-            self.Hide()
-        except RuntimeError:
-            pass
-
-    def set_rgba(self, rgba: numpy.ndarray) -> None:
-        if self._destroyed:
-            return
-        height, width = rgba.shape[0], rgba.shape[1]
-        if width != self._client_width or height != self._client_height:
-            self._client_width = width
-            self._client_height = height
-            locked_size = wx.Size(width, height)
-            self.SetMinClientSize(locked_size)
-            self.SetMaxClientSize(locked_size)
-            self.SetClientSize(locked_size)
-        self._bitmap = _rgba_to_wx_bitmap(rgba)
-        if not self.IsShown():
-            self.Show(True)
-        self.Refresh(False)
-
-    def get_screen_client_rect(self) -> Tuple[int, int, int, int]:
-        if self._destroyed:
-            return 0, 0, self._client_width, self._client_height
-        try:
-            origin = self.GetScreenPosition()
-            return int(origin.x), int(origin.y), self._client_width, self._client_height
-        except RuntimeError:
-            return 0, 0, self._client_width, self._client_height
-
-    def set_screen_client_origin(self, x: int, y: int) -> None:
-        if self._destroyed:
-            return
-        self._geometry_suppress = True
-        try:
-            self.SetPosition(wx.Point(int(x), int(y)))
-        except RuntimeError:
-            pass
-        finally:
-            self._geometry_suppress = False
-
-    def destroy(self) -> None:
-        if self._destroyed:
-            return
-        self._destroyed = True
-        try:
-            if self.IsShown():
-                self.Hide()
-        except RuntimeError:
-            pass
-        try:
-            if not self.IsBeingDeleted():
-                self.Destroy()
-        except RuntimeError:
-            pass
+def _build_border_ring_rgba(
+        width: int,
+        height: int,
+        thickness: int,
+        color_rgba: Tuple[int, int, int, int]) -> numpy.ndarray:
+    """Opaque ring of `thickness` px around a fully transparent interior. The
+    interior matches the ULW footprint so the output shows through unobstructed."""
+    width = max(1, int(width))
+    height = max(1, int(height))
+    t = max(1, int(thickness))
+    r, g, b, a = color_rgba
+    out = numpy.zeros((height, width, 4), dtype=numpy.uint8)
+    out[:, :, 0] = r
+    out[:, :, 1] = g
+    out[:, :, 2] = b
+    out[:t, :, 3] = a
+    out[height - t:, :, 3] = a
+    out[:, :t, 3] = a
+    out[:, width - t:, 3] = a
+    return numpy.ascontiguousarray(out, dtype=numpy.uint8)
 
 
 class _DesktopOverlayWindow:
@@ -490,10 +375,34 @@ class _DesktopOverlayWindow:
 
     _OVERLAY_CLASS = "THA4TransparentCaptureOverlay"
 
-    def __init__(self, width: int, height: int, *, on_position_changed: Optional[PositionCallback] = None) -> None:
+    def __init__(
+            self,
+            width: int,
+            height: int,
+            *,
+            exstyle: int = WS_EX_LAYERED | WS_EX_APPWINDOW,
+            window_title: str = WINDOW_TITLE,
+            icon_path: Optional[str] = None,
+            on_position_changed: Optional[PositionCallback] = None,
+            on_edit_begin: Optional[EditBeginCallback] = None,
+            on_edit_motion: Optional[EditMotionCallback] = None,
+            on_edit_end: Optional[EditEndCallback] = None,
+            on_key_nudge: Optional[KeyNudgeCallback] = None,
+            on_deactivate: Optional[DeactivateCallback] = None) -> None:
         _init_win32_prototypes()
         self._destroyed = False
+        self._exstyle = int(exstyle)
+        self._window_title = str(window_title)
+        self._icon_path = icon_path
         self._on_position_changed = on_position_changed
+        self._on_edit_begin = on_edit_begin
+        self._on_edit_motion = on_edit_motion
+        self._on_edit_end = on_edit_end
+        self._on_key_nudge = on_key_nudge
+        self._on_deactivate = on_deactivate
+        self._editing = False
+        self._dragging_window = False
+        self._drag_anchor = (0, 0)
         self._width = max(1, int(width))
         self._height = max(1, int(height))
         self._hwnd = None
@@ -519,6 +428,10 @@ class _DesktopOverlayWindow:
         wc.style = 0
         wc.lpfnWndProc = ctypes.cast(_overlay_wndproc_ref, ctypes.c_void_p)
         wc.hInstance = kernel32.GetModuleHandleW(None)
+        try:
+            wc.hCursor = user32.LoadCursorW(None, IDC_ARROW)
+        except Exception:
+            wc.hCursor = 0
         wc.lpszClassName = cls._OVERLAY_CLASS
         if user32.RegisterClassW(ctypes.byref(wc)) == 0:
             error = kernel32.GetLastError()
@@ -529,13 +442,158 @@ class _DesktopOverlayWindow:
     @staticmethod
     def _window_proc(hwnd, msg, wparam, lparam):
         inst = _overlay_instances.get(int(hwnd))
-        if msg == WM_NCHITTEST:
-            return HTCAPTION
-        if msg == WM_WINDOWPOSCHANGED and inst is not None:
-            inst._notify_position_changed()
+        if inst is not None:
+            try:
+                handled, result = inst._handle_message(msg, wparam, lparam)
+            except Exception as exc:
+                _capture_window_err_record(
+                    "transparent_capture_window.py:_window_proc", exc)
+                handled, result = False, 0
+            if handled:
+                return result
         if msg == WM_DESTROY:
             _overlay_instances.pop(int(hwnd), None)
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    @staticmethod
+    def _lparam_to_xy(lparam: int) -> Tuple[int, int]:
+        x = ctypes.c_short(lparam & 0xFFFF).value
+        y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+        return int(x), int(y)
+
+    def _handle_message(self, msg: int, wparam: int, lparam: int) -> Tuple[bool, int]:
+        """Returns (handled, lresult). When handled is False the caller falls
+        through to DefWindowProcW. The overlay client area maps 1:1 to the
+        output canvas (window created at canvas size, WS_POPUP no border)."""
+        if msg == WM_NCHITTEST:
+            # HTCLIENT so we receive mouse messages; window drag is manual
+            # (so clicks on a selected layer can edit instead of move-window).
+            return True, HTCLIENT
+        if msg == WM_WINDOWPOSCHANGED:
+            self._notify_position_changed()
+            return False, 0
+        if msg == WM_ACTIVATE:
+            # Low word == WA_INACTIVE means this window is losing activation
+            # (user clicked away). Let the app decide whether to drop the layer
+            # selection (kept only when focus moves to the layer/output window).
+            if (int(wparam) & 0xFFFF) == WA_INACTIVE and self._on_deactivate is not None:
+                try:
+                    self._on_deactivate()
+                except Exception:
+                    pass
+            return False, 0
+        if msg == WM_LBUTTONDOWN:
+            self._on_left_down(lparam)
+            return True, 0
+        if msg == WM_MOUSEMOVE:
+            self._on_mouse_move(wparam, lparam)
+            return True, 0
+        if msg == WM_LBUTTONUP:
+            self._on_left_up()
+            return True, 0
+        if msg == WM_KEYDOWN:
+            if self._on_key_down(wparam):
+                return True, 0
+            return False, 0
+        if msg == WM_DESTROY:
+            _overlay_instances.pop(int(self._hwnd or 0), None)
+            return False, 0
+        return False, 0
+
+    def _on_left_down(self, lparam: int) -> None:
+        if self._destroyed or not self._hwnd:
+            return
+        x, y = self._lparam_to_xy(lparam)
+        hwnd = wintypes.HWND(int(self._hwnd))
+        try:
+            user32.SetForegroundWindow(hwnd)
+            user32.SetFocus(hwnd)
+        except Exception:
+            pass
+        began = False
+        if self._on_edit_begin is not None:
+            try:
+                began = bool(self._on_edit_begin(x, y))
+            except Exception:
+                began = False
+        if began:
+            self._editing = True
+            self._dragging_window = False
+        else:
+            self._editing = False
+            self._dragging_window = True
+            pt = POINT()
+            rect = wintypes.RECT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            self._drag_anchor = (int(pt.x - rect.left), int(pt.y - rect.top))
+        try:
+            user32.SetCapture(hwnd)
+        except Exception:
+            pass
+
+    def _on_mouse_move(self, wparam: int, lparam: int) -> None:
+        if self._destroyed or not self._hwnd:
+            return
+        if self._editing:
+            x, y = self._lparam_to_xy(lparam)
+            if self._on_edit_motion is not None:
+                try:
+                    self._on_edit_motion(x, y)
+                except Exception:
+                    pass
+            return
+        if self._dragging_window and (int(wparam) & MK_LBUTTON):
+            pt = POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            anchor_x, anchor_y = self._drag_anchor
+            user32.SetWindowPos(
+                wintypes.HWND(int(self._hwnd)),
+                wintypes.HWND(HWND_TOPMOST),
+                int(pt.x - anchor_x),
+                int(pt.y - anchor_y),
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOACTIVATE)
+
+    def _on_left_up(self) -> None:
+        try:
+            user32.ReleaseCapture()
+        except Exception:
+            pass
+        was_editing = self._editing
+        self._editing = False
+        self._dragging_window = False
+        if was_editing and self._on_edit_end is not None:
+            try:
+                self._on_edit_end()
+            except Exception:
+                pass
+
+    def _on_key_down(self, wparam: int) -> bool:
+        if self._on_key_nudge is None:
+            return False
+        vk = int(wparam)
+        try:
+            shift = bool(user32.GetKeyState(VK_SHIFT) & 0x8000)
+        except Exception:
+            shift = False
+        step = 10.0 if shift else 1.0
+        dx = dy = 0.0
+        if vk == VK_LEFT:
+            dx = -step
+        elif vk == VK_RIGHT:
+            dx = step
+        elif vk == VK_UP:
+            dy = -step
+        elif vk == VK_DOWN:
+            dy = step
+        else:
+            return False
+        try:
+            return bool(self._on_key_nudge(dx, dy))
+        except Exception:
+            return False
 
     def _notify_position_changed(self) -> None:
         if self._destroyed or not self._hwnd:
@@ -549,9 +607,9 @@ class _DesktopOverlayWindow:
 
     def _create_window(self) -> None:
         hwnd = user32.CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TOOLWINDOW,
+            self._exstyle,
             self._OVERLAY_CLASS,
-            "",
+            self._window_title,
             WS_POPUP,
             100,
             100,
@@ -566,6 +624,25 @@ class _DesktopOverlayWindow:
             raise OSError(f"CreateWindowExW failed: {kernel32.GetLastError()}")
         self._hwnd = int(hwnd)
         _overlay_instances[self._hwnd] = self
+        self._apply_window_icon()
+
+    def _apply_window_icon(self) -> None:
+        if not self._icon_path or not self._hwnd:
+            return
+        try:
+            hicon = user32.LoadImageW(
+                None,
+                self._icon_path,
+                IMAGE_ICON,
+                0,
+                0,
+                LR_LOADFROMFILE | LR_DEFAULTSIZE)
+            if hicon:
+                hwnd = wintypes.HWND(self._hwnd)
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon)
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon)
+        except Exception:
+            pass
 
     def _create_dib(self) -> None:
         self._release_dib()
@@ -640,13 +717,23 @@ class _DesktopOverlayWindow:
             height,
             SWP_NOACTIVATE)
 
-    def update_rgba(self, rgba: numpy.ndarray) -> None:
+    def update_rgba(
+            self,
+            rgba: numpy.ndarray,
+            *,
+            premultiplied_bgra: Optional[numpy.ndarray] = None) -> None:
         if self._destroyed or not self.is_valid():
             return
         if self._bits_buffer is None or self._hdc_mem is None:
             return
         try:
-            bgra_premul = _straight_rgba_to_premultiplied_bgra(rgba)
+            if premultiplied_bgra is not None:
+                bgra_premul = numpy.ascontiguousarray(
+                    premultiplied_bgra, dtype=numpy.uint8)
+            else:
+                bgra_premul = _straight_rgba_to_premultiplied_bgra(rgba)
+            if bgra_premul.nbytes != self._buffer_size:
+                bgra_premul = _straight_rgba_to_premultiplied_bgra(rgba)
             if bgra_premul.nbytes != self._buffer_size:
                 return
             ctypes.memmove(self._bits_buffer, bgra_premul.ctypes.data, self._buffer_size)
@@ -666,6 +753,12 @@ class _DesktopOverlayWindow:
                 self._visible = True
         except Exception:
             return
+
+    def show(self) -> None:
+        if not self.is_valid():
+            return
+        user32.ShowWindow(wintypes.HWND(self._hwnd), 5)
+        self._visible = True
 
     def hide(self) -> None:
         if not self.is_valid():
@@ -691,111 +784,149 @@ class _DesktopOverlayWindow:
 
 
 class TransparentCaptureWindow:
-    """On-screen listable capture frame + topmost true-transparent overlay."""
+    """Single topmost true-transparent (per-pixel alpha) overlay window (ULW).
+
+    The ULW is the only window now: it owns geometry (position via
+    WM_WINDOWPOSCHANGED, dragging via the overlay's HTCAPTION hit-test) and the
+    framebuffer (UpdateLayeredWindow). The previous color-key wx list frame is
+    retired; transparent-mode capture goes through WGC / game capture with
+    "allow transparency". The on-screen editing surface remains the wx
+    OutputFrame until P6 wires Win32 editing onto this overlay.
+    """
 
     def __init__(
             self,
             width: int,
             height: int,
             *,
-            on_geometry_changed: Optional[GeometryCallback] = None) -> None:
+            on_geometry_changed: Optional[GeometryCallback] = None,
+            on_edit_begin: Optional[EditBeginCallback] = None,
+            on_edit_motion: Optional[EditMotionCallback] = None,
+            on_edit_end: Optional[EditEndCallback] = None,
+            on_key_nudge: Optional[KeyNudgeCallback] = None,
+            on_deactivate: Optional[DeactivateCallback] = None) -> None:
         _ensure_dpi_awareness()
         self._destroyed = False
         self._on_geometry_changed = on_geometry_changed
         self._geometry_sync_suppress = False
-        self._visible_x = 0
-        self._visible_y = 0
+        self._width = max(1, int(width))
+        self._height = max(1, int(height))
+        self._visible_x = 100
+        self._visible_y = 100
         self._last_overlay_rect: Optional[Tuple[int, int, int, int]] = None
         self._last_frame_hash: Optional[int] = None
-        self._list_frame = _CaptureListFrame(
-            width,
-            height,
-            on_geometry_changed=self._on_list_frame_geometry_changed)
+        self._border_thickness = max(0, int(BORDER_THICKNESS_PX))
+        self._border_last_size: Optional[Tuple[int, int]] = None
         self._overlay = _DesktopOverlayWindow(
             width,
             height,
-            on_position_changed=self._on_overlay_position_changed)
-        origin = self._list_frame.GetScreenPosition()
-        self._visible_x = int(origin.x)
-        self._visible_y = int(origin.y)
+            exstyle=WS_EX_LAYERED | WS_EX_APPWINDOW,
+            window_title=WINDOW_TITLE,
+            icon_path=_resolve_app_icon_path(),
+            on_position_changed=self._on_overlay_position_changed,
+            on_edit_begin=on_edit_begin,
+            on_edit_motion=on_edit_motion,
+            on_edit_end=on_edit_end,
+            on_key_nudge=on_key_nudge,
+            on_deactivate=on_deactivate)
+        # Separate click-through, no-taskbar border window. Never the capture
+        # target, so it stays out of the stream while marking the output on-screen.
+        self._border: Optional[_DesktopOverlayWindow] = None
+        if self._border_thickness > 0:
+            try:
+                self._border = _DesktopOverlayWindow(
+                    width + 2 * self._border_thickness,
+                    height + 2 * self._border_thickness,
+                    exstyle=(WS_EX_LAYERED | WS_EX_TRANSPARENT
+                             | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE),
+                    window_title="")
+            except OSError:
+                self._border = None
         self._sync_visible_geometry(force=True)
-
-    def _on_list_frame_geometry_changed(self) -> None:
-        if self._destroyed or self._geometry_sync_suppress:
-            return
-        origin = self._list_frame.GetScreenPosition()
-        self._apply_visible_position(int(origin.x), int(origin.y), notify=False)
-        if self._on_geometry_changed is not None:
-            self._on_geometry_changed()
 
     def _on_overlay_position_changed(self, x: int, y: int) -> None:
         if self._destroyed or self._geometry_sync_suppress:
             return
         if self._visible_x == int(x) and self._visible_y == int(y):
             return
-        self._geometry_sync_suppress = True
-        try:
-            self._apply_visible_position(x, y, notify=False)
-            self._list_frame.set_screen_client_origin(x, y)
-        finally:
-            self._geometry_sync_suppress = False
+        self._visible_x = int(x)
+        self._visible_y = int(y)
+        self._last_overlay_rect = (
+            self._visible_x, self._visible_y, self._width, self._height)
+        # Keep the decorative border glued to the ULW while the user drags it.
+        # set_geometry re-raises the border to the top of the topmost band, so
+        # re-raise the ULW above it afterwards or the border would sit in front
+        # of the output window (z-order looks wrong / intercepts the edit).
+        self._sync_border_geometry()
+        _raise_overlay_topmost(int(self._overlay._hwnd or 0))
         if self._on_geometry_changed is not None:
             self._on_geometry_changed()
 
-    def _apply_visible_position(self, x: int, y: int, *, notify: bool = False) -> None:
-        width = self._list_frame._client_width
-        height = self._list_frame._client_height
-        rect = (int(x), int(y), width, height)
-        if rect == self._last_overlay_rect:
-            return
-        self._visible_x = int(x)
-        self._visible_y = int(y)
-        self._last_overlay_rect = rect
-        list_hwnd = self.hwnd
-        _apply_list_frame_black_colorkey(list_hwnd)
-        _lower_list_frame_zorder(list_hwnd)
-        self._overlay.set_geometry(self._visible_x, self._visible_y, width, height)
-        _raise_overlay_topmost(int(self._overlay._hwnd or 0))
-        if notify and self._on_geometry_changed is not None:
-            self._on_geometry_changed()
-
     def _sync_visible_geometry(self, *, force: bool = False) -> None:
-        if self._destroyed:
+        if self._destroyed or self._overlay is None:
             return
-        width = self._list_frame._client_width
-        height = self._list_frame._client_height
-        rect = (self._visible_x, self._visible_y, width, height)
+        rect = (self._visible_x, self._visible_y, self._width, self._height)
         if not force and rect == self._last_overlay_rect:
             return
-        self._list_frame.set_screen_client_origin(self._visible_x, self._visible_y)
-        self._apply_visible_position(self._visible_x, self._visible_y, notify=False)
+        self._last_overlay_rect = rect
+        self._geometry_sync_suppress = True
+        try:
+            self._overlay.set_geometry(
+                self._visible_x, self._visible_y, self._width, self._height)
+            # Place the border first, then raise the ULW above it so the output
+            # window stays on top (the border interior is transparent regardless).
+            self._sync_border_geometry()
+            _raise_overlay_topmost(int(self._overlay._hwnd or 0))
+        finally:
+            self._geometry_sync_suppress = False
+
+    def _sync_border_geometry(self) -> None:
+        border = self._border
+        if border is None or not border.is_valid():
+            return
+        t = self._border_thickness
+        bw = self._width + 2 * t
+        bh = self._height + 2 * t
+        border.set_geometry(self._visible_x - t, self._visible_y - t, bw, bh)
+        if self._border_last_size != (bw, bh):
+            self._border_last_size = (bw, bh)
+            try:
+                ring = _build_border_ring_rgba(bw, bh, t, BORDER_COLOR_RGBA)
+                border.update_rgba(ring)
+            except Exception:
+                pass
 
     @property
     def hwnd(self) -> int:
-        if self._destroyed:
+        if self._destroyed or self._overlay is None:
             return 0
-        try:
-            return int(self._list_frame.GetHandle())
-        except RuntimeError:
-            return 0
+        return int(self._overlay._hwnd or 0)
 
     def is_valid(self) -> bool:
-        if self._destroyed:
+        if self._destroyed or self._overlay is None:
+            return False
+        return self._overlay.is_valid()
+
+    def owns_foreground_window(self) -> bool:
+        """True when the OS foreground window is this ULW (the on-screen output
+        window). Lets the wx app tell "user clicked the output window" apart
+        from "user clicked away", since the ULW is a Win32 window and never
+        shows up in wx focus."""
+        if self._destroyed or self._overlay is None:
+            return False
+        hwnd = int(self._overlay._hwnd or 0)
+        if not hwnd:
             return False
         try:
-            return bool(self._list_frame) and self._list_frame.GetHandle() != 0
-        except RuntimeError:
+            fg = user32.GetForegroundWindow()
+            return bool(fg) and int(fg) == hwnd
+        except Exception:
             return False
 
     def get_rect(self) -> Tuple[int, int, int, int]:
         if self._destroyed:
             return 0, 0, 1, 1
-        return (
-            self._visible_x,
-            self._visible_y,
-            self._list_frame._client_width,
-            self._list_frame._client_height,
-        )
+        return (self._visible_x, self._visible_y, self._width, self._height)
 
     def set_position(self, x: int, y: int) -> None:
         if self._destroyed:
@@ -807,20 +938,19 @@ class TransparentCaptureWindow:
     def show(self) -> None:
         if not self.is_valid():
             return
-        try:
-            self._list_frame.Show(True)
-        except RuntimeError:
-            return
+        # Show the (possibly still-empty/transparent) ULW immediately so capture
+        # software can list/remember it by title before the first frame arrives.
+        self._overlay.show()
         self._sync_visible_geometry(force=True)
+        if self._border is not None and self._border.is_valid():
+            self._border.show()
+        _raise_overlay_topmost(int(self._overlay._hwnd or 0))
 
     def hide(self) -> None:
-        if self._destroyed:
+        if self._destroyed or self._overlay is None:
             return
-        try:
-            if self.is_valid():
-                self._list_frame.Hide()
-        except RuntimeError:
-            pass
+        if self._border is not None:
+            self._border.hide()
         self._overlay.hide()
 
     def destroy(self) -> None:
@@ -828,19 +958,26 @@ class TransparentCaptureWindow:
             return
         self._destroyed = True
         overlay = self._overlay
-        list_frame = self._list_frame
+        border = self._border
         self._overlay = None
-        self._list_frame = None
+        self._border = None
         try:
-            overlay.destroy()
+            if border is not None:
+                border.destroy()
         except Exception:
             pass
         try:
-            list_frame.destroy()
+            if overlay is not None:
+                overlay.destroy()
         except Exception:
             pass
 
-    def update_frame_rgba(self, rgba: numpy.ndarray, *, frame_signature: Optional[tuple] = None) -> None:
+    def update_frame_rgba(
+            self,
+            rgba: numpy.ndarray,
+            *,
+            frame_signature: Optional[tuple] = None,
+            premultiplied_bgra: Optional[numpy.ndarray] = None) -> None:
         if self._destroyed or not self.is_valid():
             return
         try:
@@ -854,12 +991,16 @@ class TransparentCaptureWindow:
                 if frame_hash == self._last_frame_hash:
                     return
                 self._last_frame_hash = frame_hash
+            height, width = int(rgba.shape[0]), int(rgba.shape[1])
+            if width != self._width or height != self._height:
+                self._width = width
+                self._height = height
+                self._sync_visible_geometry(force=True)
             transparent = rgba[:, :, 3] == 0
             if numpy.any(transparent):
                 rgba = rgba.copy()
                 rgba[transparent, 0:3] = 0
-            self._list_frame.set_rgba(rgba)
-            self._overlay.update_rgba(rgba)
+            self._overlay.update_rgba(rgba, premultiplied_bgra=premultiplied_bgra)
         except Exception as exc:
             _capture_window_err_record("transparent_capture_window.py:update_frame_rgba", exc)
             raise

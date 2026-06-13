@@ -1,4 +1,5 @@
 # Overwrite easyvtuberstudio-develop from easyvtuberstudio-main release tree, preserving dev-only paths.
+# Root README.md is maintained only on main; not mirrored fork -> develop.
 # Usage (from develop repo root):
 #   powershell -ExecutionPolicy Bypass -File scripts\maint\sync_from_fork.ps1
 
@@ -45,7 +46,7 @@ try {
     }
 
     $excludeDirs = @((Split-Path $backup -Leaf)) + $ExcludeFromMirror
-    $roboArgs = @($ForkRoot, $DevRoot, "/MIR", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP")
+    $roboArgs = @($ForkRoot, $DevRoot, "/MIR", "/XF", "README.md", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP")
     foreach ($d in $excludeDirs) {
         $roboArgs += "/XD"
         $roboArgs += $d
@@ -79,4 +80,4 @@ finally {
 }
 
 Write-Host "Done. Fork: $ForkRoot"
-Write-Host "Develop protected: addons payloads, runtime/, workspace/, $($PreserveRelative -join ', ')"
+Write-Host "Develop protected: README.md (main-only), addons payloads, runtime/, workspace/, $($PreserveRelative -join ', ')"

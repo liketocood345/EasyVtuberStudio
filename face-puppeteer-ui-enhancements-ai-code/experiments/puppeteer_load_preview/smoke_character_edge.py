@@ -10,28 +10,20 @@ EXPERIMENT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(EXPERIMENT_DIR))
 
 from character_edge_postprocess import (
-    CHARACTER_EDGE_FLICKER,
     CHARACTER_EDGE_NONE,
     CHARACTER_EDGE_OUTLINE,
     apply_character_edge_postprocess,
     clamp_character_edge_width,
     normalize_character_edge_mode,
-    stabilize_character_edge_fringe,
 )
 
 
 def test_mode_normalization() -> None:
     assert normalize_character_edge_mode("outline") == CHARACTER_EDGE_OUTLINE
-    assert normalize_character_edge_mode("invalid") == CHARACTER_EDGE_FLICKER
-
-
-def test_fringe_stabilization() -> None:
-    rgba = numpy.zeros((8, 8, 4), dtype=numpy.uint8)
-    rgba[3:5, 3:5, 3] = 128
-    rgba[3:5, 3:5, 0:3] = 200
-    result = stabilize_character_edge_fringe(rgba, (0, 0, 0), fringe_width=2)
-    assert numpy.all(result[0, 0, 3] == 0)
-    assert numpy.all(result[3:5, 3:5, 3] == 255)
+    assert normalize_character_edge_mode("none") == CHARACTER_EDGE_NONE
+    # Removed/unknown modes (e.g. the retired "flicker") fall back to no effect.
+    assert normalize_character_edge_mode("flicker") == CHARACTER_EDGE_NONE
+    assert normalize_character_edge_mode("invalid") == CHARACTER_EDGE_NONE
 
 
 def test_outline_adds_ring() -> None:
@@ -74,7 +66,6 @@ def test_fractional_dilation_between_steps() -> None:
 
 def main() -> None:
     test_mode_normalization()
-    test_fringe_stabilization()
     test_outline_adds_ring()
     test_none_passthrough()
     test_clamp_fractional_width()

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import math
 
+import cv2
 import numpy
-import PIL.Image
 
 
 def wx_image_to_rgba_array(image) -> numpy.ndarray:
@@ -23,9 +23,11 @@ def scale_rgba(rgba: numpy.ndarray, width: int, height: int) -> numpy.ndarray:
     height = max(1, int(height))
     if rgba.shape[0] == height and rgba.shape[1] == width:
         return numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
-    image = PIL.Image.fromarray(rgba, "RGBA")
-    resized = image.resize((width, height), PIL.Image.Resampling.LANCZOS)
-    return numpy.ascontiguousarray(numpy.array(resized, dtype=numpy.uint8))
+    rgba = numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
+    downscaling = (width * height) < (rgba.shape[1] * rgba.shape[0])
+    interpolation = cv2.INTER_AREA if downscaling else cv2.INTER_LINEAR
+    resized = cv2.resize(rgba, (width, height), interpolation=interpolation)
+    return numpy.ascontiguousarray(resized, dtype=numpy.uint8)
 
 
 def sanitize_transparent_rgb(rgba: numpy.ndarray) -> numpy.ndarray:
@@ -85,29 +87,24 @@ def compose_character_rgba_from_keyframe(
         anchor_y_render
         - display_scale * sin_r * keyframe_width / 2.0
         - display_scale * cos_r * keyframe_height)
+    # cv2.warpAffine consumes the FORWARD matrix (src -> dst) directly, so no
+    # inverse is needed (PIL.transform wanted the inverse). This is ~10-50x
+    # faster than PIL BICUBIC affine, which is what kept the present hot path
+    # at ~85 ms/frame on the UI thread.
     forward = numpy.array(
         [
             [display_scale * cos_r, -display_scale * sin_r, tx],
             [display_scale * sin_r, display_scale * cos_r, ty],
         ],
         dtype=numpy.float64)
-    inverse = _invert_affine(forward)
-    coeffs = (
-        inverse[0, 0],
-        inverse[0, 1],
-        inverse[0, 2],
-        inverse[1, 0],
-        inverse[1, 1],
-        inverse[1, 2],
-    )
-    source = PIL.Image.fromarray(keyframe_rgba, "RGBA")
-    warped = source.transform(
+    out = cv2.warpAffine(
+        keyframe_rgba,
+        forward,
         (render_width, render_height),
-        PIL.Image.Transform.AFFINE,
-        coeffs,
-        resample=PIL.Image.Resampling.BICUBIC,
-        fillcolor=(0, 0, 0, 0))
-    out = numpy.ascontiguousarray(numpy.array(warped, dtype=numpy.uint8))
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0, 0))
+    out = numpy.ascontiguousarray(out, dtype=numpy.uint8)
     if antialias_factor > 1.001:
         out = scale_rgba(
             out,

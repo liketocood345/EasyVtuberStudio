@@ -28,7 +28,8 @@ $copyDirs = @(
     "addons", "assets", "bin", "data", "deps", "distiller-ui-doc", "docs", "face-puppeteer-ui-enhancements-ai-code",
     "packaging", "plans", "poetry", "scripts", "src", "tools"
 )
-$copyFiles = @(".gitignore", ".python-version", "README.md", "EasyVtuberStudio.exe", "DEPLOY.bat", "RESET_ADDON.bat")
+# Root README.md: edit only on easyvtuberstudio-main; never copied develop -> fork (GitHub gets it via push).
+$copyFiles = @(".gitignore", ".python-version", "EasyVtuberStudio.exe", "DEPLOY.bat", "RESET_ADDON.bat")
 
 $excludeDirs = @(
     "__pycache__", ".codegraph", "venv", "runtime", "external_layer_output", "basic_layers",

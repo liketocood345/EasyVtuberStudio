@@ -10,6 +10,9 @@ from layer_runtime import (
     BINDING_CHARACTER_BODY,
     BINDING_CHARACTER_HEAD,
     BINDING_SMOOTH_ALPHA,
+    BODY_BIND_LEAN_FOLLOW_GAIN,
+    BODY_BIND_LEAN_FOLLOW_GAIN_MAX,
+    BODY_BIND_LEAN_FOLLOW_GAIN_MIN,
     BIND_RAY_PERCENT_DEFAULT,
     BIND_RAY_PERCENT_UI_MAX,
     BIND_RAY_PERCENT_UI_MIN,
@@ -31,6 +34,7 @@ from layer_runtime import (
     binding_smooth_alpha_for_layer,
     center_layer_transform,
     clamp_binding_smooth_alpha,
+    clamp_body_bind_lean_follow_gain,
     clamp_neck_anchor_ratio,
     clamp_swing_amplitude_deg,
     clamp_swing_speed_deg_per_sec,
@@ -192,9 +196,54 @@ class SpineRayReferencePanel(wx.Panel):
         self.ratio_caption.Wrap(440)
         root.Add(self.ratio_caption, 0, wx.ALL, 6)
 
+        gain_min = int(round(BODY_BIND_LEAN_FOLLOW_GAIN_MIN * 100))
+        gain_max = int(round(BODY_BIND_LEAN_FOLLOW_GAIN_MAX * 100))
+        gain_default = int(round(BODY_BIND_LEAN_FOLLOW_GAIN * 100))
+
+        lean_pos_row = wx.BoxSizer(wx.HORIZONTAL)
+        lean_pos_row.Add(
+            wx.StaticText(self, label="随倾位移 / Lean shift"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            6)
+        self.lean_pos_slider = wx.Slider(
+            self, value=gain_default, minValue=gain_min, maxValue=gain_max,
+            style=wx.SL_HORIZONTAL)
+        self.lean_pos_slider.SetToolTip(
+            "身绑锚点随角色左右倾斜的位移增益：越小越稳（轻微动作不再大幅甩动），"
+            "0%=锚点不随倾，100%=默认。只管位置，不改精灵转动。/ "
+            "Body-bind anchor lean-shift gain: lower = steadier position "
+            "(small leans no longer fling the layer), 0% = pinned, 100% = default. "
+            "Position only; does not rotate the sprite.")
+        lean_pos_row.Add(self.lean_pos_slider, 1, wx.EXPAND)
+        self.lean_pos_label = wx.StaticText(self, label=f"{gain_default}%")
+        lean_pos_row.Add(self.lean_pos_label, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 8)
+        root.Add(lean_pos_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+        lean_roll_row = wx.BoxSizer(wx.HORIZONTAL)
+        lean_roll_row.Add(
+            wx.StaticText(self, label="随倾转动 / Lean rotate"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            6)
+        self.lean_roll_slider = wx.Slider(
+            self, value=gain_default, minValue=gain_min, maxValue=gain_max,
+            style=wx.SL_HORIZONTAL)
+        self.lean_roll_slider.SetToolTip(
+            "身绑精灵随角色左右倾斜的转动增益：只管精灵自身旋转，不改锚点位置，"
+            "0%=精灵不随倾转动，100%=默认。/ "
+            "Body-bind sprite lean-rotate gain: rotates the sprite only, "
+            "does not move the anchor. 0% = no roll follow, 100% = default.")
+        lean_roll_row.Add(self.lean_roll_slider, 1, wx.EXPAND)
+        self.lean_roll_label = wx.StaticText(self, label=f"{gain_default}%")
+        lean_roll_row.Add(self.lean_roll_label, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 8)
+        root.Add(lean_roll_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
         self.neck_ratio_slider.Bind(wx.EVT_SLIDER, self._on_neck_ratio_changed)
         self.body_bind_spin.Bind(wx.EVT_SPINCTRL, self._on_body_bind_changed)
         self.head_bind_spin.Bind(wx.EVT_SPINCTRL, self._on_head_bind_changed)
+        self.lean_pos_slider.Bind(wx.EVT_SLIDER, self._on_lean_pos_changed)
+        self.lean_roll_slider.Bind(wx.EVT_SLIDER, self._on_lean_roll_changed)
         self.sync_from_main_frame()
 
     def _rebuild_live_snapshot(self) -> None:
@@ -224,6 +273,15 @@ class SpineRayReferencePanel(wx.Panel):
         self.neck_ratio_label.SetLabel(f"{pct}%")
         self.body_bind_spin.SetValue(int(round(body_pct)))
         self.head_bind_spin.SetValue(int(round(head_pct)))
+        if hasattr(self, "lean_pos_slider"):
+            pos_gain = clamp_body_bind_lean_follow_gain(
+                self.main_frame.get_body_bind_pos_follow_gain())
+            self.lean_pos_slider.SetValue(int(round(pos_gain * 100)))
+            self.lean_pos_label.SetLabel(f"{int(round(pos_gain * 100))}%")
+            roll_gain = clamp_body_bind_lean_follow_gain(
+                self.main_frame.get_body_bind_roll_follow_gain())
+            self.lean_roll_slider.SetValue(int(round(roll_gain * 100)))
+            self.lean_roll_label.SetLabel(f"{int(round(roll_gain * 100))}%")
         upper_pct = int(round((HEAD_ANCHOR_RATIO - ratio) * 100))
         self._rebuild_live_snapshot()
         body_layers = sum(1 for m in self._binding_markers if m.marker_kind == "body_layer")
@@ -360,6 +418,22 @@ class SpineRayReferencePanel(wx.Panel):
         self.main_frame.set_spine_head_bind_ray_percent(
             float(self.head_bind_spin.GetValue()))
         self.sync_from_main_frame()
+        event.Skip()
+
+    def _on_lean_pos_changed(self, event: wx.Event) -> None:
+        gain = clamp_body_bind_lean_follow_gain(
+            self.lean_pos_slider.GetValue() / 100.0)
+        self.main_frame.set_body_bind_pos_follow_gain(gain)
+        self.lean_pos_label.SetLabel(f"{int(round(gain * 100))}%")
+        self.refresh_diagram_live()
+        event.Skip()
+
+    def _on_lean_roll_changed(self, event: wx.Event) -> None:
+        gain = clamp_body_bind_lean_follow_gain(
+            self.lean_roll_slider.GetValue() / 100.0)
+        self.main_frame.set_body_bind_roll_follow_gain(gain)
+        self.lean_roll_label.SetLabel(f"{int(round(gain * 100))}%")
+        self.refresh_diagram_live()
         event.Skip()
 
     def _on_diagram_paint(self, event: wx.Event) -> None:
@@ -754,8 +828,9 @@ class LayerDetailDock(wx.Panel):
             self.layer_block,
             label="平滑跟随 / Smooth follow")
         self.binding_follow_smooth_cb.SetToolTip(
-            "关 = 绑定图层立即跟目标（无 EMA）；开 = 位置/跟转指数平滑 / "
-            "Off = instant bind follow; on = EMA-smooth position and rotation")
+            "位置始终即时跟随（无延时）；开 = 仅对跟转做指数平滑抑抖 / "
+            "Position always follows instantly (no lag); on = EMA-smooth the "
+            "follow ROTATION only (de-jitter)")
         layer_sizer.Add(self.binding_follow_smooth_cb, 0, wx.ALL, 4)
 
         smooth_alpha_row = wx.BoxSizer(wx.HORIZONTAL)
@@ -771,7 +846,8 @@ class LayerDetailDock(wx.Panel):
             maxValue=100,
             style=wx.SL_HORIZONTAL)
         self.binding_follow_smooth_alpha_slider.SetToolTip(
-            "每层独立：越大越跟手，越小越稳 / Per-layer EMA strength (5–100%)")
+            "每层独立·仅作用跟转：越大越跟手，越小越稳 / "
+            "Per-layer rotation EMA strength (5–100%)")
         smooth_alpha_row.Add(self.binding_follow_smooth_alpha_slider, 1, wx.EXPAND)
         self.binding_follow_smooth_alpha_label = wx.StaticText(
             self.layer_block, label=f"{int(round(BINDING_SMOOTH_ALPHA * 100))}%")

@@ -13,7 +13,10 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Optional
 
+import numpy
 import wx
+
+from rgba_capture_compose import sanitize_transparent_rgb
 
 LAYER_STATIC_IMAGE_EXTENSIONS = (".png", ".webp")
 LAYER_GIF_EXTENSIONS = (".gif",)
@@ -45,6 +48,43 @@ BIND_RAY_PERCENT_UI_MIN = -500
 BIND_RAY_PERCENT_UI_MAX = 500
 RAY_DIAGRAM_EXTENSION_RATIO = 0.45
 LOWER_SPINE_MOCAP_SHARE = 0.38
+# How strongly the body layer-bind follows the character's OWN left-right torso
+# lean (the mocap spine tilt driven by head pose), on top of the head-roll
+# display auto-tilt. Folded into dynamic_enhancement_tilt_deg so BOTH the body
+# bind anchor position AND its sprite rotation track the lean together -> a
+# body-pinned sprite stays glued to the leaning torso instead of sliding.
+# 1.0 = track the torso lean 1:1 (glued, matches the visible lower-spine lean);
+# 0.0 = old behavior (display tilt only). Independent, tunable.
+#
+# This is the DEFAULT of a now user-tunable gain (BindingContext.body_bind_lean_
+# follow_gain, persisted as "body_bind_lean_follow_gain"). It scales ONLY the
+# black-box body-roll follow term, NOT display_rotation_deg. Why it needs to be
+# tunable: the body-bind anchor sits at feet + spine_ray(angle) * dist, where
+# dist = lower_segment_len * ray_percent can be hundreds of px. The follow term
+# nudges `angle` by gain * sign * neck_z * 15deg, and that small angle change is
+# amplified into a LARGE positional swing by the long dist — so with auto move/
+# scale OFF (display=0) a tiny character lean throws a body-pinned layer far.
+# Lowering this gain attenuates that displacement.
+#
+# NOTE: this is now SPLIT into two independent, user-tunable gains so position
+# and sprite roll can be balanced separately (BindingContext.body_bind_pos_
+# follow_gain / body_bind_roll_follow_gain). Position = anchor swing along the
+# spine ray (the displacement amplified by `dist`); roll = the sprite's own
+# rotation. This shared constant is just the default for both.
+BODY_BIND_LEAN_FOLLOW_GAIN = 1.0
+BODY_BIND_LEAN_FOLLOW_GAIN_MIN = 0.0
+BODY_BIND_LEAN_FOLLOW_GAIN_MAX = 1.5
+# Sign mapping the black-box model body_z roll VALUE to the on-screen torso ray
+# DIRECTION (THA render roll convention vs spine_ray_unit_vector convention; and
+# body_tilt_opposite_to_head makes the body lean opposite the head/display).
+# Empirically -1 (the bound sprite leaned the wrong way left-right). Flip to
+# +1 if it ever mirrors again. Applies to the black-box body roll term only,
+# NOT to display_rotation_deg (which is locked to the warpAffine whole-image rot).
+BODY_BIND_BLACKBOX_ROLL_SIGN = -1.0
+# Symmetric knob for head bind: head-bind rotation already folds in the upper
+# spine lean + neck-z roll (so head sprites are glued); this scales an extra
+# head-roll follow so head-pinned sprites stay locked to head tilt. 1.0 = on.
+HEAD_BIND_LEAN_FOLLOW_GAIN = 1.0
 HEAD_POSE_X_LAYER_GAIN = 34.0
 HEAD_POSE_Y_LAYER_GAIN = 38.0
 HEAD_POSE_MOCAP_EXTRA_GAIN = 1.55
@@ -87,6 +127,16 @@ def clamp_binding_smooth_alpha(value: float) -> float:
     return max(
         BINDING_SMOOTH_ALPHA_MIN,
         min(BINDING_SMOOTH_ALPHA_MAX, float(value)))
+
+
+def clamp_body_bind_lean_follow_gain(value: float) -> float:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return BODY_BIND_LEAN_FOLLOW_GAIN
+    return max(
+        BODY_BIND_LEAN_FOLLOW_GAIN_MIN,
+        min(BODY_BIND_LEAN_FOLLOW_GAIN_MAX, v))
 
 
 def clamp_neck_anchor_ratio(value: float) -> float:
@@ -734,6 +784,8 @@ class BindingContext:
     pose_head_y: float = 0.0
     pose_neck_z: float = 0.0
     body_tilt_opposite_to_head: bool = True
+    body_bind_pos_follow_gain: float = BODY_BIND_LEAN_FOLLOW_GAIN
+    body_bind_roll_follow_gain: float = BODY_BIND_LEAN_FOLLOW_GAIN
     force_full_layer_follow: bool = False
     binding_smoother: Optional["LayerBindingSmoother"] = field(
         default=None, compare=False, repr=False)
@@ -821,10 +873,41 @@ class BindingContext:
         lower_len, _ = self.character_segment_lengths_px()
         return feet_x + ux * lower_len, feet_y + uy * lower_len, lower_angle
 
-    def dynamic_enhancement_tilt_deg(self, *, extra_mocap_angle: bool = False) -> float:
-        """Head-driven output dynamic enhancement tilt (layer body bind follows this)."""
+    def dynamic_enhancement_tilt_deg(
+            self,
+            *,
+            lean_gain: Optional[float] = None,
+            extra_mocap_angle: bool = False) -> float:
+        """On-screen torso roll the body layer-bind (anchor ray AND sprite
+        rotation) follows, so a body-pinned layer stays glued to the BLACK-BOX
+        image-source torso in BOTH auto-transform ON and OFF.
+
+        Pipeline truth: the THA keyframe already carries the model's own body_z
+        roll, then compose_character_rgba_from_keyframe warp-rotates the whole
+        image by +display_rotation_deg (dynamic enhancement). Layers composite
+        in canvas space AFTER that warp, so:
+            screen torso roll = +display_rotation_deg          (whole-image rot)
+                              + model body roll (black-box source self-tilt)
+        body_z = -neck_z when body_tilt_opposite_to_head (body leans opposite the
+        head, matching apply_body_head_tilt_opposite_to_pose), else +neck_z;
+        magnitude HEAD_NECK_Z_MAX_DEG (converter neck/body_z clamp), scaled by
+        `lean_gain` (user-tunable; caller passes the POSITION gain for the anchor
+        swing or the ROLL gain for the sprite, default BODY_BIND_LEAN_FOLLOW_GAIN
+        when None). Auto-transform OFF (display=0) reduces to the model body roll,
+        so the bind keeps tracking the black-box tilt instead of freezing. Because
+        the anchor sits dist px out along the ray, the gain on the position path
+        is the displacement knob: lower it to tame the large layer shift from tiny
+        leans, independently of how much the sprite itself rotates. Position move/
+        scale are handled separately by character_bottom_anchor (display_offset)
+        and character_segment_lengths_px (display_scale)."""
         _ = extra_mocap_angle
-        return float(self.display_rotation_deg)
+        gain = (BODY_BIND_LEAN_FOLLOW_GAIN if lean_gain is None
+                else clamp_body_bind_lean_follow_gain(lean_gain))
+        display = float(self.display_rotation_deg)
+        body_z = (-float(self.pose_neck_z)
+                  if self.body_tilt_opposite_to_head else float(self.pose_neck_z))
+        body_roll = BODY_BIND_BLACKBOX_ROLL_SIGN * body_z * HEAD_NECK_Z_MAX_DEG
+        return display + body_roll * gain
 
     def character_body_bind_on_spine(
             self,
@@ -844,9 +927,14 @@ class BindingContext:
             *,
             ray_percent: float = DEFAULT_LAYER_BINDING_RAY_PERCENT,
             extra_pose_offset: bool = False) -> tuple[float, float, float]:
-        """Body-bind anchor for layer follow: dynamic enhancement direction, not model-opposite."""
+        """Body-bind anchor for layer follow: dynamic enhancement direction, not model-opposite.
+
+        Uses the POSITION lean gain so the anchor swing (the displacement that the
+        long spine-ray dist amplifies) is tunable independently of sprite roll."""
         bottom_x, bottom_y = self.character_bottom_anchor()
-        angle = self.dynamic_enhancement_tilt_deg(extra_mocap_angle=extra_pose_offset)
+        angle = self.dynamic_enhancement_tilt_deg(
+            lean_gain=self.body_bind_pos_follow_gain,
+            extra_mocap_angle=extra_pose_offset)
         ux, uy = self.spine_ray_unit_vector(angle)
         lower_len, _ = self.character_segment_lengths_px()
         dist = lower_len * bind_ray_percent_to_ratio(ray_percent)
@@ -913,12 +1001,17 @@ class BindingContext:
         return head_x, head_y, upper_angle
 
     def head_binding_rotation_deg(self, *, extra_pose_roll: bool = False) -> float:
-        """Sprite roll on head bind: upper spine angle + optional extra neck roll."""
+        """Sprite roll on head bind: upper spine angle (already carries the
+        left-right lean) + neck-z head roll scaled by HEAD_BIND_LEAN_FOLLOW_GAIN
+        so a head-pinned sprite stays glued to head tilt."""
         return self.spine_upper_angle_deg() + self.pose_head_roll_deg(
-            extra_gain=extra_pose_roll)
+            extra_gain=extra_pose_roll) * HEAD_BIND_LEAN_FOLLOW_GAIN
 
     def body_binding_rotation_deg(self) -> float:
-        return self.dynamic_enhancement_tilt_deg()
+        """Sprite roll for body bind: uses the ROLL lean gain, independent of the
+        position swing gain."""
+        return self.dynamic_enhancement_tilt_deg(
+            lean_gain=self.body_bind_roll_follow_gain)
 
     def character_feet_anchor(self) -> tuple[float, float]:
         """Canvas anchor at character stack bottom-center (output frame bottom)."""
@@ -1281,6 +1374,38 @@ class _GifAnimationSource:
         return self.frames[-1]
 
 
+def _pil_rgba_to_numpy(rgba_image) -> numpy.ndarray:
+    """Decode a PIL image to sanitized straight-alpha RGBA (wx-free path)."""
+    arr = numpy.ascontiguousarray(
+        numpy.array(rgba_image.convert("RGBA"), dtype=numpy.uint8))
+    return sanitize_transparent_rgb(arr)
+
+
+@dataclass
+class _GifNumpySource:
+    """GIF frames decoded to numpy RGBA (parallel to _GifAnimationSource)."""
+
+    frames: list[numpy.ndarray]
+    durations_ms: list[int]
+    total_ms: int
+
+    @classmethod
+    def load(cls, resolved: str) -> _GifNumpySource:
+        pil_frames, durations_ms = _load_gif_composited_frames(resolved)
+        frames = [_pil_rgba_to_numpy(frame) for frame in pil_frames]
+        total_ms = max(1, sum(durations_ms))
+        return cls(frames=frames, durations_ms=durations_ms, total_ms=total_ms)
+
+    def frame_index(self, now: float, start_time: float) -> int:
+        elapsed_ms = int(max(0.0, (now - start_time) * 1000.0)) % self.total_ms
+        acc = 0
+        for idx, duration in enumerate(self.durations_ms):
+            acc += duration
+            if elapsed_ms < acc:
+                return idx
+        return max(0, len(self.frames) - 1)
+
+
 def scale_image_to_bitmap(image: wx.Image, draw_w: int, draw_h: int) -> wx.Bitmap:
     """Scale PNG to bitmap preserving alpha (avoids green halos from wx.Image.Scale)."""
     draw_w = max(1, int(round(draw_w)))
@@ -1552,20 +1677,26 @@ class LayerBindingSmoother:
             cx = rect.draw_x + rect.draw_width / 2.0
             cy = rect.draw_y + rect.draw_height / 2.0
             target_rotation = effective_layer_rotation_deg(layer, state, binding_context)
+            # Position follows INSTANTLY (no EMA): the bind anchor already tracks
+            # the upstream-smoothed display transform (and, with auto-transform
+            # off, a now position-gain-tamed lean), so a second positional EMA
+            # only added visible movement lag — the layer trailing behind the
+            # character. Only ROTATION keeps the EMA, because the sprite roll is
+            # driven by the raw mocap neck_z (never smoothed upstream) and is the
+            # jittery signal this smoother exists to tame. Result: smooth follow
+            # = jitter-free roll WITHOUT the translation lag.
             if not smooth.active:
-                smooth.center_x = cx
-                smooth.center_y = cy
                 smooth.rotation_deg = target_rotation
                 smooth.active = True
             else:
-                smooth.center_x += layer_alpha * (cx - smooth.center_x)
-                smooth.center_y += layer_alpha * (cy - smooth.center_y)
                 smooth.rotation_deg = _lerp_angle_deg(
                     smooth.rotation_deg, target_rotation, layer_alpha)
+            smooth.center_x = cx
+            smooth.center_y = cy
             result[slot_id] = LayerGeometryResolver._rect_from_center(
                 slot_id,
-                smooth.center_x,
-                smooth.center_y,
+                cx,
+                cy,
                 rect.draw_width,
                 rect.draw_height)
             result[slot_id].smoothed_rotation_deg = smooth.rotation_deg
@@ -1610,30 +1741,50 @@ class LayerAssetCache:
     def __init__(self, path_resolver: Callable[[str], str]) -> None:
         self._path_resolver = path_resolver
         self._static_cache: dict[str, wx.Image] = {}
+        self._static_rgba_cache: dict[str, numpy.ndarray] = {}
         self._gif_sources: dict[str, _GifAnimationSource] = {}
+        self._gif_numpy_sources: dict[str, _GifNumpySource] = {}
         self._animated_start_times: dict[str, float] = {}
         self._scaled_bitmap_cache: dict[tuple[str, int, int], wx.Bitmap] = {}
         self._gif_scaled_cache: dict[tuple[str, int, int, int], wx.Bitmap] = {}
+        # Last drawn GIF frame index per asset, so the scaled-cache prune only runs
+        # when the frame actually advances (not on every composite tick).
+        self._gif_last_frame_idx: dict[str, int] = {}
+        # Cache positive path resolutions to avoid a filesystem stat per layer per
+        # frame on the render hot path. Misses are not cached so a later-created
+        # asset is still picked up; invalidate() drops stale entries on reload.
+        self._resolved_path_cache: dict[str, str] = {}
 
     def close(self) -> None:
         self._gif_sources.clear()
+        self._gif_numpy_sources.clear()
         self._animated_start_times.clear()
         self._static_cache.clear()
+        self._static_rgba_cache.clear()
         self._scaled_bitmap_cache.clear()
         self._gif_scaled_cache.clear()
+        self._gif_last_frame_idx.clear()
+        self._resolved_path_cache.clear()
 
     def clear(self) -> None:
         self.close()
 
     def _cache_key(self, asset_path: str) -> Optional[str]:
+        cached = self._resolved_path_cache.get(asset_path)
+        if cached is not None:
+            return cached
         resolved = self._path_resolver(asset_path)
         if not resolved or not os.path.isfile(resolved):
             return None
-        return os.path.normpath(resolved)
+        key = os.path.normpath(resolved)
+        self._resolved_path_cache[asset_path] = key
+        return key
 
     def _release_animated(self, cache_key: str) -> None:
         self._gif_sources.pop(cache_key, None)
+        self._gif_numpy_sources.pop(cache_key, None)
         self._animated_start_times.pop(cache_key, None)
+        self._gif_last_frame_idx.pop(cache_key, None)
         self._gif_scaled_cache = {
             key: bitmap
             for key, bitmap in self._gif_scaled_cache.items()
@@ -1643,10 +1794,12 @@ class LayerAssetCache:
     def invalidate(self, asset_path: Optional[str]) -> None:
         if not asset_path:
             return
+        self._resolved_path_cache.pop(asset_path, None)
         cache_key = self._cache_key(asset_path)
         if cache_key is None:
             return
         self._static_cache.pop(cache_key, None)
+        self._static_rgba_cache.pop(cache_key, None)
         self._release_animated(cache_key)
         self._scaled_bitmap_cache = {
             key: bitmap
@@ -1686,6 +1839,54 @@ class LayerAssetCache:
             if elapsed_ms < acc:
                 return idx
         return max(0, len(source.frames) - 1)
+
+    def _load_static_rgba(self, resolved: str, cache_key: str) -> Optional[numpy.ndarray]:
+        cached = self._static_rgba_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            import PIL.Image
+            with PIL.Image.open(resolved) as image:
+                rgba = _pil_rgba_to_numpy(image)
+        except Exception:
+            return None
+        self._static_rgba_cache[cache_key] = rgba
+        return rgba
+
+    def _get_gif_numpy_source(self, resolved: str, cache_key: str) -> _GifNumpySource:
+        source = self._gif_numpy_sources.get(cache_key)
+        if source is None:
+            source = _GifNumpySource.load(resolved)
+            self._gif_numpy_sources[cache_key] = source
+            self._animated_start_times.setdefault(cache_key, time.time())
+        return source
+
+    def load_image_rgba(
+            self,
+            layer: BasicLayerSlot,
+            *,
+            now: Optional[float] = None) -> Optional[numpy.ndarray]:
+        """Straight-alpha RGBA numpy frame for a layer (wx-free render path).
+
+        Returns the full-resolution current frame (static or GIF); the numpy
+        compositor scales per the resolved rect, mirroring get_draw_bitmap.
+        """
+        if not layer.asset_path:
+            return None
+        cache_key = self._cache_key(layer.asset_path)
+        if cache_key is None:
+            return None
+        resolved = cache_key
+        kind = classify_layer_asset_kind(layer.asset_path)
+        if kind == "image":
+            return self._load_static_rgba(resolved, cache_key)
+        if kind == "gif":
+            source = self._get_gif_numpy_source(resolved, cache_key)
+            start = self._animated_start_times.setdefault(cache_key, time.time())
+            frame_idx = source.frame_index(
+                time.time() if now is None else now, start)
+            return source.frames[frame_idx]
+        return None
 
     def preview_image(self, layer: BasicLayerSlot) -> Optional[wx.Image]:
         """First-frame preview for list thumbnails (GIF stays static)."""
@@ -1748,11 +1949,15 @@ class LayerAssetCache:
                 bitmap = scale_image_to_bitmap(image, draw_w, draw_h)
             else:
                 bitmap = image.ConvertToBitmap()
-            self._gif_scaled_cache = {
-                key: value
-                for key, value in self._gif_scaled_cache.items()
-                if key[0] != cache_key or key[3] == frame_idx
-            }
+            # Only prune this GIF's stale-frame scaled entries when the frame
+            # advanced; same-frame repeats (composite faster than GIF fps) skip it.
+            if self._gif_last_frame_idx.get(cache_key) != frame_idx:
+                self._gif_scaled_cache = {
+                    key: value
+                    for key, value in self._gif_scaled_cache.items()
+                    if key[0] != cache_key or key[3] == frame_idx
+                }
+                self._gif_last_frame_idx[cache_key] = frame_idx
             self._gif_scaled_cache[scaled_key] = bitmap
             return bitmap
         scaled_key = (cache_key, draw_w, draw_h)
@@ -1888,8 +2093,12 @@ class LayerCompositor:
             canvas_width: int,
             canvas_height: int,
             character_bitmap: wx.Bitmap,
-            binding_context: Optional[BindingContext] = None) -> None:
-        """Post-process: composite character keyframe and layer stack on output."""
+            binding_context: Optional[BindingContext] = None) -> dict[int, ResolvedLayerRect]:
+        """Post-process: composite character keyframe and layer stack on output.
+
+        Returns the resolved layer rects so callers can reuse them (e.g. for the
+        selection highlight) without resolving the whole stack a second time.
+        """
         resolved = resolve_layer_rects(
             state,
             asset_cache.load_image,
@@ -1909,6 +2118,7 @@ class LayerCompositor:
             cls.draw_layer_on_dc(
                 dc, layer, rect, asset_cache=asset_cache,
                 binding_context=binding_context, layers_state=state)
+        return resolved
 
     @classmethod
     def draw_unified_stack(

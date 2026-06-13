@@ -6,17 +6,14 @@ from typing import Optional, Tuple
 
 import numpy
 
-CHARACTER_EDGE_FLICKER = "flicker"
 CHARACTER_EDGE_OUTLINE = "outline"
 CHARACTER_EDGE_NONE = "none"
 
 CHARACTER_EDGE_MODE_VALUES = (
-    CHARACTER_EDGE_FLICKER,
     CHARACTER_EDGE_OUTLINE,
     CHARACTER_EDGE_NONE,
 )
 CHARACTER_EDGE_MODE_LABELS = (
-    "角色边缘闪烁 / Edge flicker fix",
     "角色边缘描边 / Edge outline",
     "角色边缘无效果 / No edge effect",
 )
@@ -31,7 +28,7 @@ CHARACTER_EDGE_WIDTH_DECIMALS = 3
 def normalize_character_edge_mode(value: Optional[str]) -> str:
     if value in CHARACTER_EDGE_MODE_VALUES:
         return value
-    return CHARACTER_EDGE_FLICKER
+    return CHARACTER_EDGE_NONE
 
 
 def clamp_character_edge_width(value: float) -> float:
@@ -81,16 +78,35 @@ def _dilate_alpha_fractional(alpha: numpy.ndarray, radius: float) -> numpy.ndarr
 def _composite_rgba_under(
         background: numpy.ndarray,
         foreground: numpy.ndarray) -> numpy.ndarray:
-    bg = background.astype(numpy.float32)
-    fg = foreground.astype(numpy.float32)
+    """Source-over composite of two RGBA arrays (same shape).
+
+    The float32 blend only runs over the foreground's non-transparent bounding
+    box; pixels where the foreground is fully transparent leave the background
+    untouched. Most layers/character occupy a fraction of the canvas, so this
+    avoids converting the whole canvas to float32 on every per-layer composite
+    (the present hot path runs this once per layer + character + chrome + bg).
+    """
+    background = numpy.ascontiguousarray(background, dtype=numpy.uint8)
+    foreground = numpy.ascontiguousarray(foreground, dtype=numpy.uint8)
+    result = background.copy()
+    fg_alpha = foreground[:, :, 3]
+    rows = numpy.any(fg_alpha, axis=1)
+    if not rows.any():
+        return result
+    cols = numpy.any(fg_alpha, axis=0)
+    y0 = int(numpy.argmax(rows))
+    y1 = int(len(rows) - numpy.argmax(rows[::-1]))
+    x0 = int(numpy.argmax(cols))
+    x1 = int(len(cols) - numpy.argmax(cols[::-1]))
+    bg = background[y0:y1, x0:x1].astype(numpy.float32)
+    fg = foreground[y0:y1, x0:x1].astype(numpy.float32)
     fg_a = fg[:, :, 3:4] / 255.0
     bg_a = bg[:, :, 3:4] / 255.0
     out_a = fg_a + bg_a * (1.0 - fg_a)
     safe_a = numpy.maximum(out_a, 1e-6)
     out_rgb = (fg[:, :, 0:3] * fg_a + bg[:, :, 0:3] * bg_a * (1.0 - fg_a)) / safe_a
-    result = background.copy()
-    result[:, :, 0:3] = numpy.clip(out_rgb, 0.0, 255.0).astype(numpy.uint8)
-    result[:, :, 3] = numpy.clip(out_a[:, :, 0] * 255.0, 0.0, 255.0).astype(numpy.uint8)
+    result[y0:y1, x0:x1, 0:3] = numpy.clip(out_rgb, 0.0, 255.0).astype(numpy.uint8)
+    result[y0:y1, x0:x1, 3] = numpy.clip(out_a[:, :, 0] * 255.0, 0.0, 255.0).astype(numpy.uint8)
     return result
 
 
@@ -99,34 +115,6 @@ def composite_rgba_arrays(
         foreground_rgba: numpy.ndarray) -> numpy.ndarray:
     """Source-over composite of two RGBA arrays (same shape)."""
     return _composite_rgba_under(background_rgba, foreground_rgba)
-
-
-def stabilize_character_edge_fringe(
-        rgba: numpy.ndarray,
-        background_rgb: Tuple[int, int, int],
-        *,
-        fringe_width: float = 2.0) -> numpy.ndarray:
-    """Bake semi-transparent fringe against the output background to reduce flicker."""
-    rgba = numpy.ascontiguousarray(rgba, dtype=numpy.uint8).copy()
-    transparent = rgba[:, :, 3] == 0
-    rgba[transparent, 0:3] = 0
-
-    harden = max(CHARACTER_EDGE_WIDTH_MIN, min(32.0, float(fringe_width)))
-    alpha = rgba[:, :, 3].astype(numpy.float32)
-    semi = (alpha > 0.0) & (alpha < 255.0)
-    if numpy.any(semi):
-        bg_r, bg_g, bg_b = (int(background_rgb[0]), int(background_rgb[1]), int(background_rgb[2]))
-        a = alpha[semi] / 255.0
-        rgb = rgba[semi, 0:3].astype(numpy.float32)
-        rgba[semi, 0] = numpy.clip(rgb[:, 0] * a + bg_r * (1.0 - a), 0.0, 255.0)
-        rgba[semi, 1] = numpy.clip(rgb[:, 1] * a + bg_g * (1.0 - a), 0.0, 255.0)
-        rgba[semi, 2] = numpy.clip(rgb[:, 2] * a + bg_b * (1.0 - a), 0.0, 255.0)
-        rgba[semi, 3] = 255
-
-    rgba[:, :, 3][rgba[:, :, 3] < harden] = 0
-    rgba[:, :, 3][rgba[:, :, 3] > 255 - harden] = 255
-    rgba[rgba[:, :, 3] == 0, 0:3] = 0
-    return rgba
 
 
 def apply_character_edge_outline(
@@ -156,9 +144,6 @@ def apply_character_edge_postprocess(
         outline_rgb: Tuple[int, int, int] = (0, 0, 0),
         background_rgb: Tuple[int, int, int] = (0, 0, 0)) -> numpy.ndarray:
     normalized = normalize_character_edge_mode(mode)
-    if normalized == CHARACTER_EDGE_NONE:
-        return numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
     if normalized == CHARACTER_EDGE_OUTLINE:
         return apply_character_edge_outline(rgba, outline_rgb, width)
-    return stabilize_character_edge_fringe(
-        rgba, background_rgb, fringe_width=width)
+    return numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
