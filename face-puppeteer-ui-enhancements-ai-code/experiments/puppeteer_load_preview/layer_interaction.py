@@ -109,6 +109,28 @@ def hit_test_layer_edit(
     return selected_slot_id, LayerEditMode.MOVE
 
 
+def hit_test_resolved_rect(
+        slot_id: int,
+        rect: ResolvedLayerRect,
+        rotation_deg: float,
+        x: int,
+        y: int) -> tuple[Optional[int], LayerEditMode]:
+    """Hit-test a click against an already-resolved layer rect (the exact box
+    that was last drawn as selection chrome).
+
+    Used by the layered output window so the draggable region matches the
+    on-screen highlight box pixel-for-pixel. Re-resolving via
+    ``resolve_layer_rects`` would advance the stateful binding smoother and use
+    a fresh ``motion_time_s``, drifting the hit rect away from the drawn box for
+    bound/smoothed layers (so clicks would miss and drag the window instead)."""
+    if not _point_in_rotated_rect(float(x), float(y), rect, rotation_deg):
+        return None, LayerEditMode.NONE
+    hx, hy, hw, hh = _handle_rect(rect, rotation_deg)
+    if hx <= x <= hx + hw and hy <= y <= hy + hh:
+        return slot_id, LayerEditMode.SCALE
+    return slot_id, LayerEditMode.MOVE
+
+
 def apply_move_delta(layer: BasicLayerSlot, dx: float, dy: float) -> None:
     layer.transform.offset_x += dx
     layer.transform.offset_y += dy

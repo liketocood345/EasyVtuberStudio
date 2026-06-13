@@ -26,16 +26,16 @@ OUTPUT_BACKGROUND_TRANSPARENT_CAPTURE = "transparent_capture"
 OUTPUT_BACKGROUND_COLOR = "color"
 OUTPUT_BACKGROUND_IMAGE = "image"
 OUTPUT_BACKGROUND_MODE_VALUES = (
-    OUTPUT_BACKGROUND_TRANSPARENT,
     OUTPUT_BACKGROUND_TRANSPARENT_CAPTURE,
     OUTPUT_BACKGROUND_COLOR,
     OUTPUT_BACKGROUND_IMAGE,
+    OUTPUT_BACKGROUND_TRANSPARENT,
 )
 OUTPUT_BACKGROUND_MODE_LABELS = (
-    "OBS黑键透明 / OBS Color Key",
-    "真透额外窗 / Transparent Capture",
-    "纯色 / Solid Color",
-    "自定义图片 / Custom Image",
+    "透明 / Transparent",
+    "自选纯色背景 / Solid Color",
+    "自选图片 / Custom Image",
+    "黑键 / Color Key (#000000)",
 )
 # Window Capture (BitBlt) does not preserve alpha; OBS Color Key on pure black works reliably.
 OUTPUT_CAPTURE_COLORKEY_RGB = (0, 0, 0)
@@ -92,7 +92,6 @@ import torch
 import wx
 
 from character_edge_postprocess import (
-    CHARACTER_EDGE_FLICKER,
     CHARACTER_EDGE_MODE_LABELS,
     CHARACTER_EDGE_MODE_VALUES,
     CHARACTER_EDGE_NONE,
@@ -152,6 +151,8 @@ from layer_runtime import (
     apply_body_head_tilt_opposite_to_pose,
     normalize_bind_ray_percent,
     clamp_neck_anchor_ratio,
+    clamp_body_bind_lean_follow_gain,
+    BODY_BIND_LEAN_FOLLOW_GAIN,
     contrast_highlight_colour,
     basic_layers_state_has_active_motion,
     load_basic_layers_state,
@@ -164,6 +165,7 @@ from layer_interaction import (
     apply_move_delta,
     apply_scale_from_drag,
     hit_test_layer_edit,
+    hit_test_resolved_rect,
     nudge_layer,
     panel_to_layer_delta,
 )
@@ -190,7 +192,14 @@ from rgba_capture_compose import (
     sanitize_transparent_rgb,
     wx_image_to_rgba_array as capture_wx_image_to_rgba_array,
 )
-from transparent_capture_window import TransparentCaptureWindow
+from transparent_capture_window import (
+    TransparentCaptureWindow,
+    _resolve_app_icon_path,
+    _straight_rgba_to_premultiplied_bgra,
+)
+from numpy_layer_compositor import compose_full_stack_rgba
+from numpy_edit_chrome import DEFAULT_HIGHLIGHT_RGB, render_selection_chrome_rgba
+from output_backends import resolve_output_backend
 
 _PERF_LOG_PATH = r"e:\debug-3353ed.log"
 _perf_window: dict = {
@@ -200,10 +209,16 @@ _perf_window: dict = {
     "fast_present": 0,
     "slow_present": 0,
     "last_log_mono": 0.0,
+    "stages": {},
 }
 
 
-def _perf_record(*, present_ms: float = 0.0, capture_ms: float = 0.0, fast_present: bool = False) -> None:
+def _perf_record(
+        *,
+        present_ms: float = 0.0,
+        capture_ms: float = 0.0,
+        fast_present: bool = False,
+        stages: Optional[dict] = None) -> None:
     # #region agent log
     _perf_window["present_ms"] += present_ms
     _perf_window["capture_ms"] += capture_ms
@@ -212,12 +227,20 @@ def _perf_record(*, present_ms: float = 0.0, capture_ms: float = 0.0, fast_prese
         _perf_window["fast_present"] += 1
     else:
         _perf_window["slow_present"] += 1
+    if stages:
+        stage_acc = _perf_window["stages"]
+        for name, value in stages.items():
+            stage_acc[name] = stage_acc.get(name, 0.0) + value
     now = time.monotonic()
     if now - _perf_window["last_log_mono"] < 1.0:
         return
     frames = max(1, _perf_window["frames"])
     try:
         import json
+        stage_avg = {
+            name: round(total / frames, 2)
+            for name, total in _perf_window["stages"].items()
+        }
         with open(_PERF_LOG_PATH, "a", encoding="utf-8") as log_file:
             log_file.write(json.dumps({
                 "sessionId": "3353ed",
@@ -232,6 +255,7 @@ def _perf_record(*, present_ms: float = 0.0, capture_ms: float = 0.0, fast_prese
                     "fast_present": _perf_window["fast_present"],
                     "slow_present": _perf_window["slow_present"],
                     "capture_decoupled": True,
+                    "stage_ms": stage_avg,
                 },
                 "timestamp": int(time.time() * 1000),
             }, ensure_ascii=False) + "\n")
@@ -244,7 +268,30 @@ def _perf_record(*, present_ms: float = 0.0, capture_ms: float = 0.0, fast_prese
         "fast_present": 0,
         "slow_present": 0,
         "last_log_mono": now,
+        "stages": {},
     })
+    # #endregion
+
+
+def _startup_record(phase: str, ms: float, **extra) -> None:
+    """Log a startup-phase duration so 界面打开耗时 can be verified per run."""
+    # #region agent log
+    try:
+        import json
+        data = {"ms": round(float(ms), 1)}
+        data.update(extra)
+        with open(_PERF_LOG_PATH, "a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps({
+                "sessionId": "3353ed",
+                "runId": "startup",
+                "hypothesisId": "STARTUP",
+                "location": "character_model_mediapipe_puppeteer_load_preview.py:startup",
+                "message": phase,
+                "data": data,
+                "timestamp": int(time.time() * 1000),
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
     # #endregion
 
 
@@ -577,9 +624,64 @@ class SelectionState:
     def IsEnabled(self) -> bool:
         return self.enabled
 
+
+_APP_WX_ICON_BUNDLE: Optional["wx.IconBundle"] = None
+_APP_WX_ICON_BUNDLE_LOADED = False
+
+
+def get_app_icon_bundle() -> Optional["wx.IconBundle"]:
+    """Cached wx.IconBundle built from the bundled .ico (same artwork as the
+    packaged exe), or None when the icon isn't deployed. Loaded once and reused
+    so every top-level window shares the exe logo in the taskbar."""
+    global _APP_WX_ICON_BUNDLE, _APP_WX_ICON_BUNDLE_LOADED
+    if _APP_WX_ICON_BUNDLE_LOADED:
+        return _APP_WX_ICON_BUNDLE
+    _APP_WX_ICON_BUNDLE_LOADED = True
+    try:
+        path = _resolve_app_icon_path()
+        if path and os.path.isfile(path):
+            bundle = wx.IconBundle(path, wx.BITMAP_TYPE_ICO)
+            if bundle.GetIconCount() > 0:
+                _APP_WX_ICON_BUNDLE = bundle
+    except Exception:
+        _APP_WX_ICON_BUNDLE = None
+    return _APP_WX_ICON_BUNDLE
+
+
+def apply_app_icon(window: "wx.TopLevelWindow") -> None:
+    """Apply the shared exe logo to a top-level window's taskbar label. Safe to
+    call on any wx.Frame/wx.Dialog; no-ops when the icon isn't available."""
+    if window is None:
+        return
+    bundle = get_app_icon_bundle()
+    if bundle is None:
+        return
+    try:
+        window.SetIcons(bundle)
+    except Exception:
+        pass
+
+
+APP_USER_MODEL_ID = "EasyVtuberStudio.FacePuppeteer"
+
+
+def set_windows_app_user_model_id() -> None:
+    """Give the process its own Windows taskbar identity so the taskbar uses our
+    window icons instead of the host python.exe icon. Must run BEFORE any
+    top-level window is created. No-op off Windows."""
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            ctypes.c_wchar_p(APP_USER_MODEL_ID))
+    except Exception:
+        pass
+
+
 class OutputFrame(wx.Frame):
     def __init__(self, owner_main_frame: "MainFrame"):
         super().__init__(None, wx.ID_ANY, "THA4 Output / 输出", style=wx.BORDER_NONE)
+        apply_app_icon(self)
         self.owner_main_frame = owner_main_frame
         self._dragging = False
         self._drag_start_screen = wx.Point(0, 0)
@@ -622,18 +724,12 @@ class OutputFrame(wx.Frame):
     def paint_result_image_panel(self, event: wx.Event):
         owner = self.owner_main_frame
         dc = wx.AutoBufferedPaintDC(self.result_image_panel)
-        # Transparent mode: pure black under alpha=0 regions for OBS Window Capture + Color Key.
-        if owner.get_output_background_mode() == OUTPUT_BACKGROUND_TRANSPARENT:
-            r, g, b = OUTPUT_CAPTURE_COLORKEY_RGB
-            dc.SetBackground(wx.Brush(wx.Colour(r, g, b)))
-            dc.Clear()
-        elif owner.get_output_background_mode() == OUTPUT_BACKGROUND_COLOR:
-            dc.SetBackground(wx.Brush(owner.get_output_background_color()))
-            dc.Clear()
-        elif owner.get_output_background_mode() in (
-                OUTPUT_BACKGROUND_IMAGE, OUTPUT_BACKGROUND_TRANSPARENT_CAPTURE):
-            dc.SetBackground(wx.Brush(owner.get_output_frame_paint_colour()))
-            dc.Clear()
+        # result_image_bitmap now carries only the transparent foreground
+        # (character + layers + edit chrome); the mode background (color-key
+        # black / solid colour / chosen image / transparent-capture grey) is
+        # painted here and the foreground is alpha-blended on top. The same
+        # transparent foreground feeds the true-transparent ULW capture window.
+        owner.paint_output_background(dc, self.result_image_panel.GetClientSize())
         if owner.result_image_bitmap.IsOk():
             dc.DrawBitmap(
                 owner.result_image_bitmap,
@@ -695,6 +791,7 @@ class OutputFrame(wx.Frame):
 class ControlsFrame(wx.Frame):
     def __init__(self, owner_main_frame: "MainFrame"):
         super().__init__(None, wx.ID_ANY, "EasyVtuberStudio")
+        apply_app_icon(self)
         self.owner_main_frame = owner_main_frame
         self.SetDoubleBuffered(True)
         self.Bind(wx.EVT_CLOSE, self.on_close)
@@ -740,6 +837,7 @@ class WebcamPreviewPopupFrame(wx.Frame):
 
     def __init__(self, owner_main_frame: "MainFrame"):
         super().__init__(None, wx.ID_ANY, "Webcam Preview / 摄像头预览")
+        apply_app_icon(self)
         self.owner_main_frame = owner_main_frame
         self.SetDoubleBuffered(True)
 
@@ -859,6 +957,10 @@ class MainFrame(wx.Frame):
     MIN_OUT_PRESENT_HZ = 12
     HOVER_HELP_DELAY_MS = 1000
     MEDIAPIPE_MIN_INTERVAL_MS = 33
+    # Shared cadence for continuously-refreshing animated UI in the controls and
+    # layer windows (FPS text, scale-curve preview, spine diagram): 40ms = 25 fps,
+    # within the 20-30 fps band. The output window is NOT throttled by this.
+    UI_ANIM_REFRESH_INTERVAL_MS = 40
     VIDEO_FILE_EXTENSIONS = (
         ".mp4", ".avi", ".mov", ".mkv", ".webm", ".wmv", ".m4v", ".mpeg", ".mpg",
         ".flv", ".ts", ".mts", ".m2ts", ".3gp", ".ogv", ".divx", ".asf", ".vob",
@@ -879,7 +981,9 @@ class MainFrame(wx.Frame):
                  video_capture,
                  face_landmarker,
                  device: torch.device):
+        self._startup_init_t0 = time.perf_counter()
         super().__init__(None, wx.ID_ANY, "EasyVtuberStudio")
+        apply_app_icon(self)
         self.face_landmarker = face_landmarker
         self.video_capture = video_capture
         self.pose_converter = pose_converter
@@ -981,6 +1085,14 @@ class MainFrame(wx.Frame):
         self._infer_lock = threading.Lock()
         self._pending_infer_pose: Optional[List[float]] = None
         self._infer_worker_active = False
+        # MediaPipe face detection runs on a dedicated worker thread (latest-wins)
+        # so the heavy detect_for_video call never blocks the wx UI/render thread.
+        self._mediapipe_lock = threading.Lock()
+        self._pending_mediapipe_job: Optional[tuple] = None
+        self._mediapipe_worker_active = False
+        # Dirty flag so the animated-UI timer only repaints the scale-curve preview
+        # when its underlying value actually changed.
+        self._scale_curve_dirty = False
         self._capture_geometry_save_pending = False
         self._capture_update_pending = False
         self._capture_async_active = False
@@ -1058,6 +1170,10 @@ class MainFrame(wx.Frame):
         self._layer_drag_canvas_size: tuple[int, int] = (1, 1)
         self._layer_edit_mode = LayerEditMode.NONE
         self._layer_edit_panel: Optional[wx.Window] = None
+        # (slot_id, ResolvedLayerRect, rotation_deg, canvas_w, canvas_h) of the
+        # last selection chrome drawn; used so the layered-output hit-test
+        # matches the on-screen highlight box exactly.
+        self._last_edit_chrome_geom: Optional[tuple] = None
         self._suppress_layer_deselect = False
         self._output_background_image_cache_key = None
         self._output_background_image_cache = None
@@ -1092,21 +1208,32 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MOVE, self.on_compact_geometry_changed)
 
         self.update_source_image_bitmap()
+        _startup_record(
+            "MainFrame.__init__ (constructor, before MainLoop)",
+            (time.perf_counter() - self._startup_init_t0) * 1000.0)
         wx.CallAfter(self.startup_show_full_controls)
 
     def startup_show_full_controls(self):
         if self._startup_full_controls_shown:
             return
         self._startup_full_controls_shown = True
+        startup_t0 = time.perf_counter()
         self.show_full_controls_window()
         self.ensure_output_frame()
         self.initialize_output_bitmap()
         self.refresh_output_frame_chrome()
+        first_present_t0 = time.perf_counter()
         self.update_result_image_bitmap()
+        _startup_record(
+            "first present+infer (update_result_image_bitmap)",
+            (time.perf_counter() - first_present_t0) * 1000.0)
         wx.CallAfter(self.ensure_application_windows_visible)
         self.schedule_refresh_controls_scrolling()
         wx.CallLater(1200, self.autoconnect_video_source_on_startup)
         wx.CallAfter(self._ensure_tha3_assets_on_startup)
+        _startup_record(
+            "startup_show_full_controls (total, blocks first paint)",
+            (time.perf_counter() - startup_t0) * 1000.0)
 
     def _ensure_tha3_assets_on_startup(self):
         if self.get_image_source_mode() != IMAGE_SOURCE_THA3:
@@ -1132,6 +1259,8 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_TIMER, self.on_display_timer, id=self.display_timer.GetId())
         self.animation_timer = wx.Timer(self, wx.ID_ANY)
         self.Bind(wx.EVT_TIMER, self.on_infer_tick, id=self.animation_timer.GetId())
+        self.ui_anim_timer = wx.Timer(self, wx.ID_ANY)
+        self.Bind(wx.EVT_TIMER, self.on_ui_anim_timer, id=self.ui_anim_timer.GetId())
 
     def initialize_headless_control_state(self):
         self.enable_auto_transform_checkbox = ValueState(True)
@@ -1163,7 +1292,7 @@ class MainFrame(wx.Frame):
         self._unlimited_layers_enabled_state = ValueState(False)
         self._invert_tilt_mapping_state = ValueState(True)
         self.antialias_strength_spin = ValueState(1.00)
-        self.character_edge_mode_state = ValueState(CHARACTER_EDGE_FLICKER)
+        self.character_edge_mode_state = ValueState(CHARACTER_EDGE_NONE)
         self.character_edge_width_state = ValueState(float(CHARACTER_EDGE_WIDTH_DEFAULT))
         self.character_edge_color_hex_state = ValueState("#FFFFFF")
         self.output_frame_interpolation_choice = ValueState(output_frame_interp.FRAME_INTERP_OFF)
@@ -1351,6 +1480,41 @@ class MainFrame(wx.Frame):
             if window is not None:
                 window.refresh_spine_diagram()
 
+    def _legacy_body_bind_lean_gain(self) -> float:
+        # Pre-split single gain that drove BOTH position and roll; seed both
+        # new gains from it so existing setups keep their tuned value.
+        return clamp_body_bind_lean_follow_gain(
+            self.persistent_ui_state.get(
+                "body_bind_lean_follow_gain", BODY_BIND_LEAN_FOLLOW_GAIN))
+
+    def get_body_bind_pos_follow_gain(self) -> float:
+        return clamp_body_bind_lean_follow_gain(
+            self.persistent_ui_state.get(
+                "body_bind_pos_follow_gain", self._legacy_body_bind_lean_gain()))
+
+    def set_body_bind_pos_follow_gain(self, value: float) -> None:
+        self.persistent_ui_state["body_bind_pos_follow_gain"] = (
+            clamp_body_bind_lean_follow_gain(value))
+        self.save_persistent_ui_state()
+        if self._basic_layer_window_visible():
+            window = self._get_basic_layer_window()
+            if window is not None:
+                window.refresh_spine_diagram()
+
+    def get_body_bind_roll_follow_gain(self) -> float:
+        return clamp_body_bind_lean_follow_gain(
+            self.persistent_ui_state.get(
+                "body_bind_roll_follow_gain", self._legacy_body_bind_lean_gain()))
+
+    def set_body_bind_roll_follow_gain(self, value: float) -> None:
+        self.persistent_ui_state["body_bind_roll_follow_gain"] = (
+            clamp_body_bind_lean_follow_gain(value))
+        self.save_persistent_ui_state()
+        if self._basic_layer_window_visible():
+            window = self._get_basic_layer_window()
+            if window is not None:
+                window.refresh_spine_diagram()
+
     def get_spine_body_bind_ray_percent(self) -> float:
         return migrate_bind_ray_percent_from_state(
             self.persistent_ui_state,
@@ -1393,6 +1557,7 @@ class MainFrame(wx.Frame):
     def on_layer_state_changed(self) -> None:
         if self.last_output_wx_image is not None:
             self.draw_cached_result_image(self.last_banner_text)
+            self._maybe_schedule_transparent_capture_update(immediate=True)
         self.refresh_basic_layer_window_if_visible()
         self.refresh_layer_blend_status()
         self.persist_basic_layers_state()
@@ -1445,6 +1610,16 @@ class MainFrame(wx.Frame):
         return True
 
     def _is_layer_editing_focus_window(self) -> bool:
+        # The ULW is the on-screen output/editing surface but is a Win32 window,
+        # so it never appears in wx focus. Clicking it to edit a layer must NOT
+        # be treated as "clicked away" (which would clear the selection).
+        capture_window = getattr(self, "transparent_capture_window", None)
+        if capture_window is not None:
+            try:
+                if capture_window.owns_foreground_window():
+                    return True
+            except Exception:
+                pass
         focused = wx.Window.FindFocus()
         if focused is None:
             return False
@@ -1483,6 +1658,7 @@ class MainFrame(wx.Frame):
             window.apply_selection(None)
         if self.last_output_wx_image is not None:
             self.draw_cached_result_image(self.last_banner_text)
+            self._maybe_schedule_transparent_capture_update(immediate=True)
         self.refresh_layer_blend_status()
 
     def ensure_basic_layer_window_on_screen(self) -> None:
@@ -1505,6 +1681,7 @@ class MainFrame(wx.Frame):
             try:
                 parent = self.get_controls_window()
                 self.basic_layer_window = BasicLayerWindow(self, parent=parent)
+                apply_app_icon(self.basic_layer_window)
             except Exception as exc:
                 self.basic_layer_window = None
                 print(
@@ -1648,6 +1825,8 @@ class MainFrame(wx.Frame):
         self.animation_timer.Stop()
         if hasattr(self, "display_timer"):
             self.display_timer.Stop()
+        if hasattr(self, "ui_anim_timer"):
+            self.ui_anim_timer.Stop()
         self.capture_timer.Stop()
         if getattr(self, "webcam_preview_popup_frame", None) is not None and self.webcam_preview_popup_frame:
             self.webcam_preview_popup_frame.Destroy()
@@ -2498,13 +2677,28 @@ class MainFrame(wx.Frame):
     def is_transparent_capture_background_enabled(self) -> bool:
         return self.get_output_background_mode() == OUTPUT_BACKGROUND_TRANSPARENT_CAPTURE
 
+    def is_ulw_output_enabled(self) -> bool:
+        """The layered ULW (easyvtuberstudio_output) is the single output window
+        for every background mode now: 真透 keeps per-pixel alpha, while
+        color/image/黑键 composite an opaque background plate into the same
+        window. OutputFrame is retired as an output surface."""
+        return True
+
+    def get_output_capture_backend(self) -> str:
+        """Resolve the active output delivery backend (how the transparent
+        output reaches capture software). Honors an explicit persisted
+        `output_capture_backend` override, otherwise derives it from the output
+        background mode. See output_backends.py for the tool recommendations."""
+        persisted = self.persistent_ui_state.get("output_capture_backend")
+        return resolve_output_backend(persisted, self.get_output_background_mode())
+
     def get_output_background_mode(self) -> str:
         control = getattr(self, "output_background_mode_choice", None)
         if control is None:
-            mode = str(self.persistent_ui_state.get("output_background_mode") or OUTPUT_BACKGROUND_TRANSPARENT)
+            mode = str(self.persistent_ui_state.get("output_background_mode") or OUTPUT_BACKGROUND_TRANSPARENT_CAPTURE)
             if mode in OUTPUT_BACKGROUND_MODE_VALUES:
                 return mode
-            return OUTPUT_BACKGROUND_TRANSPARENT
+            return OUTPUT_BACKGROUND_TRANSPARENT_CAPTURE
         if isinstance(control, wx.Choice):
             index = control.GetSelection()
             if index < 0:
@@ -2515,10 +2709,10 @@ class MainFrame(wx.Frame):
         try:
             mode = str(control.GetValue())
         except Exception:
-            mode = OUTPUT_BACKGROUND_TRANSPARENT
+            mode = OUTPUT_BACKGROUND_TRANSPARENT_CAPTURE
         if mode in OUTPUT_BACKGROUND_MODE_VALUES:
             return mode
-        return OUTPUT_BACKGROUND_TRANSPARENT
+        return OUTPUT_BACKGROUND_TRANSPARENT_CAPTURE
 
     def get_output_background_image_path(self) -> str:
         state = getattr(self, "output_background_image_path_state", None)
@@ -2575,6 +2769,7 @@ class MainFrame(wx.Frame):
         self._cached_background_rgba = None
         self._cached_capture_foreground_rgba = None
         self._cached_capture_foreground_signature = None
+        self._cached_present_rgba = None
 
     def _invalidate_capture_foreground_cache(self) -> None:
         self._cached_capture_foreground_rgba = None
@@ -2582,14 +2777,6 @@ class MainFrame(wx.Frame):
         capture_window = getattr(self, "transparent_capture_window", None)
         if capture_window is not None:
             capture_window._last_frame_hash = None
-
-    def _compose_capture_foreground_rgba(
-            self,
-            character_bitmap: wx.Bitmap,
-            canvas_width: int,
-            canvas_height: int) -> numpy.ndarray:
-        return self._resolve_capture_foreground_rgba(
-            character_bitmap, canvas_width, canvas_height)
 
     def get_mouth_infer_cap_hz(self) -> int:
         choice = getattr(self, "mouth_infer_cap_choice", None)
@@ -2754,10 +2941,18 @@ class MainFrame(wx.Frame):
         self._render_keyframe_image_id = None
         self._advance_pose_interpolation_after_infer(pose_list)
         self._note_inference_fps_tick()
+        # Presenting is left to on_display_timer (throttled to the display present
+        # cap + deduped): driving a full synchronous composite here on every
+        # inference floods the UI thread (the composite is the hot cost) and
+        # halves the effective output rate. The display timer picks up
+        # last_output_wx_image on its next tick.
 
     def should_refresh_transparent_capture(self) -> bool:
         now_ns = time.time_ns()
-        cap_hz = min(15, max(1, self.get_display_present_cap_hz()))
+        # The true-transparent ULW is now the *sole* on-screen output in this
+        # mode (OutputFrame hidden), so it must refresh at the full display
+        # present cap rather than the old secondary-window 15Hz throttle.
+        cap_hz = max(1, self.get_display_present_cap_hz())
         min_interval_ns = int(1e9 / cap_hz)
         if self._last_capture_present_time_ns is None:
             return True
@@ -2818,19 +3013,17 @@ class MainFrame(wx.Frame):
         return kept, rate
 
     def _note_input_fps_tick(self) -> None:
+        # Stats only; the FPS text is repainted by on_ui_anim_timer (25 fps cap).
         self._input_frame_times, self._input_fps = self._record_rate_in_rolling_window(
             self._input_frame_times)
-        self._refresh_fps_display()
 
     def _note_inference_fps_tick(self) -> None:
         self._inference_complete_times, self._inference_fps = self._record_rate_in_rolling_window(
             self._inference_complete_times)
-        self._refresh_fps_display()
 
     def _note_display_fps_tick(self) -> None:
         self._display_present_times, self._display_out_fps = self._record_rate_in_rolling_window(
             self._display_present_times)
-        self._refresh_fps_display()
 
     def _refresh_fps_display(self) -> None:
         if not hasattr(self, "fps_text"):
@@ -3006,6 +3199,55 @@ class MainFrame(wx.Frame):
             return numpy.zeros((height, width, 4), dtype=numpy.uint8)
         return self.wx_image_to_rgba_array(background_image)
 
+    def _compose_ulw_background_rgba(
+            self, canvas_width: int, canvas_height: int) -> Optional[numpy.ndarray]:
+        """Opaque background plate composited UNDER the character for the unified
+        ULW output. Returns None in 真透 (transparent_capture) mode so the ULW
+        keeps per-pixel alpha; color/image/黑键 return a fully-opaque plate."""
+        mode = self.get_output_background_mode()
+        if mode == OUTPUT_BACKGROUND_TRANSPARENT_CAPTURE:
+            return None
+        width = max(1, int(canvas_width))
+        height = max(1, int(canvas_height))
+        cache_key = (mode, self.get_output_background_signature(), width, height)
+        if getattr(self, "_cached_ulw_bg_key", None) == cache_key:
+            cached = getattr(self, "_cached_ulw_bg_rgba", None)
+            if cached is not None:
+                return cached
+        plate = self._build_ulw_background_plate(mode, width, height)
+        self._cached_ulw_bg_key = cache_key
+        self._cached_ulw_bg_rgba = plate
+        return plate
+
+    def _build_ulw_background_plate(
+            self, mode: str, width: int, height: int) -> numpy.ndarray:
+        if mode == OUTPUT_BACKGROUND_COLOR:
+            colour = self.get_output_background_color()
+            if colour is None or not colour.IsOk():
+                colour = wx.Colour(0, 0, 0)
+            rgba = numpy.empty((height, width, 4), dtype=numpy.uint8)
+            rgba[:, :, 0] = colour.Red()
+            rgba[:, :, 1] = colour.Green()
+            rgba[:, :, 2] = colour.Blue()
+            rgba[:, :, 3] = 255
+            return rgba
+        if mode == OUTPUT_BACKGROUND_IMAGE:
+            image = self.load_output_background_image(width, height)
+            if image is not None and image.IsOk():
+                rgba = numpy.ascontiguousarray(
+                    self.wx_image_to_rgba_array(image), dtype=numpy.uint8).copy()
+                rgba[:, :, 3] = 255
+                return rgba
+        # 黑键 / Color Key (and image-missing fallback): opaque black plate so
+        # WGC + colour-key capture tools can key it out.
+        r, g, b = OUTPUT_CAPTURE_COLORKEY_RGB
+        rgba = numpy.empty((height, width, 4), dtype=numpy.uint8)
+        rgba[:, :, 0] = r
+        rgba[:, :, 1] = g
+        rgba[:, :, 2] = b
+        rgba[:, :, 3] = 255
+        return rgba
+
     def clear_result_image_bitmap(self, width: int, height: int) -> None:
         """Hard-reset output buffer. MemoryDC Clear() does not zero alpha on Windows."""
         width = max(1, int(width))
@@ -3054,7 +3296,7 @@ class MainFrame(wx.Frame):
                 index = len(CHARACTER_EDGE_MODE_VALUES) - 1
             return CHARACTER_EDGE_MODE_VALUES[index]
         return normalize_character_edge_mode(
-            str(self.persistent_ui_state.get("character_edge_mode", CHARACTER_EDGE_FLICKER)))
+            str(self.persistent_ui_state.get("character_edge_mode", CHARACTER_EDGE_NONE)))
 
     def get_character_edge_width(self) -> float:
         spin = getattr(self, "character_edge_width_spin", None)
@@ -3083,7 +3325,7 @@ class MainFrame(wx.Frame):
         style_panel = getattr(self, "character_edge_style_panel", None)
         if style_panel is None:
             return
-        show_width = mode in (CHARACTER_EDGE_FLICKER, CHARACTER_EDGE_OUTLINE)
+        show_width = mode == CHARACTER_EDGE_OUTLINE
         show_colour = mode == CHARACTER_EDGE_OUTLINE
         width_row = getattr(self, "character_edge_width_row_panel", None)
         colour_row = getattr(self, "character_edge_colour_row_panel", None)
@@ -3370,7 +3612,8 @@ class MainFrame(wx.Frame):
         if getattr(self, "_controls_build_in_progress", False):
             wx.CallLater(150, self.sync_transparent_capture_output_window)
             return
-        if not self.is_transparent_capture_background_enabled():
+        self.update_output_window_visibility()
+        if not self.is_ulw_output_enabled():
             capture_window = getattr(self, "transparent_capture_window", None)
             if capture_window is not None:
                 capture_window.hide()
@@ -3386,6 +3629,11 @@ class MainFrame(wx.Frame):
                     locked_w,
                     locked_h,
                     on_geometry_changed=self.schedule_capture_output_geometry_save,
+                    on_edit_begin=self._overlay_edit_begin,
+                    on_edit_motion=self._overlay_edit_motion,
+                    on_edit_end=self._overlay_edit_end,
+                    on_key_nudge=self._overlay_key_nudge,
+                    on_deactivate=self._overlay_deactivated,
                 )
             except Exception:
                 self.transparent_capture_window = None
@@ -3401,13 +3649,65 @@ class MainFrame(wx.Frame):
             if self.last_output_wx_image is not None:
                 self._maybe_schedule_transparent_capture_update(immediate=True)
 
+    def update_output_window_visibility(self) -> None:
+        """The layered ULW (easyvtuberstudio_output) is the sole on-screen output
+        + edit surface for every background mode now, so the wx OutputFrame is
+        always hidden (retired as an output surface)."""
+        output_frame = getattr(self, "output_frame", None)
+        if output_frame is None:
+            return
+        try:
+            if self.is_ulw_output_enabled():
+                if output_frame.IsShown():
+                    output_frame.Hide()
+            elif not output_frame.IsShown():
+                output_frame.Show(True)
+                self.uniconize_window(output_frame)
+        except RuntimeError:
+            pass
+
+    def _overlay_canvas_size(self) -> tuple[int, int]:
+        return self.get_output_canvas_size()
+
+    def _overlay_edit_begin(self, x: int, y: int) -> bool:
+        """ULW WNDPROC router: try to start a layer edit at canvas-pixel (x,y).
+        Returns True only when a selected layer's handle/body was hit (so the
+        overlay edits instead of dragging the window)."""
+        canvas_w, canvas_h = self._overlay_canvas_size()
+        return self.begin_layer_edit_at(x, y, canvas_w, canvas_h)
+
+    def _overlay_edit_motion(self, x: int, y: int) -> None:
+        # _apply_layer_edit_motion -> on_layer_state_changed already pushes the
+        # ULW frame; no extra schedule needed here.
+        self.apply_layer_edit_at(x, y)
+
+    def _overlay_edit_end(self) -> None:
+        # _end_layer_edit only persists state (no on_layer_state_changed), so
+        # push one final frame so the selection chrome/handle settles.
+        self.end_layer_edit_external()
+        self._maybe_schedule_transparent_capture_update(immediate=True)
+
+    def _overlay_key_nudge(self, dx: float, dy: float) -> bool:
+        # nudge_selected_layer -> on_layer_state_changed pushes the ULW frame.
+        return self.nudge_selected_layer(dx, dy)
+
+    def _overlay_deactivated(self) -> None:
+        # The ULW lost activation (user clicked away). Run the same deselect
+        # check the wx windows use on deactivate: selection is kept only when
+        # the new focus is the layer window or the ULW itself, so clicking the
+        # desktop / another app drops it. CallAfter lets the new foreground
+        # settle before _is_layer_editing_focus_window() inspects it.
+        if self._is_closing:
+            return
+        wx.CallAfter(self._maybe_clear_layer_selection_after_deactivate)
+
     def _refresh_transparent_capture_frame(self) -> None:
-        if not self.is_transparent_capture_background_enabled():
+        if not self.is_ulw_output_enabled():
             return
         self._push_transparent_capture_from_cache()
 
     def _push_transparent_capture_from_cache(self) -> None:
-        if self._is_closing or not self.is_transparent_capture_background_enabled():
+        if self._is_closing or not self.is_ulw_output_enabled():
             return
         capture_window = getattr(self, "transparent_capture_window", None)
         if capture_window is None or not capture_window.is_valid():
@@ -3422,6 +3722,7 @@ class MainFrame(wx.Frame):
                 canvas_width,
                 canvas_height,
                 self.is_layer_blend_enabled(),
+                self.basic_layers_state.selected_slot_id,
             )
             cached = self._cached_capture_foreground_rgba
             if (
@@ -3433,15 +3734,25 @@ class MainFrame(wx.Frame):
                 self._note_capture_present_time()
                 _perf_record(capture_ms=(time.perf_counter() - capture_t0) * 1000.0)
                 return
-            if self.is_layer_blend_enabled() and self.result_image_bitmap.IsOk():
-                self._start_async_capture_build(signature, canvas_width, canvas_height)
+            # Single-composite source of truth: reuse the exact RGBA the present
+            # path produced this frame (no wx readback, no second composite).
+            rgba = self._cached_present_rgba
+            if (rgba is None
+                    or rgba.shape[0] != canvas_height
+                    or rgba.shape[1] != canvas_width):
+                rgba = self._compose_present_rgba(canvas_width, canvas_height)
+            if rgba is None:
                 return
-            self._push_transparent_capture_keyframe_sync(
-                capture_window,
-                signature,
-                canvas_width,
-                canvas_height,
-                capture_t0=capture_t0)
+            self._cached_capture_foreground_rgba = rgba
+            self._cached_capture_foreground_signature = signature
+            if getattr(self, "_capture_async_active", False):
+                return
+            self._capture_async_active = True
+            threading.Thread(
+                target=self._async_premultiply_and_deliver,
+                args=(signature, rgba, capture_t0),
+                daemon=True,
+                name="capture-premultiply").start()
         except Exception as exc:
             _err_record(
                 "H-CAP",
@@ -3449,211 +3760,54 @@ class MainFrame(wx.Frame):
                 exc)
             self._capture_async_active = False
 
-    def _push_transparent_capture_keyframe_sync(
+    def _async_premultiply_and_deliver(
             self,
-            capture_window: TransparentCaptureWindow,
             signature: tuple,
-            canvas_width: int,
-            canvas_height: int,
-            *,
+            rgba: numpy.ndarray,
             capture_t0: float) -> None:
-        rgba = self._compose_capture_from_keyframe_rgba(canvas_width, canvas_height)
-        self._cached_capture_foreground_rgba = rgba
-        self._cached_capture_foreground_signature = signature
-        capture_window.update_frame_rgba(rgba, frame_signature=signature)
-        self._note_capture_present_time()
-        _perf_record(capture_ms=(time.perf_counter() - capture_t0) * 1000.0)
-
-    def _snapshot_result_bitmap_png_path(self) -> Optional[str]:
-        if not self.result_image_bitmap.IsOk():
-            return None
-        temp_path = None
         try:
-            fd, temp_path = tempfile.mkstemp(suffix=".png")
-            os.close(fd)
-            if not self.result_image_bitmap.SaveFile(temp_path, wx.BITMAP_TYPE_PNG):
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
-                return None
-            return temp_path
+            premultiplied_bgra = _straight_rgba_to_premultiplied_bgra(rgba)
         except Exception:
-            if temp_path is not None:
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
-            return None
+            premultiplied_bgra = None
+        wx.CallAfter(
+            self._deliver_capture_premultiplied,
+            signature,
+            rgba,
+            premultiplied_bgra,
+            capture_t0)
 
-    @staticmethod
-    def _apply_background_key_to_rgba(
-            rgba: numpy.ndarray,
-            background_rgba: numpy.ndarray) -> numpy.ndarray:
-        if background_rgba.shape != rgba.shape:
-            return rgba
-        if numpy.all(background_rgba[:, :, 3] >= 255):
-            match = (
-                (rgba[:, :, 0] == background_rgba[:, :, 0])
-                & (rgba[:, :, 1] == background_rgba[:, :, 1])
-                & (rgba[:, :, 2] == background_rgba[:, :, 2]))
-            rgba = rgba.copy()
-            rgba[match, 3] = 0
-            rgba[match, 0:3] = 0
-        return rgba
-
-    def _async_capture_from_png_path(
-            self,
-            temp_path: str,
-            signature: tuple,
-            canvas_width: int,
-            canvas_height: int,
-            background_rgba: numpy.ndarray,
-            build_started_at: float) -> None:
-        try:
-            with PIL.Image.open(temp_path) as pil_image:
-                rgba = numpy.ascontiguousarray(
-                    pil_image.convert("RGBA"), dtype=numpy.uint8)
-            rgba = self._apply_background_key_to_rgba(rgba, background_rgba)
-            rgba = self.sanitize_rgba_alpha_fringe(rgba)
-            wx.CallAfter(
-                self._deliver_capture_rgba,
-                signature,
-                rgba,
-                build_started_at)
-        except Exception as exc:
-            _err_record(
-                "H-CAP",
-                "character_model_mediapipe_puppeteer_load_preview.py:_async_capture_from_png_path",
-                exc)
-            wx.CallAfter(self._finish_capture_async)
-        finally:
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
-
-    def _finish_capture_async(self) -> None:
-        self._capture_async_active = False
-
-    def _deliver_capture_rgba(
+    def _deliver_capture_premultiplied(
             self,
             signature: tuple,
             rgba: numpy.ndarray,
-            build_started_at: float) -> None:
+            premultiplied_bgra: Optional[numpy.ndarray],
+            capture_t0: float) -> None:
         self._capture_async_active = False
-        if self._is_closing or not self.is_transparent_capture_background_enabled():
+        if self._is_closing or not self.is_ulw_output_enabled():
             return
         capture_window = getattr(self, "transparent_capture_window", None)
         if capture_window is None or not capture_window.is_valid():
             return
-        self._cached_capture_foreground_rgba = rgba
-        self._cached_capture_foreground_signature = signature
         try:
-            capture_window.update_frame_rgba(rgba, frame_signature=signature)
+            capture_window.update_frame_rgba(
+                rgba,
+                frame_signature=signature,
+                premultiplied_bgra=premultiplied_bgra)
             self._note_capture_present_time()
-            _perf_record(
-                capture_ms=max(0.0, (time.perf_counter() - build_started_at) * 1000.0))
+            # ULW is the actual on-screen output in transparent mode; count each
+            # delivered frame (including interpolated 补帧 frames) as the true
+            # output framerate. OutputFrame's panel-refresh tick only fires in
+            # non-transparent modes, so there is no double counting.
+            self._note_display_fps_tick()
+            _perf_record(capture_ms=(time.perf_counter() - capture_t0) * 1000.0)
         except Exception as exc:
             _err_record(
                 "H-CAP",
-                "character_model_mediapipe_puppeteer_load_preview.py:_deliver_capture_rgba",
+                "character_model_mediapipe_puppeteer_load_preview.py:_deliver_capture_premultiplied",
                 exc)
 
-    def _start_async_capture_build(
-            self,
-            signature: tuple,
-            canvas_width: int,
-            canvas_height: int) -> None:
-        if getattr(self, "_capture_async_active", False):
-            return
-        self._capture_async_active = True
-        build_started_at = time.perf_counter()
-        temp_path = self._snapshot_result_bitmap_png_path()
-        if temp_path is None:
-            self._capture_async_active = False
-            return
-        background_rgba = self.build_output_background_rgba(
-            canvas_width, canvas_height)
-        threading.Thread(
-            target=self._async_capture_from_png_path,
-            args=(
-                temp_path,
-                signature,
-                canvas_width,
-                canvas_height,
-                background_rgba,
-                build_started_at),
-            daemon=True,
-            name="tha4-capture-png").start()
-
-    def _compose_capture_from_keyframe_rgba(
-            self, canvas_width: int, canvas_height: int) -> numpy.ndarray:
-        antialias_factor = self._get_antialias_factor()
-        wx_image = self.last_output_wx_image
-        if wx_image is None:
-            raise RuntimeError("no output image for capture")
-        if not self._keyframe_cache_valid(wx_image, antialias_factor):
-            self._update_keyframe_cache(wx_image, antialias_factor)
-        character_rgba = self._compose_character_rgba_from_keyframe(
-            canvas_width, canvas_height, antialias_factor)
-        character_rgba = self._apply_character_edge_postprocess_rgba(character_rgba)
-        transparent_bg = numpy.zeros(
-            (canvas_height, canvas_width, 4), dtype=numpy.uint8)
-        return self.sanitize_rgba_alpha_fringe(
-            composite_rgba_arrays(transparent_bg, character_rgba))
-
-    def _result_bitmap_to_capture_rgba(self) -> numpy.ndarray:
-        if not self.result_image_bitmap.IsOk():
-            raise RuntimeError("result bitmap missing")
-        canvas_width, canvas_height = self.get_output_canvas_size()
-        rgba = self.wx_bitmap_to_rgba_array(
-            self.result_image_bitmap, preserve_color=True)
-        bg = self.build_output_background_rgba(canvas_width, canvas_height)
-        if bg.shape != rgba.shape:
-            raise ValueError("result bitmap size mismatch")
-        rgba = self._apply_background_key_to_rgba(rgba, bg)
-        return self.sanitize_rgba_alpha_fringe(rgba)
-
-    def _resolve_capture_foreground_rgba(
-            self,
-            character_bitmap: wx.Bitmap,
-            canvas_width: int,
-            canvas_height: int) -> numpy.ndarray:
-        signature = (
-            self._last_compose_signature,
-            canvas_width,
-            canvas_height,
-            self.is_layer_blend_enabled(),
-        )
-        cached = self._cached_capture_foreground_rgba
-        if (
-                cached is not None
-                and self._cached_capture_foreground_signature == signature
-                and cached.shape[0] == canvas_height
-                and cached.shape[1] == canvas_width):
-            return cached
-        mode = self.get_output_background_mode()
-        if self.is_layer_blend_enabled() and self.result_image_bitmap.IsOk():
-            if mode in (
-                    OUTPUT_BACKGROUND_TRANSPARENT_CAPTURE,
-                    OUTPUT_BACKGROUND_TRANSPARENT,
-                    OUTPUT_BACKGROUND_COLOR):
-                try:
-                    foreground_rgba = self._result_bitmap_to_capture_rgba()
-                    self._cached_capture_foreground_rgba = foreground_rgba
-                    self._cached_capture_foreground_signature = signature
-                    return foreground_rgba
-                except Exception:
-                    pass
-        foreground_rgba = self.compose_foreground_rgba(
-            character_bitmap, canvas_width, canvas_height)
-        self._cached_capture_foreground_rgba = foreground_rgba
-        self._cached_capture_foreground_signature = signature
-        return foreground_rgba
-
     def _maybe_schedule_transparent_capture_update(self, *, immediate: bool = False) -> None:
-        if not self.is_transparent_capture_background_enabled():
+        if not self.is_ulw_output_enabled():
             return
         if self.last_output_wx_image is None:
             return
@@ -3666,7 +3820,7 @@ class MainFrame(wx.Frame):
 
     def _run_transparent_capture_update(self) -> None:
         self._capture_update_pending = False
-        if self._is_closing or not self.is_transparent_capture_background_enabled():
+        if self._is_closing or not self.is_ulw_output_enabled():
             return
         self._push_transparent_capture_from_cache()
 
@@ -3679,48 +3833,108 @@ class MainFrame(wx.Frame):
             rgba[transparent, 0:3] = 0
         return rgba
 
-    def compose_foreground_rgba(
+    def compose_edit_chrome_rgba(
             self,
-            character_bitmap: wx.Bitmap,
             canvas_width: int,
-            canvas_height: int) -> numpy.ndarray:
+            canvas_height: int) -> Optional[numpy.ndarray]:
+        """Transparent RGBA overlay carrying the selection box + resize handle
+        for the currently selected layer, or None when nothing is selected
+        (the edit/live gate: clean output when no selection).
+
+        This is the chrome layer the layered output window stacks on top of the
+        clean (captured) output. Geometry reuses the same resolved rect/rotation
+        as compositing so it lines up exactly.
+        """
+        if not self.is_layer_blend_enabled():
+            self._last_edit_chrome_geom = None
+            return None
+        selected = self.basic_layers_state.selected_slot_id
+        if selected is None or selected < 0:
+            self._last_edit_chrome_geom = None
+            return None
         canvas_width = max(1, int(canvas_width))
         canvas_height = max(1, int(canvas_height))
-        transparent_bg = numpy.zeros((canvas_height, canvas_width, 4), dtype=numpy.uint8)
+        binding_context = self._make_binding_context(canvas_width, canvas_height)
+        resolved = resolve_layer_rects(
+            self.basic_layers_state,
+            self.layer_asset_cache.load_image,
+            canvas_width,
+            canvas_height,
+            binding_context)
+        rect = resolved.get(selected)
+        if rect is None:
+            self._last_edit_chrome_geom = None
+            return None
+        layer = self.basic_layers_state.get_slot(selected)
+        rotation_deg = resolved_layer_rotation_deg(
+            layer, self.basic_layers_state, rect, binding_context)
+        # Cache the exact drawn box so the layered-output hit-test can match the
+        # on-screen highlight pixel-for-pixel (re-resolving would advance the
+        # stateful binding smoother / motion_time_s and drift bound layers,
+        # making clicks miss and drag the window instead of the layer).
+        self._last_edit_chrome_geom = (
+            int(selected), rect, float(rotation_deg),
+            int(canvas_width), int(canvas_height))
+        try:
+            colour = self.get_layer_selection_highlight_colour(
+                canvas_width, canvas_height)
+            highlight = (colour.Red(), colour.Green(), colour.Blue())
+        except Exception:
+            highlight = DEFAULT_HIGHLIGHT_RGB
+        return render_selection_chrome_rgba(
+            canvas_width,
+            canvas_height,
+            (rect.draw_x, rect.draw_y, rect.draw_width, rect.draw_height),
+            rotation_deg=rotation_deg,
+            highlight_rgb=highlight)
+
+    def compose_output_stack_rgba(
+            self,
+            canvas_width: int,
+            canvas_height: int) -> Optional[numpy.ndarray]:
+        """wx-free full output composite: enhanced character keyframe + layer
+        stack, all in numpy (no wx.DC). Returns transparent-background straight
+        RGBA, or None when no keyframe is cached yet.
+
+        This is the unified render entry the capture path (and the future
+        ctypes layered output window) consume so enhancement and multi-layer
+        compositing share one numpy geometry/blend source of truth.
+        """
+        if self._render_keyframe_rgba is None:
+            return None
+        canvas_width = max(1, int(canvas_width))
+        canvas_height = max(1, int(canvas_height))
         antialias_factor = self._get_antialias_factor()
-        if self._render_keyframe_rgba is not None:
-            character_rgba = self._compose_character_rgba_from_keyframe(
-                canvas_width, canvas_height, antialias_factor)
-            character_rgba = self._apply_character_edge_postprocess_rgba(character_rgba)
-        else:
-            character_rgba = self.wx_bitmap_to_rgba_array(
-                character_bitmap, preserve_color=True)
-        layer_blend = self.is_layer_blend_enabled()
-        if layer_blend:
-            composed_bitmap = self.create_rgba_bitmap_from_array(
-                canvas_width, canvas_height, transparent_bg.copy())
-            character_layer_bitmap = self.create_rgba_bitmap_from_array(
-                canvas_width, canvas_height, character_rgba)
-            dc = wx.MemoryDC()
-            dc.SelectObject(composed_bitmap)
+        c0 = time.perf_counter()
+        character_rgba = self._compose_character_rgba_from_keyframe(
+            canvas_width, canvas_height, antialias_factor)
+        c1 = time.perf_counter()
+        character_rgba = self._apply_character_edge_postprocess_rgba(character_rgba)
+        c2 = time.perf_counter()
+        if self.is_layer_blend_enabled():
             binding_context = self._make_binding_context(canvas_width, canvas_height)
-            LayerCompositor.draw_post_process_stack(
-                dc,
+            fg = compose_full_stack_rgba(
                 self.basic_layers_state,
-                self.layer_asset_cache,
+                self.layer_asset_cache.load_image_rgba,
                 canvas_width,
                 canvas_height,
-                character_layer_bitmap,
+                character_rgba,
                 binding_context)
-            del dc
-            fg = self.wx_bitmap_to_rgba_array(composed_bitmap, preserve_color=True)
         else:
             fg = character_rgba
-        rgba = composite_rgba_arrays(transparent_bg, fg)
-        return self.sanitize_rgba_alpha_fringe(rgba)
+        c3 = time.perf_counter()
+        result = self.sanitize_rgba_alpha_fringe(fg)
+        c4 = time.perf_counter()
+        self._compose_stack_substages = {
+            "char": (c1 - c0) * 1000.0,
+            "edge": (c2 - c1) * 1000.0,
+            "layers": (c3 - c2) * 1000.0,
+            "sanitize": (c4 - c3) * 1000.0,
+        }
+        return result
 
     def _push_transparent_capture_foreground(self, foreground_rgba: numpy.ndarray) -> None:
-        if self._is_closing or not self.is_transparent_capture_background_enabled():
+        if self._is_closing or not self.is_ulw_output_enabled():
             return
         capture_window = getattr(self, "transparent_capture_window", None)
         if capture_window is None or not capture_window.is_valid():
@@ -3812,7 +4026,7 @@ class MainFrame(wx.Frame):
             pass
 
     def ensure_application_windows_visible(self):
-        ensure_start = time.time()
+        ensure_start = time.perf_counter()
         if self.full_controls_expanded:
             self.create_controls_frame()
             if self.controls_frame is None:
@@ -3826,9 +4040,13 @@ class MainFrame(wx.Frame):
             self.apply_frame_geometry_from_storage(
                 self.controls_frame, "controls_frame", min_controls_size, default_controls_size)
             self.apply_controls_window_size_policy(self.controls_frame)
-            self.controls_frame.Show(True)
-            self.uniconize_window(self.controls_frame)
 
+            # --- Output window FIRST ---
+            # Live-streaming capture tools remember a source by window title/order,
+            # so the stable-titled output window must exist and become visible
+            # before the controls and layer windows. In 真透 (true-transparent)
+            # mode the output is the ULW (+ its border); otherwise it is the wx
+            # OutputFrame.
             self.ensure_output_frame()
             locked_w, locked_h = self.get_locked_output_client_size()
             min_output_size = wx.Size(locked_w, locked_h)
@@ -3838,8 +4056,19 @@ class MainFrame(wx.Frame):
             if not used_saved_output:
                 beside_rect = self.default_output_frame_rect_beside_controls()
                 self.apply_client_rect_to_window(self.output_frame, beside_rect, min_output_size)
-            self.output_frame.Show(True)
-            self.uniconize_window(self.output_frame)
+            if self.is_ulw_output_enabled():
+                self._sync_transparent_capture_output_window_impl()
+            else:
+                self.output_frame.Show(True)
+                self.uniconize_window(self.output_frame)
+
+            # --- Controls window SECOND ---
+            self.controls_frame.Show(True)
+            self.uniconize_window(self.controls_frame)
+
+            # --- Layer window THIRD (only when layer blend is enabled) ---
+            if self.is_layer_blend_enabled():
+                self.show_basic_layer_window()
 
             self.Show(False)
             self.bring_controls_frame_to_front()
@@ -3849,6 +4078,9 @@ class MainFrame(wx.Frame):
                 self.full_controls_expanded = False
                 self.Show(True)
                 self.Raise()
+            _startup_record(
+                "ensure_application_windows_visible (show output->controls->layer)",
+                (time.perf_counter() - ensure_start) * 1000.0)
             return
 
         min_compact_size = wx.Size(self.COMPACT_MIN_CLIENT_WIDTH, self.COMPACT_MIN_CLIENT_HEIGHT)
@@ -3870,8 +4102,9 @@ class MainFrame(wx.Frame):
             if not used_saved_output:
                 beside_rect = self.default_output_frame_rect_beside_controls()
                 self.apply_client_rect_to_window(self.output_frame, beside_rect, min_output_size)
-            self.output_frame.Show(True)
-            self.uniconize_window(self.output_frame)
+            if not self.is_ulw_output_enabled():
+                self.output_frame.Show(True)
+                self.uniconize_window(self.output_frame)
             wx.CallAfter(self.sync_transparent_capture_output_window)
 
     def apply_client_rect_to_window(self,
@@ -4046,14 +4279,19 @@ class MainFrame(wx.Frame):
         return False
 
     def ensure_output_frame(self):
+        # OutputFrame is retired as an output surface when the ULW is the unified
+        # output window; build it (geometry/state references still use it) but
+        # never show it in that mode.
+        show_frame = not self.is_ulw_output_enabled()
         if getattr(self, "output_frame", None) is not None:
-            if not self.output_frame.IsShown():
+            if show_frame and not self.output_frame.IsShown():
                 self.output_frame.Show(True)
             self.sync_output_frame_owner()
             return
         self.output_frame = OutputFrame(self)
         self.apply_output_frame_state()
-        self.output_frame.Show(True)
+        if show_frame:
+            self.output_frame.Show(True)
         self.sync_output_frame_owner()
 
     def sync_output_frame_owner(self):
@@ -4296,9 +4534,9 @@ class MainFrame(wx.Frame):
                 self.persistent_ui_state.get("output_background_hex", "#000000"),
                 "#000000")
             output_background_mode = self.persistent_ui_state.get(
-                "output_background_mode", OUTPUT_BACKGROUND_TRANSPARENT)
+                "output_background_mode", OUTPUT_BACKGROUND_TRANSPARENT_CAPTURE)
             if output_background_mode not in OUTPUT_BACKGROUND_MODE_VALUES:
-                output_background_mode = OUTPUT_BACKGROUND_TRANSPARENT
+                output_background_mode = OUTPUT_BACKGROUND_TRANSPARENT_CAPTURE
             output_background_image_path = str(
                 self.persistent_ui_state.get("output_background_image_path") or "")
         else:
@@ -5472,6 +5710,7 @@ class MainFrame(wx.Frame):
         if self.controls_frame is not None:
             return
 
+        controls_build_t0 = time.perf_counter()
         self._controls_build_in_progress = True
         self.controls_frame = ControlsFrame(self)
         try:
@@ -5498,14 +5737,14 @@ class MainFrame(wx.Frame):
             self.load_last_tha3_png_button = wx.Button(
                 controls_header_panel,
                 wx.ID_ANY,
-                "以 THA3 加载上次立绘 / Load Last THA3 PNG")
+                "加载立绘 / Load Last Portrait")
             self.load_last_tha3_png_button.Bind(wx.EVT_BUTTON, self.load_last_tha3_character_png)
             controls_header_row1.Add(self.load_last_tha3_png_button, 0, wx.EXPAND | wx.LEFT, 6)
 
             self.load_tha3_other_png_button = wx.Button(
                 controls_header_panel,
                 wx.ID_ANY,
-                "以 THA3 加载其他立绘 / Load Other THA3 PNG")
+                "加载其他立绘 / Load Other Portrait")
             self.load_tha3_other_png_button.Bind(wx.EVT_BUTTON, self.load_tha3_character_png)
             controls_header_row1.Add(self.load_tha3_other_png_button, 0, wx.EXPAND | wx.LEFT, 6)
 
@@ -5596,6 +5835,9 @@ class MainFrame(wx.Frame):
                 self.webcam_capture_panel.Refresh(False)
         finally:
             self._controls_build_in_progress = False
+            _startup_record(
+                "create_controls_frame (build full controls UI)",
+                (time.perf_counter() - controls_build_t0) * 1000.0)
 
     def create_capture_panel(self, parent):
         self.capture_panel = wx.Panel(parent, style=wx.RAISED_BORDER)
@@ -6922,7 +7164,7 @@ class MainFrame(wx.Frame):
         output_background_image_path = self.get_output_background_image_path()
         layer_blend_enabled = self.is_layer_blend_enabled()
         character_edge_mode = normalize_character_edge_mode(
-            str(self.persistent_ui_state.get("character_edge_mode", CHARACTER_EDGE_FLICKER)))
+            str(self.persistent_ui_state.get("character_edge_mode", CHARACTER_EDGE_NONE)))
         try:
             character_edge_width = clamp_character_edge_width(
                 float(self.persistent_ui_state.get(
@@ -7027,8 +7269,8 @@ class MainFrame(wx.Frame):
         self.output_obs_capture_hint = wx.StaticText(
             self.postprocess_panel,
             label=(
-                "OBS：窗口捕获→「THA4 Output / 输出」→ 颜色键控 #000000 "
-                "(相似度约400、平滑约80) / Window capture + Color Key black"))
+                "黑键：窗口捕获→「THA4 Output / 输出」→ 颜色键控 #000000 "
+                "(相似度约400、平滑约80) / Color Key: window capture + chroma key black"))
         self.postprocess_panel_sizer.Add(
             self.output_obs_capture_hint,
             wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4).Expand())
@@ -7036,9 +7278,9 @@ class MainFrame(wx.Frame):
         self.output_transparent_capture_hint = wx.StaticText(
             self.postprocess_panel,
             label=(
-                "窗口采集（OBS/快手等）：选「THA4 Transparent Capture / 透明捕获输出」，"
-                "透明底用色度键 #000000；桌面真透由叠加层显示；按住窗口拖动可移动位置 / "
-                "Window capture: pick THA4 Transparent Capture; chroma key black; drag window to move"))
+                "透明：桌面真透由叠加层显示，OBS 用 WGC/游戏捕获勾「允许透明」；"
+                "不保 alpha 的工具(传统窗口捕获/部分直播助手)请改用「黑键」；按住窗口拖动可移动位置 / "
+                "Transparent: true per-pixel alpha overlay; use OBS WGC capture with transparency"))
         self.postprocess_panel_sizer.Add(
             self.output_transparent_capture_hint,
             wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4).Expand())
@@ -7395,7 +7637,7 @@ class MainFrame(wx.Frame):
             self.load_last_tha3_png_button.Enable(tha3_last_ready)
 
     def show_full_controls_window(self):
-        show_start_time = time.time()
+        show_start_time = time.perf_counter()
         self.reload_persistent_ui_state_from_disk()
         self.apply_mouth_persistent_state_to_args()
         self.apply_persistent_slider_value_states()
@@ -7409,6 +7651,9 @@ class MainFrame(wx.Frame):
         if getattr(self, "output_frame", None) is not None:
             self.output_frame.result_image_panel.Refresh(False)
         wx.CallAfter(self._post_show_controls_setup)
+        _startup_record(
+            "show_full_controls_window (build + show all windows)",
+            (time.perf_counter() - show_start_time) * 1000.0)
 
     def show_compact_launcher(self):
         if not self._restoring_window_geometry:
@@ -7955,6 +8200,14 @@ class MainFrame(wx.Frame):
         old_scale = self.display_scale
         old_rotation_deg = self.display_rotation_deg
 
+        # Periodic "Calibrate Forward Gaze" recalibrates the pose_converter head
+        # orientation offsets, which affect rendering regardless of dynamic
+        # enhancement. Run it here, BEFORE the enabled branch, so it keeps
+        # working when auto-transform is OFF (it used to sit only inside the
+        # enabled branch and silently stopped). Its own enable-checkbox +
+        # interval guards live in try_apply_auto_forward_gaze_calibration.
+        self.maybe_apply_periodic_direction_calibration()
+
         if not enabled:
             target_offset_x = 0.0
             target_offset_y = 0.0
@@ -7968,7 +8221,9 @@ class MainFrame(wx.Frame):
                 if self.neutral_face_screen_motion is None:
                     self.apply_neutral_calibration(latest_motion)
                 else:
-                    self.maybe_apply_periodic_direction_calibration()
+                    # Direction calibration now runs unconditionally above;
+                    # scale calibration stays here (needs neutral + live motion
+                    # and is meaningful only while dynamic enhancement is on).
                     self.maybe_apply_periodic_scale_calibration(latest_motion)
                 neutral_motion = self.neutral_face_screen_motion
                 target_offset_x = (latest_motion.center_x - neutral_motion.center_x) * self.move_x_gain_spin.GetValue()
@@ -8108,18 +8363,61 @@ class MainFrame(wx.Frame):
             time_ms = self._next_mediapipe_video_timestamp_ms(time_now)
             mediapipe = get_mediapipe_module()
             mediapipe_image = mediapipe.Image(image_format=mediapipe.ImageFormat.SRGB, data=rgb_frame)
-            try:
-                detection_result = self.face_landmarker.detect_for_video(mediapipe_image, time_ms)
-            except (ValueError, RuntimeError) as exc:
-                if not self._mediapipe_detect_error_logged:
-                    self._mediapipe_detect_error_logged = True
-                    print(
-                        "MediaPipe detect_for_video failed (further errors suppressed):",
-                        exc,
-                        file=sys.stderr)
+            # Hand the heavy detect_for_video call to a worker thread so it never
+            # blocks the wx UI/render thread (mirrors the THA pose-infer worker).
+            # rgb_frame is kept referenced by the job so its buffer stays alive
+            # until the (deferred) detection consumes the wrapping mp.Image.
+            self._schedule_mediapipe_detect(mediapipe_image, time_ms, rgb_frame)
+
+    def _schedule_mediapipe_detect(self, mediapipe_image, time_ms: int, frame_buffer) -> None:
+        """Queue a frame for off-thread MediaPipe detection (latest-wins, single worker)."""
+        if self._is_closing or self.face_landmarker is None:
+            return
+        with self._mediapipe_lock:
+            self._pending_mediapipe_job = (mediapipe_image, time_ms, frame_buffer)
+            if self._mediapipe_worker_active:
                 return
-            self._mediapipe_detect_error_logged = False
-            self.update_mediapipe_face_pose(detection_result)
+            self._mediapipe_worker_active = True
+        threading.Thread(
+            target=self._mediapipe_detect_worker,
+            daemon=True,
+            name="mediapipe-detect").start()
+
+    def _mediapipe_detect_worker(self) -> None:
+        try:
+            while not self._is_closing:
+                with self._mediapipe_lock:
+                    job = self._pending_mediapipe_job
+                    self._pending_mediapipe_job = None
+                if job is None:
+                    break
+                landmarker = self.face_landmarker
+                if landmarker is None:
+                    break
+                mediapipe_image, time_ms, _frame_buffer = job
+                try:
+                    detection_result = landmarker.detect_for_video(mediapipe_image, time_ms)
+                except (ValueError, RuntimeError) as exc:
+                    if not self._mediapipe_detect_error_logged:
+                        self._mediapipe_detect_error_logged = True
+                        print(
+                            "MediaPipe detect_for_video failed (further errors suppressed):",
+                            exc,
+                            file=sys.stderr)
+                    continue
+                self._mediapipe_detect_error_logged = False
+                wx.CallAfter(self._finish_mediapipe_detect, detection_result)
+                with self._mediapipe_lock:
+                    if self._pending_mediapipe_job is None:
+                        break
+        finally:
+            with self._mediapipe_lock:
+                self._mediapipe_worker_active = False
+
+    def _finish_mediapipe_detect(self, detection_result) -> None:
+        if self._is_closing or detection_result is None:
+            return
+        self.update_mediapipe_face_pose(detection_result)
 
     def update_mediapipe_face_pose(self, detection_result):
         face_screen_motion = self.extract_face_screen_motion(detection_result)
@@ -8149,9 +8447,8 @@ class MainFrame(wx.Frame):
             self.set_text_ctrl_if_changed(self.rotation_value_labels[HEAD_Z], "%0.2f" % euler_angles[2])
 
         self.mediapipe_face_pose = MediaPipeFacePose(blendshape_params, xform_matrix)
-        if self._capture_frame_serial % 6 == 0:
-            self.refresh_scale_curve_status()
-            self.request_scale_curve_repaint(force=False)
+        # Scale-curve preview is repainted by on_ui_anim_timer (25 fps cap).
+        self._scale_curve_dirty = True
 
     @staticmethod
     def convert_to_100(x):
@@ -8167,11 +8464,11 @@ class MainFrame(wx.Frame):
 
     def on_source_image_panel_show(self, event: wx.ShowEvent) -> None:
         if event.IsShown():
-            wx.CallAfter(self.update_source_image_bitmap, True)
+            wx.CallAfter(self.update_source_image_bitmap, force=True)
         event.Skip()
 
     def on_source_image_panel_size(self, event: wx.SizeEvent) -> None:
-        wx.CallAfter(self.update_source_image_bitmap, True)
+        wx.CallAfter(self.update_source_image_bitmap, force=True)
         event.Skip()
 
     def paint_source_image_panel(self, event: wx.Event) -> None:
@@ -8189,7 +8486,7 @@ class MainFrame(wx.Frame):
         if bitmap is None or not bitmap.IsOk():
             return
         if bitmap.GetWidth() != client.x or bitmap.GetHeight() != client.y:
-            wx.CallAfter(self.update_source_image_bitmap, True)
+            wx.CallAfter(self.update_source_image_bitmap, force=True)
             return
         dc.DrawBitmap(bitmap, 0, 0, True)
 
@@ -8259,6 +8556,8 @@ class MainFrame(wx.Frame):
             pose_head_y=pose_head_y,
             pose_neck_z=pose_neck_z,
             body_tilt_opposite_to_head=self.is_body_tilt_opposite_to_head_enabled(),
+            body_bind_pos_follow_gain=self.get_body_bind_pos_follow_gain(),
+            body_bind_roll_follow_gain=self.get_body_bind_roll_follow_gain(),
             force_full_layer_follow=self.is_layer_force_full_follow_enabled(),
             binding_smoother=self.layer_binding_smoother,
             motion_time_s=time.time(),
@@ -8273,6 +8572,7 @@ class MainFrame(wx.Frame):
         self.persist_basic_layers_state()
         if self.last_output_wx_image is not None:
             self.draw_cached_result_image(self.last_banner_text)
+            self._maybe_schedule_transparent_capture_update(immediate=True)
 
     def _panel_to_layer_delta(self, dx: int, dy: int, panel_width: int, panel_height: int) -> tuple[float, float]:
         return panel_to_layer_delta(dx, dy, panel_width, panel_height)
@@ -8296,6 +8596,20 @@ class MainFrame(wx.Frame):
             y: int,
             canvas_width: int,
             canvas_height: int) -> tuple[Optional[int], LayerEditMode]:
+        # Prefer the exact geometry last drawn as selection chrome so the
+        # draggable region matches the on-screen highlight box. Re-resolving
+        # would advance the stateful binding smoother (and use a fresh
+        # motion_time_s), drifting bound/smoothed layers away from the drawn box
+        # so clicks miss and the window drags instead of the layer.
+        geom = getattr(self, "_last_edit_chrome_geom", None)
+        selected = self.basic_layers_state.selected_slot_id
+        if (
+                geom is not None
+                and selected is not None
+                and geom[0] == int(selected)
+                and geom[3] == int(canvas_width)
+                and geom[4] == int(canvas_height)):
+            return hit_test_resolved_rect(geom[0], geom[1], geom[2], x, y)
         binding_context = self._make_binding_context(canvas_width, canvas_height)
         return hit_test_layer_edit(
             self.basic_layers_state,
@@ -8313,7 +8627,7 @@ class MainFrame(wx.Frame):
             mode: LayerEditMode,
             pos: tuple[int, int],
             canvas_size: tuple[int, int],
-            panel: wx.Window) -> bool:
+            panel: Optional[wx.Window] = None) -> bool:
         if not self.is_layer_blend_enabled():
             return False
         if self.basic_layers_state.selected_slot_id != slot_id:
@@ -8324,9 +8638,38 @@ class MainFrame(wx.Frame):
         self._layer_drag_last_pos = pos
         self._layer_drag_canvas_size = canvas_size
         self._layer_edit_panel = panel
-        if not panel.HasCapture():
+        # panel is None for the Win32 layered-output edit router (P6): mouse
+        # capture is handled by the overlay WNDPROC (SetCapture) instead.
+        if panel is not None and not panel.HasCapture():
             panel.CaptureMouse()
         return True
+
+    def begin_layer_edit_at(
+            self,
+            x: int,
+            y: int,
+            canvas_width: int,
+            canvas_height: int) -> bool:
+        """Panel-agnostic edit begin in output-canvas pixel space (for the
+        Win32 layered-output overlay). Honors the edit/live gate: only acts on
+        the currently selected layer."""
+        if not self.is_layer_blend_enabled():
+            return False
+        if self.basic_layers_state.selected_slot_id is None:
+            return False
+        slot_id, mode = self._hit_test_layer_edit(x, y, canvas_width, canvas_height)
+        if slot_id is None or mode == LayerEditMode.NONE:
+            return False
+        return self._begin_layer_edit(
+            slot_id, mode, (int(x), int(y)), (int(canvas_width), int(canvas_height)))
+
+    def apply_layer_edit_at(self, x: int, y: int) -> None:
+        """Panel-agnostic edit motion in output-canvas pixel space (P6 router)."""
+        self._apply_layer_edit_motion((int(x), int(y)))
+
+    def end_layer_edit_external(self) -> None:
+        """Panel-agnostic edit end (P6 router)."""
+        self._end_layer_edit()
 
     def _apply_layer_edit_motion(self, pos: tuple[int, int]) -> None:
         if not self._layer_drag_active or self._layer_drag_slot_id is None:
@@ -8419,10 +8762,22 @@ class MainFrame(wx.Frame):
         else:
             event.Skip()
             return
+        self.nudge_selected_layer(dx, dy)
+
+    def nudge_selected_layer(self, dx: float, dy: float) -> bool:
+        """Panel-agnostic arrow-key nudge of the selected layer (shared by the
+        wx char hook and a future Win32 WM_KEYDOWN router). Returns False when
+        nothing is selected / layer blend is off."""
+        if not self.is_layer_blend_enabled():
+            return False
+        slot_id = self.basic_layers_state.selected_slot_id
+        if slot_id is None or slot_id < 0:
+            return False
         layer = self.basic_layers_state.get_slot(slot_id)
         nudge_layer(layer, dx, dy)
         self.persist_basic_layers_state()
         self.on_layer_state_changed()
+        return True
 
     def draw_nothing_yet_string(self, dc, message: str = "Nothing yet!"):
         canvas_width, canvas_height = dc.GetSize()
@@ -8709,105 +9064,92 @@ class MainFrame(wx.Frame):
         rgba[transparent, 0:3] = 0
         self.result_image_bitmap = self.create_rgba_bitmap_from_array(width, height, rgba)
 
+    def _compose_present_rgba(
+            self, canvas_width: int, canvas_height: int) -> Optional[numpy.ndarray]:
+        """Single wx-free composite shared by on-screen present and transparent
+        capture: enhanced character + layer stack on a transparent background,
+        with the edit chrome (selection box/handle) overlaid when a layer is
+        selected. Returns straight RGBA, or None when no keyframe is cached yet.
+
+        The unified ULW output is the only output window now, so the mode
+        background (color/image/黑键) is composited UNDER the character here.
+        真透 (transparent_capture) returns None from the background builder, so
+        the foreground stays per-pixel transparent for desktop-transparent output.
+        """
+        t0 = time.perf_counter()
+        fg = self.compose_output_stack_rgba(canvas_width, canvas_height)
+        if fg is None:
+            return None
+        t_stack = time.perf_counter()
+        chrome = self.compose_edit_chrome_rgba(canvas_width, canvas_height)
+        if chrome is not None:
+            fg = self.sanitize_rgba_alpha_fringe(composite_rgba_arrays(fg, chrome))
+        t_chrome = time.perf_counter()
+        background = self._compose_ulw_background_rgba(canvas_width, canvas_height)
+        if background is not None:
+            fg = composite_rgba_arrays(background, fg)
+        t_bg = time.perf_counter()
+        stages = dict(getattr(self, "_compose_stack_substages", {}) or {})
+        stages["stack_total"] = (t_stack - t0) * 1000.0
+        stages["chrome"] = (t_chrome - t_stack) * 1000.0
+        stages["bg"] = (t_bg - t_chrome) * 1000.0
+        self._last_present_stages = stages
+        return fg
+
+    def _draw_banner_on_result_bitmap(
+            self, banner_text: str, canvas_width: int, canvas_height: int) -> None:
+        if not self.result_image_bitmap.IsOk():
+            return
+        dc = wx.MemoryDC()
+        dc.SelectObject(self.result_image_bitmap)
+        font = wx.Font(wx.FontInfo(11).Family(wx.FONTFAMILY_SWISS).Weight(wx.FONTWEIGHT_BOLD))
+        dc.SetFont(font)
+        dc.SetTextForeground(wx.Colour(255, 220, 0))
+        dc.SetBackgroundMode(wx.TRANSPARENT)
+        _tw, th = dc.GetTextExtent(banner_text)
+        dc.DrawText(banner_text, 8, canvas_height - th - 8)
+        del dc
+
     def _present_character_bitmap(
             self,
-            character_bitmap: wx.Bitmap,
+            character_bitmap: Optional[wx.Bitmap],
             canvas_width: int,
             canvas_height: int,
             banner_text: Optional[str],
             *,
             fast_affine_only: bool = False) -> None:
         present_t0 = time.perf_counter()
-        layer_blend = self.is_layer_blend_enabled()
-        used_fast_present = self._can_present_character_fast(
-            fast_affine_only=fast_affine_only, layer_blend=layer_blend)
-        if used_fast_present:
-            self.ensure_result_bitmap_size()
-            dc = wx.MemoryDC()
-            dc.SelectObject(self.result_image_bitmap)
-            self._blit_output_background_to_dc(dc, canvas_width, canvas_height)
-            dc.DrawBitmap(character_bitmap, 0, 0, True)
-            if banner_text:
-                font = wx.Font(wx.FontInfo(11).Family(wx.FONTFAMILY_SWISS).Weight(wx.FONTWEIGHT_BOLD))
-                dc.SetFont(font)
-                dc.SetTextForeground(wx.Colour(255, 220, 0))
-                dc.SetBackgroundMode(wx.TRANSPARENT)
-                tw, th = dc.GetTextExtent(banner_text)
-                dc.DrawText(banner_text, 8, canvas_height - th - 8)
-            del dc
-        elif layer_blend:
-            binding_context = self._make_binding_context(canvas_width, canvas_height)
-            self.clear_result_image_bitmap(canvas_width, canvas_height)
-            dc = wx.MemoryDC()
-            dc.SelectObject(self.result_image_bitmap)
-            LayerCompositor.draw_post_process_stack(
-                dc,
-                self.basic_layers_state,
-                self.layer_asset_cache,
-                canvas_width,
-                canvas_height,
-                character_bitmap,
-                binding_context)
-            selected = self.basic_layers_state.selected_slot_id
-            if selected is not None and selected >= 0:
-                resolved = resolve_layer_rects(
-                    self.basic_layers_state,
-                    self.layer_asset_cache.load_image,
-                    canvas_width,
-                    canvas_height,
-                    binding_context)
-                rect = resolved.get(selected)
-                if rect is not None:
-                    layer = self.basic_layers_state.get_slot(selected)
-                    highlight = self.get_layer_selection_highlight_colour(
-                        canvas_width, canvas_height)
-                    rotation_deg = resolved_layer_rotation_deg(
-                        layer, self.basic_layers_state, rect, binding_context)
-                    LayerCompositor.draw_selection_highlight(
-                        dc,
-                        rect,
-                        canvas_width,
-                        canvas_height,
-                        highlight_colour=highlight,
-                        rotation_deg=rotation_deg)
-            if banner_text:
-                font = wx.Font(wx.FontInfo(11).Family(wx.FONTFAMILY_SWISS).Weight(wx.FONTWEIGHT_BOLD))
-                dc.SetFont(font)
-                dc.SetTextForeground(wx.Colour(255, 220, 0))
-                dc.SetBackgroundMode(wx.TRANSPARENT)
-                tw, th = dc.GetTextExtent(banner_text)
-                dc.DrawText(banner_text, 8, canvas_height - th - 8)
-            del dc
-        else:
-            background_rgba = self._get_cached_background_rgba(canvas_width, canvas_height)
-            composed = self.composite_rgba_over_background(background_rgba, character_bitmap)
-            self.result_image_bitmap = self.create_rgba_bitmap_from_array(
-                canvas_width, canvas_height, composed)
-            if banner_text:
-                dc = wx.MemoryDC()
-                dc.SelectObject(self.result_image_bitmap)
-                font = wx.Font(wx.FontInfo(11).Family(wx.FONTFAMILY_SWISS).Weight(wx.FONTWEIGHT_BOLD))
-                dc.SetFont(font)
-                dc.SetTextForeground(wx.Colour(255, 220, 0))
-                dc.SetBackgroundMode(wx.TRANSPARENT)
-                tw, th = dc.GetTextExtent(banner_text)
-                dc.DrawText(banner_text, 8, canvas_height - th - 8)
-                del dc
-
-        if not used_fast_present:
-            self._sanitize_result_bitmap_once()
+        present_rgba = self._compose_present_rgba(canvas_width, canvas_height)
+        if present_rgba is None:
+            if character_bitmap is not None and character_bitmap.IsOk():
+                present_rgba = self.sanitize_rgba_alpha_fringe(
+                    self.wx_bitmap_to_rgba_array(character_bitmap, preserve_color=True))
+            else:
+                present_rgba = numpy.zeros(
+                    (canvas_height, canvas_width, 4), dtype=numpy.uint8)
+        self._cached_present_rgba = present_rgba
         self.last_banner_text = banner_text
         self.last_background_choice = self.get_output_background_signature()
         if fast_affine_only:
             self._note_cached_affine_present_time()
-        background_signature = self.get_output_background_signature()
-        if background_signature != self._last_chrome_background_signature:
-            self.refresh_output_frame_chrome()
-            self._last_chrome_background_signature = background_signature
-        self._notify_output_panel_refresh()
+        # The layered ULW is now the only output window in every mode (OutputFrame
+        # is retired/hidden) and it is fed straight from _cached_present_rgba, so
+        # the wx.Bitmap rebuild + banner DC + OutputFrame chrome/panel refresh are
+        # pure waste on the hot path. Skip them entirely while the ULW is the output.
+        if not self.is_ulw_output_enabled():
+            self.result_image_bitmap = self.create_rgba_bitmap_from_array(
+                canvas_width, canvas_height, present_rgba)
+            if banner_text:
+                self._draw_banner_on_result_bitmap(banner_text, canvas_width, canvas_height)
+            background_signature = self.get_output_background_signature()
+            if background_signature != self._last_chrome_background_signature:
+                self.refresh_output_frame_chrome()
+                self._last_chrome_background_signature = background_signature
+            self._notify_output_panel_refresh()
         _perf_record(
             present_ms=(time.perf_counter() - present_t0) * 1000.0,
-            fast_present=used_fast_present)
+            fast_present=fast_affine_only,
+            stages=getattr(self, "_last_present_stages", None))
 
     def draw_result_wx_image(
             self,
@@ -8836,15 +9178,17 @@ class MainFrame(wx.Frame):
         if not cache_valid:
             self._update_keyframe_cache(wx_image, antialias_factor)
 
-        character_bitmap = self._compose_character_bitmap_from_keyframe(
-            canvas_width, canvas_height, antialias_factor)
-        character_bitmap = self._apply_character_edge_postprocess(character_bitmap)
         self._last_compose_signature = self._get_compose_signature(wx_image, antialias_factor)
         self._present_character_bitmap(
-            character_bitmap, canvas_width, canvas_height, banner_text,
+            None, canvas_width, canvas_height, banner_text,
             fast_affine_only=fast_affine_only)
+        # ULW is the sole on-screen output in transparent mode, so every actual
+        # present (new THA pose, affine smoothing, layer change) must feed it.
+        # Throttled to the display cap; no-op when transparent capture is off.
         if push_capture:
             self._maybe_schedule_transparent_capture_update(immediate=True)
+        else:
+            self._maybe_schedule_transparent_capture_update()
 
     def render_pose_to_result_bitmap(self, pose_list: List[float], banner_text: Optional[str] = None):
         self._note_pose_present_time()
@@ -8974,12 +9318,22 @@ class MainFrame(wx.Frame):
             self._maybe_schedule_transparent_capture_update()
         else:
             self._present_smooth_output_frame()
+
+    def on_ui_anim_timer(self, event: Optional[wx.Event] = None):
+        """Drive continuously-refreshing animated UI (controls + layer window) at a
+        capped 25 fps. The output window present stays on display_timer and is not
+        throttled here."""
+        if getattr(self, "_is_closing", False):
+            return
+        self._refresh_fps_display()
+        if self._scale_curve_dirty:
+            self._scale_curve_dirty = False
+            self.refresh_scale_curve_status()
+            self.request_scale_curve_repaint(force=True)
         if self._basic_layer_window_visible():
-            if self.should_refresh_auxiliary_preview(self._last_spine_diagram_refresh_time_ns):
-                self._last_spine_diagram_refresh_time_ns = time.time_ns()
-                window = self._get_basic_layer_window()
-                if window is not None:
-                    window.refresh_spine_diagram()
+            window = self._get_basic_layer_window()
+            if window is not None:
+                window.refresh_spine_diagram()
 
     def on_infer_tick(self, event: Optional[wx.Event] = None):
         if getattr(self.pose_converter, "refresh_audio_input_runtime", None) is not None:
@@ -9191,6 +9545,7 @@ def create_face_landmarker():
 if __name__ == "__main__":
     try:
         _install_debug_excepthook()
+        set_windows_app_user_model_id()
         os.environ.setdefault("GLOG_minloglevel", "3")
         os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -9209,6 +9564,7 @@ if __name__ == "__main__":
         main_frame.capture_timer.Start(MainFrame.CAPTURE_IDLE_INTERVAL_MS)
         main_frame.display_timer.Start(MainFrame.DISPLAY_PRESENT_INTERVAL_MS)
         main_frame.animation_timer.Start(33)
+        main_frame.ui_anim_timer.Start(MainFrame.UI_ANIM_REFRESH_INTERVAL_MS)
         app.MainLoop()
     except Exception:
         raise

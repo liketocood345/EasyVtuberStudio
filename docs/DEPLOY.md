@@ -137,9 +137,9 @@ powershell -ExecutionPolicy Bypass -File packaging\reconcile_portable_layout.ps1
 
 ## 第一次怎么用
 
-1. 调参窗点 **「加载上次 THA4 Student / Load Other」**  来加载默认角色白腾，以便你确认项目是否正常工作
-2. **Mouse + Audio** 模式无需摄像头即可使用；**摄像头面捕**需先安装档位 **[2] face_puppeteer**，再在 Model Input 切换 **Face capture (MediaPipe)**  
-3.在\data\character_models\baiten_from_project_forlon9\bai_450k\parts下找到狈头甩尾巴动图，两把刀素材并添加到5层图层系统确认图层系统是否正常。
+1. 调参窗点 **「加载其他 THA4 Student / Load Other」**  
+2. 选择自带的 bai 示例或 `character_model.yaml`  
+3. **Mouse + Audio** 模式无需摄像头即可使用；**摄像头面捕**需先安装档位 **[2] face_puppeteer**，再在 Model Input 切换 **Face capture (MediaPipe)**  
 
 **THA3 立绘：** 界面切换 THA3 并加载 PNG；立绘规格见上文 **「THA3 立绘 PNG」**；缺模型时在 DEPLOY 中确认 **[3] tha3_models**。
 

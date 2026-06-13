@@ -113,3 +113,6 @@ deps/tha3/models/**/*.pt
 
 # io dump to ABCI tasks
 *.o*
+
+# Local UI state (per-machine; do not commit)
+face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/load_preview_ui_state.json
