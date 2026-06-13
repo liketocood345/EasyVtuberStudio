@@ -17,6 +17,52 @@
 | 磁盘 | 预留约 **15 GB** 空闲空间（完整可选包） |
 | 其他 | 建议安装 [7-Zip](https://www.7-zip.org/)（解压大文件更稳） |
 
+### THA3 立绘 PNG（若使用 THA3 模式）
+
+THA3 与 THA4 Student 不同：**不需要蒸馏训练**，一张合规 PNG 即可面捕驱动；但须先安装 DEPLOY 档位 **[3] tha3_models**（约 2 GB 推理权重）。详见 [THA3_INTEGRATION.md](../face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/THA3_INTEGRATION.md)。
+
+**立绘文件要求**（依据 [THA3 官方规范](https://github.com/pkhungurn/talking-head-anime-3-demo/blob/master/README.md#contraints-on-input-images)）：
+
+| 项 | 要求 |
+|----|------|
+| 分辨率 | **512×512** 像素（其它尺寸会被程序缩放，建议直接导出 512×512） |
+| 通道 | **RGBA**，必须有 Alpha 透明通道 |
+| 角色 | 图中**仅一个人形角色** |
+| 姿态 | **直立、正面朝前** |
+| 手部 | **在头部下方，且远离头部**（勿举至脸旁） |
+| 头部位置 | 大致落在**画面上半部中央**的 **128×128** 区域内 |
+| 背景 | 非角色像素 **Alpha = 0**（完全透明） |
+
+**构图示意：**
+
+```text
+┌──────────────── 512 ────────────────┐
+│         （透明背景 α=0）              │
+│            ┌─128─┐                   │  ← 上半区
+│            │ 头  │  ← 头在此框内      │
+│            └─────┘                   │
+│              身体                     │
+│            手在下方、远离头              │
+└─────────────────────────────────────┘
+```
+
+**在本项目中的用法：**
+
+- 顶栏 **「以 THA3 加载上次/其他立绘」** 选择 PNG；默认可试 bundled 示例：`data/character_models/baiten_from_project_forlon9/bai_450k/character_model/character.png`
+- 后处理区可选 **THA3 模型变体**（默认 `separable_half`；亦可选 `separable_float` / `standard_half` / `standard_float`，需对应权重已安装）
+- 面捕与 **Mouse + Audio** 均可用；THA3 运行时 **GPU 占用高于 THA4 Student**（见 [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md)）
+
+**常见不符合项：**
+
+| 问题 | 可能原因 |
+|------|----------|
+| 脸变形严重 | 头不在规定区域、侧脸或大俯仰 |
+| 手/臂乱形 | 手靠近头部或姿势复杂 |
+| 背景色边 | 背景 Alpha 未清零，或使用无透明的 JPG |
+| 加载失败 | 未安装 **[3] tha3_models** |
+
+与 **THA4 Student** 对比：Student 需 `character.png` + 五官 mask + `character_model.yaml` 并跑蒸馏；THA3 仅须上述单张 PNG + 档位 [3] 权重。
+
 ---
 
 ## GitHub ZIP 里有什么（CORE）
@@ -95,7 +141,7 @@ powershell -ExecutionPolicy Bypass -File packaging\reconcile_portable_layout.ps1
 2. **Mouse + Audio** 模式无需摄像头即可使用；**摄像头面捕**需先安装档位 **[2] face_puppeteer**，再在 Model Input 切换 **Face capture (MediaPipe)**  
 3.在\data\character_models\baiten_from_project_forlon9\bai_450k\parts下找到狈头甩尾巴动图，两把刀素材并添加到5层图层系统确认图层系统是否正常。
 
-**THA3 立绘：** 界面切换 THA3；缺模型时在 DEPLOY 中确认 **[3] tha3_models**。
+**THA3 立绘：** 界面切换 THA3 并加载 PNG；立绘规格见上文 **「THA3 立绘 PNG」**；缺模型时在 DEPLOY 中确认 **[3] tha3_models**。
 
 ---
 
