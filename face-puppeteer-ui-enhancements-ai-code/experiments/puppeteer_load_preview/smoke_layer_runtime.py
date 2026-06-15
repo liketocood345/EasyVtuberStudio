@@ -7,10 +7,14 @@ from pathlib import Path
 EXPERIMENT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(EXPERIMENT_DIR))
 
-from layer_interaction import LayerEditMode, hit_test_layer_edit
+from layer_interaction import LayerEditMode, hit_test_layer_edit, hit_test_orbit_edit
 from layer_runtime import (
     BINDING_CHARACTER_BODY,
     BINDING_CHARACTER_HEAD,
+    DEFAULT_LAYER_COUNT,
+    LAYER_MODE_BASIC,
+    LAYER_MODE_BASIC_LEGACY,
+    MOTION_MODE_CIRCULAR,
     MOTION_MODE_NONE,
     MOTION_MODE_SIMPLE_SWING,
     SWING_SPEED_PROFILE_CONSTANT,
@@ -23,26 +27,51 @@ from layer_runtime import (
     LayerGeometryResolver,
     LayerTransform,
     basic_layers_state_has_active_motion,
+    compute_orbit_edit_geometry,
+    collect_stack_layer_draws,
+    compute_orbit_render_plan,
+    layer_uses_orbit_edit_chrome,
+    OrbitEditGeometry,
+    compute_orbit_state,
     compute_swing_angle_deg,
     contrast_highlight_colour,
+    OCCLUSION_BEHIND,
+    OCCLUSION_FRONT,
     _load_gif_composited_frames,
     classify_layer_asset_kind,
     clamp_neck_anchor_ratio,
     NECK_ANCHOR_RATIO_MAX,
     NECK_ANCHOR_RATIO_MIN,
     apply_body_head_tilt_opposite_to_pose,
+    apply_orbit_requisition_visibility,
     bind_ray_percent_to_ratio,
     layer_asset_kind_label,
     layer_binding_ray_percent,
     layer_has_active_swing,
+    layer_has_active_orbit,
+    normalize_layer_stack_positions,
+    normalize_binding_target,
+    parse_layer_binding_slot,
+    remove_layers_batch,
+    rotate_orbit_plane_offsets,
+    sample_orbit_path_canvas_points,
+    sanitize_layer_references,
+    selection_contiguous_in_ui_list,
+    visible_layer_slot_ids_top_to_bottom,
+    move_layers_z_order_block,
     collect_spine_binding_markers,
     build_spine_diagram_points,
     effective_layer_rotation_deg,
     format_layer_row_summary,
     format_layer_row_title,
-    normalize_binding_target,
     resolved_layer_rotation_deg,
     resolve_layer_rects,
+    resolve_stack_layer_draw,
+    normalize_orbit_aux_slot_id,
+    orbit_aux_carriers,
+    orbit_aux_owner,
+    orbit_aux_slot_is_allowed,
+    orbit_upper_lower_slot_ids,
     truncate_display_filename,
 )
 
@@ -256,24 +285,27 @@ def test_contrast_highlight_colour() -> None:
 
 
 def test_binding_smooth_reduces_jump() -> None:
+    # Binding smoothing now applies to ROTATION only (position follows instantly,
+    # see LayerBindingSmoother.apply): a bound sprite's roll should lag a sudden
+    # target change relative to the raw (unsmoothed) rotation.
     state = BasicLayersState()
     layer = state.layers[0]
     layer.asset_path = "sword.png"
-    layer.binding_parent = BINDING_CHARACTER_HEAD
+    layer.binding_parent = BINDING_CHARACTER_BODY
     layer.binding_follow_smooth = True
-    layer.binding_follow_mocap_position = True
+    layer.binding_follow_rotation_same = True
 
-    ctx = BindingContext(canvas_width=512, canvas_height=512, pose_head_y=1.0)
+    ctx = BindingContext(canvas_width=512, canvas_height=512, display_rotation_deg=0.0)
     smoother = LayerBindingSmoother(alpha=0.28)
     ctx.binding_smoother = smoother
     first = resolve_layer_rects(state, _asset_loader, 512, 512, ctx)[0]
-    first_cx = first.draw_x + first.draw_width / 2.0
-    ctx.pose_head_y = -1.0
+    first_rot = first.smoothed_rotation_deg
+    ctx.display_rotation_deg = 40.0
     second = resolve_layer_rects(state, _asset_loader, 512, 512, ctx)[0]
-    second_cx = second.draw_x + second.draw_width / 2.0
-    raw = LayerGeometryResolver.resolve_all(state, _asset_loader, 512, 512, ctx)[0]
-    raw_cx = raw.draw_x + raw.draw_width / 2.0
-    assert abs(second_cx - first_cx) < abs(raw_cx - first_cx)
+    second_rot = second.smoothed_rotation_deg
+    raw_rot = effective_layer_rotation_deg(layer, state, ctx)
+    assert first_rot is not None and second_rot is not None
+    assert abs(second_rot - first_rot) < abs(raw_rot - first_rot)
 
 
 def test_head_spine_ray_follows_tilt() -> None:
@@ -416,32 +448,33 @@ def test_format_layer_row_labels() -> None:
 
 
 def test_low_smooth_alpha_slower_follow() -> None:
+    # Rotation smoothing: a low alpha follows a rotation step more slowly than a
+    # high alpha (position is now instant and no longer alpha-dependent).
     state = BasicLayersState()
     layer = state.layers[0]
     layer.asset_path = "sword.png"
-    layer.binding_parent = BINDING_CHARACTER_HEAD
+    layer.binding_parent = BINDING_CHARACTER_BODY
     layer.binding_follow_smooth = True
+    layer.binding_follow_rotation_same = True
     layer.binding_follow_smooth_alpha = 0.08
 
-    ctx = BindingContext(canvas_width=512, canvas_height=512, pose_head_y=1.0)
+    ctx = BindingContext(canvas_width=512, canvas_height=512, display_rotation_deg=0.0)
     smoother = LayerBindingSmoother()
     ctx.binding_smoother = smoother
     first = resolve_layer_rects(state, _asset_loader, 512, 512, ctx)[0]
-    first_cx = first.draw_x + first.draw_width / 2.0
-    ctx.pose_head_y = -1.0
+    first_rot = first.smoothed_rotation_deg
+    ctx.display_rotation_deg = 40.0
     slow = resolve_layer_rects(state, _asset_loader, 512, 512, ctx)[0]
-    slow_cx = slow.draw_x + slow.draw_width / 2.0
-    slow_delta = abs(slow_cx - first_cx)
+    slow_delta = abs(slow.smoothed_rotation_deg - first_rot)
 
     smoother.reset_all()
     layer.binding_follow_smooth_alpha = 0.9
-    ctx.pose_head_y = 1.0
+    ctx.display_rotation_deg = 0.0
     first_fast = resolve_layer_rects(state, _asset_loader, 512, 512, ctx)[0]
-    first_fast_cx = first_fast.draw_x + first_fast.draw_width / 2.0
-    ctx.pose_head_y = -1.0
+    first_fast_rot = first_fast.smoothed_rotation_deg
+    ctx.display_rotation_deg = 40.0
     fast = resolve_layer_rects(state, _asset_loader, 512, 512, ctx)[0]
-    fast_cx = fast.draw_x + fast.draw_width / 2.0
-    fast_delta = abs(fast_cx - first_fast_cx)
+    fast_delta = abs(fast.smoothed_rotation_deg - first_fast_rot)
     assert fast_delta > slow_delta + 0.5
 
 
@@ -759,6 +792,407 @@ def test_swing_serialization_round_trip() -> None:
     assert restored.swing_speed_profile == SWING_SPEED_PROFILE_CONSTANT
 
 
+def test_layer_mode_basic_five_migrates() -> None:
+    state = BasicLayersState.from_dict({"layer_mode": LAYER_MODE_BASIC_LEGACY})
+    assert state.layer_mode == LAYER_MODE_BASIC
+
+
+def test_add_layer_unique_slot_id() -> None:
+    state = BasicLayersState()
+    first_id = state.layers[-1].slot_id
+    added = state.add_layer()
+    assert added.slot_id == first_id + 1
+    assert len(state.layers) == 6
+
+
+def test_remove_layer_clears_references() -> None:
+    state = BasicLayersState()
+    parent = state.layers[0]
+    child = state.layers[1]
+    orbit = state.add_layer()
+    parent.asset_path = "a.png"
+    child.asset_path = "b.png"
+    orbit.asset_path = "c.png"
+    child.binding_parent = "layer:0"
+    orbit.motion_mode = MOTION_MODE_CIRCULAR
+    orbit.orbit_aux_slot_id = child.slot_id
+    assert state.remove_layer(child.slot_id)
+    assert orbit.orbit_aux_slot_id is None
+    other = state.layers[1]
+    other.binding_parent = f"layer:{parent.slot_id}"
+    assert state.remove_layer(parent.slot_id)
+    assert other.binding_parent is None
+
+
+def test_sanitize_layer_references_on_load() -> None:
+    state = BasicLayersState()
+    layer = state.layers[0]
+    layer.binding_parent = "layer:999"
+    layer.orbit_aux_slot_id = 998
+    sanitize_layer_references(state)
+    assert layer.binding_parent is None
+    assert layer.orbit_aux_slot_id is None
+
+
+def test_layer_binding_accepts_dynamic_slot_ids() -> None:
+    state = BasicLayersState()
+    parent = state.add_layer()
+    child = state.add_layer()
+    normalized = normalize_binding_target(f"layer:{parent.slot_id}")
+    assert normalized == f"layer:{parent.slot_id}"
+    child.binding_parent = normalized
+    assert parse_layer_binding_slot(child.binding_parent) == parent.slot_id
+
+
+def test_orbit_requires_asset_for_active_motion() -> None:
+    layer = BasicLayerSlot(
+        slot_id=0,
+        motion_mode=MOTION_MODE_CIRCULAR,
+        orbit_radius=50.0,
+        orbit_speed_deg_per_sec=30.0)
+    assert not layer_has_active_orbit(layer)
+    layer.asset_path = "prop.png"
+    assert layer_has_active_orbit(layer)
+
+
+def test_requisitioned_aux_never_draws_native_asset() -> None:
+    state = BasicLayersState()
+    main = state.layers[0]
+    aux = state.layers[1]
+    main.asset_path = "main.png"
+    aux.asset_path = "aux.png"
+    main.occlusion = OCCLUSION_FRONT
+    aux.occlusion = OCCLUSION_BEHIND
+    main.motion_mode = MOTION_MODE_CIRCULAR
+    main.orbit_radius = 60.0
+    main.orbit_speed_deg_per_sec = 90.0
+    main.orbit_plane_tilt_deg = 45.0
+    main.orbit_aux_slot_id = aux.slot_id
+    apply_orbit_requisition_visibility(state)
+    assert not aux.visible
+    normalize_layer_stack_positions(state)
+    ctx = BindingContext(canvas_width=512, canvas_height=512, motion_time_s=3.0)
+    draws = collect_stack_layer_draws(state, _asset_loader, 512, 512, ctx)
+    assert draws == [(aux.slot_id, main.slot_id)]
+    resolved = resolve_layer_rects(state, _asset_loader, 512, 512, ctx)
+    assert aux.slot_id in resolved
+    assert main.slot_id not in resolved
+    static = resolve_layer_rects(
+        state, _asset_loader, 512, 512,
+        BindingContext(canvas_width=512, canvas_height=512, motion_time_s=None))
+    assert aux.slot_id not in static
+
+
+def test_orbit_stack_draws_owner_on_each_side() -> None:
+    state = BasicLayersState()
+    main = state.layers[0]
+    aux = state.layers[1]
+    main.asset_path = "main.png"
+    aux.asset_path = "aux.png"
+    main.occlusion = OCCLUSION_FRONT
+    aux.occlusion = OCCLUSION_BEHIND
+    main.motion_mode = MOTION_MODE_CIRCULAR
+    main.orbit_radius = 60.0
+    main.orbit_speed_deg_per_sec = 90.0
+    main.orbit_plane_tilt_deg = 45.0
+    main.orbit_aux_slot_id = aux.slot_id
+    apply_orbit_requisition_visibility(state)
+    normalize_layer_stack_positions(state)
+    ctx = BindingContext(canvas_width=512, canvas_height=512, motion_time_s=0.0)
+    near_draws = collect_stack_layer_draws(state, _asset_loader, 512, 512, ctx)
+    assert near_draws == [(main.slot_id, main.slot_id)]
+    far_ctx = BindingContext(canvas_width=512, canvas_height=512, motion_time_s=3.0)
+    far_draws = collect_stack_layer_draws(state, _asset_loader, 512, 512, far_ctx)
+    assert far_draws == [(aux.slot_id, main.slot_id)]
+    for _stack_slot, owner_slot in near_draws + far_draws:
+        assert owner_slot == main.slot_id
+
+
+def test_orbit_aux_cannot_target_orbit_motion_layer() -> None:
+    state = BasicLayersState()
+    main = state.layers[0]
+    other = state.layers[1]
+    main.asset_path = "a.png"
+    other.asset_path = "b.png"
+    main.motion_mode = MOTION_MODE_CIRCULAR
+    other.motion_mode = MOTION_MODE_CIRCULAR
+    main.orbit_aux_slot_id = other.slot_id
+    assert not orbit_aux_slot_is_allowed(state, main.slot_id, other.slot_id)
+    sanitize_layer_references(state)
+    assert main.orbit_aux_slot_id is None
+
+
+def test_orbit_aux_cleared_when_target_switches_to_orbit() -> None:
+    state = BasicLayersState()
+    main = state.layers[0]
+    aux = state.layers[1]
+    main.asset_path = "a.png"
+    aux.asset_path = "b.png"
+    main.motion_mode = MOTION_MODE_CIRCULAR
+    main.orbit_aux_slot_id = aux.slot_id
+    aux.motion_mode = MOTION_MODE_CIRCULAR
+    sanitize_layer_references(state)
+    assert main.orbit_aux_slot_id is None
+
+
+def test_orbit_edit_geometry_and_hit() -> None:
+    state = BasicLayersState()
+    layer = state.layers[0]
+    layer.asset_path = "prop.png"
+    layer.motion_mode = MOTION_MODE_CIRCULAR
+    layer.orbit_radius = 50.0
+    layer.orbit_speed_deg_per_sec = 60.0
+    layer.orbit_plane_tilt_deg = 45.0
+    layer.orbit_pivot_u = 0.5
+    layer.orbit_pivot_v = 0.5
+    assert layer_uses_orbit_edit_chrome(layer)
+    ctx = BindingContext(canvas_width=512, canvas_height=512)
+    geom = compute_orbit_edit_geometry(state, layer, _asset_loader, 512, 512, ctx)
+    assert geom is not None
+    assert len(geom.path_points) >= 8
+    assert geom.bind_xy is not None
+    mid = geom.path_points[len(geom.path_points) // 2]
+    slot, mode = hit_test_orbit_edit(geom, int(mid[0]), int(mid[1]))
+    assert slot == layer.slot_id
+    assert mode == LayerEditMode.ORBIT_MOVE
+
+
+def test_orbit_path_follows_sync_and_reverse_rotation() -> None:
+    state = BasicLayersState()
+    layer = state.layers[0]
+    layer.motion_mode = MOTION_MODE_CIRCULAR
+    layer.orbit_radius = 60.0
+    layer.orbit_plane_tilt_deg = 45.0
+    layer.binding_parent = BINDING_CHARACTER_HEAD
+    ctx_flat = BindingContext(canvas_width=512, canvas_height=512, display_rotation_deg=0.0)
+    flat, pivot = sample_orbit_path_canvas_points(
+        layer, 512, 512, state=state, binding_context=ctx_flat)
+    layer.binding_follow_rotation_same = True
+    ctx_sync = BindingContext(canvas_width=512, canvas_height=512, display_rotation_deg=30.0)
+    sync, _pivot = sample_orbit_path_canvas_points(
+        layer, 512, 512, state=state, binding_context=ctx_sync)
+    layer.binding_follow_rotation_same = False
+    layer.binding_follow_rotation_reverse = True
+    ctx_rev = BindingContext(canvas_width=512, canvas_height=512, display_rotation_deg=30.0)
+    reverse, _pivot2 = sample_orbit_path_canvas_points(
+        layer, 512, 512, state=state, binding_context=ctx_rev)
+    mid_index = len(flat) // 4
+    flat_dx = flat[mid_index][0] - pivot[0]
+    sync_dx = sync[mid_index][0] - pivot[0]
+    rev_dx = reverse[mid_index][0] - pivot[0]
+    assert abs(sync_dx - flat_dx) > 1.0
+    assert abs(rev_dx - flat_dx) > 1.0
+    assert sync_dx * rev_dx < 0.0
+
+
+def test_orbit_render_plan_with_aux_hides_one_slot() -> None:
+    state = BasicLayersState()
+    main = state.layers[0]
+    aux = state.layers[1]
+    main.asset_path = "main.png"
+    aux.asset_path = "aux.png"
+    main.occlusion = OCCLUSION_FRONT
+    aux.occlusion = OCCLUSION_BEHIND
+    main.motion_mode = MOTION_MODE_CIRCULAR
+    main.orbit_radius = 60.0
+    main.orbit_speed_deg_per_sec = 90.0
+    main.orbit_plane_tilt_deg = 45.0
+    main.orbit_aux_slot_id = aux.slot_id
+    normalize_layer_stack_positions(state)
+    overrides, hidden = compute_orbit_render_plan(state, 0.0)
+    assert len(overrides) == 1
+    assert len(hidden) == 1
+    shown_id = next(iter(overrides))
+    hidden_id = next(iter(hidden))
+    assert shown_id != hidden_id
+    assert {shown_id, hidden_id} == {main.slot_id, aux.slot_id}
+    assert overrides[shown_id].source_slot_id == main.slot_id
+    assert orbit_aux_carriers(state)[aux.slot_id] == main.slot_id
+
+
+def test_orbit_render_plan_switches_shown_slot_with_aux() -> None:
+    state = BasicLayersState()
+    main = state.layers[0]
+    aux = state.layers[1]
+    main.asset_path = "main.png"
+    aux.asset_path = "aux.png"
+    main.occlusion = OCCLUSION_FRONT
+    aux.occlusion = OCCLUSION_BEHIND
+    main.motion_mode = MOTION_MODE_CIRCULAR
+    main.orbit_radius = 60.0
+    main.orbit_speed_deg_per_sec = 90.0
+    main.orbit_plane_tilt_deg = 45.0
+    main.orbit_aux_slot_id = aux.slot_id
+    normalize_layer_stack_positions(state)
+    near_overrides, _ = compute_orbit_render_plan(state, 0.0)
+    far_overrides, _ = compute_orbit_render_plan(state, 3.0)
+    assert next(iter(near_overrides)) == main.slot_id
+    assert next(iter(far_overrides)) == aux.slot_id
+
+
+def test_orbit_upper_lower_respects_occlusion() -> None:
+    main = BasicLayerSlot(slot_id=0, occlusion=OCCLUSION_FRONT)
+    aux = BasicLayerSlot(slot_id=1, occlusion=OCCLUSION_BEHIND)
+    upper, lower = orbit_upper_lower_slot_ids(main, aux)
+    assert upper == main.slot_id
+    assert lower == aux.slot_id
+
+
+def test_apply_orbit_bootstraps_aux_rect_without_asset() -> None:
+    state = BasicLayersState()
+    main = state.layers[0]
+    aux = state.layers[1]
+    main.asset_path = "main.png"
+    aux.asset_path = None
+    main.occlusion = OCCLUSION_FRONT
+    aux.occlusion = OCCLUSION_BEHIND
+    main.motion_mode = MOTION_MODE_CIRCULAR
+    main.orbit_radius = 60.0
+    main.orbit_speed_deg_per_sec = 90.0
+    main.orbit_plane_tilt_deg = 45.0
+    main.orbit_aux_slot_id = aux.slot_id
+    normalize_layer_stack_positions(state)
+    ctx = BindingContext(canvas_width=512, canvas_height=512, motion_time_s=3.0)
+    resolved = resolve_layer_rects(state, _asset_loader, 512, 512, ctx)
+    assert aux.slot_id in resolved
+    assert main.slot_id not in resolved
+    pair = resolve_stack_layer_draw(
+        state,
+        aux,
+        resolved,
+        *compute_orbit_render_plan(state, 3.0))
+    assert pair is not None
+    assert pair[0].slot_id == main.slot_id
+
+
+def test_resolve_stack_layer_draw_routes_aux_asset() -> None:
+    state = BasicLayersState()
+    main = state.layers[0]
+    aux = state.layers[1]
+    main.asset_path = "main.png"
+    aux.asset_path = None
+    main.occlusion = OCCLUSION_FRONT
+    aux.occlusion = OCCLUSION_BEHIND
+    main.motion_mode = MOTION_MODE_CIRCULAR
+    main.orbit_radius = 60.0
+    main.orbit_speed_deg_per_sec = 90.0
+    main.orbit_plane_tilt_deg = 45.0
+    main.orbit_aux_slot_id = aux.slot_id
+    normalize_layer_stack_positions(state)
+    ctx = BindingContext(canvas_width=512, canvas_height=512, motion_time_s=3.0)
+    resolved = resolve_layer_rects(state, _asset_loader, 512, 512, ctx)
+    overrides, hidden = compute_orbit_render_plan(state, 3.0)
+    pair = resolve_stack_layer_draw(state, aux, resolved, overrides, hidden)
+    assert pair is not None
+    draw_layer, _rect = pair
+    assert draw_layer.slot_id == main.slot_id
+    assert resolve_stack_layer_draw(state, main, resolved, overrides, hidden) is None
+
+
+def test_format_layer_row_summary_requisition() -> None:
+    state = BasicLayersState()
+    main = state.layers[0]
+    aux = state.layers[1]
+    main.asset_path = "main.png"
+    main.motion_mode = MOTION_MODE_CIRCULAR
+    main.orbit_radius = 40.0
+    main.orbit_speed_deg_per_sec = 30.0
+    main.orbit_aux_slot_id = aux.slot_id
+    summary = format_layer_row_summary(aux, state)
+    assert "征用" in summary
+    assert orbit_aux_owner(state, aux.slot_id) == main.slot_id
+
+
+def test_orbit_depth_flips_over_half_turn() -> None:
+    layer = BasicLayerSlot(
+        slot_id=0,
+        motion_mode=MOTION_MODE_CIRCULAR,
+        orbit_radius=60.0,
+        orbit_speed_deg_per_sec=90.0,
+        orbit_plane_tilt_deg=45.0)
+    near = compute_orbit_state(layer, 0.25).in_front
+    far = compute_orbit_state(layer, 2.5).in_front
+    assert near != far
+
+
+def test_visible_layer_list_order() -> None:
+    state = BasicLayersState()
+    visible = visible_layer_slot_ids_top_to_bottom(state)
+    assert len(visible) == DEFAULT_LAYER_COUNT
+
+
+def test_selection_contiguous_in_ui_list() -> None:
+    state = BasicLayersState()
+    visible = visible_layer_slot_ids_top_to_bottom(state)
+    assert selection_contiguous_in_ui_list(state, {visible[0], visible[1]})
+    assert not selection_contiguous_in_ui_list(state, {visible[0], visible[2]})
+
+
+def test_move_layers_z_order_block_preserves_relative_order() -> None:
+    state = BasicLayersState()
+    visible = visible_layer_slot_ids_top_to_bottom(state)
+    block = {visible[-1], visible[-2]}
+    z_before = {sid: state.get_slot(sid).z_order for sid in block}
+    assert move_layers_z_order_block(state, block, 1)
+    z_after = {sid: state.get_slot(sid).z_order for sid in block}
+    assert z_after[visible[-2]] > z_after[visible[-1]]
+    assert z_after != z_before
+
+
+def test_remove_layers_batch() -> None:
+    state = BasicLayersState()
+    extra = state.add_layer()
+    targets = {state.layers[0].slot_id, extra.slot_id}
+    assert remove_layers_batch(state, targets) == 2
+    assert len(state.layers) == DEFAULT_LAYER_COUNT - 1
+
+
+def test_orbit_center_follows_binding() -> None:
+    state = BasicLayersState()
+    layer = state.layers[0]
+    layer.asset_path = "prop.png"
+    layer.motion_mode = MOTION_MODE_CIRCULAR
+    layer.orbit_radius = 40.0
+    layer.orbit_speed_deg_per_sec = 60.0
+    layer.orbit_plane_tilt_deg = 45.0
+    ctx = BindingContext(canvas_width=512, canvas_height=512, motion_time_s=0.0)
+    unbound = resolve_layer_rects(state, _asset_loader, 512, 512, ctx)[0]
+    unbound_cx = unbound.draw_x + unbound.draw_width / 2.0
+    layer.binding_parent = BINDING_CHARACTER_BODY
+    bound = resolve_layer_rects(state, _asset_loader, 512, 512, ctx)[0]
+    bound_cx = bound.draw_x + bound.draw_width / 2.0
+    assert abs(bound_cx - unbound_cx) > 1.0
+
+
+def test_orbit_edit_geometry_is_static() -> None:
+    state = BasicLayersState()
+    layer = state.layers[0]
+    layer.asset_path = "prop.png"
+    layer.motion_mode = MOTION_MODE_CIRCULAR
+    layer.orbit_radius = 60.0
+    layer.orbit_speed_deg_per_sec = 90.0
+    layer.orbit_plane_tilt_deg = 45.0
+    ctx = BindingContext(canvas_width=512, canvas_height=512, motion_time_s=0.0)
+    animated = resolve_layer_rects(state, _asset_loader, 512, 512, ctx, include_motion=True)[0]
+    static = resolve_layer_rects(state, _asset_loader, 512, 512, ctx, include_motion=False)[0]
+    assert abs(static.draw_x - animated.draw_x) > 0.5 or abs(
+        static.draw_width - animated.draw_width) > 0.5
+
+
+def test_apply_orbit_offsets_resolved_rect() -> None:
+    state = BasicLayersState()
+    layer = state.layers[0]
+    layer.asset_path = "tail.png"
+    layer.motion_mode = MOTION_MODE_CIRCULAR
+    layer.orbit_radius = 40.0
+    layer.orbit_speed_deg_per_sec = 60.0
+    static_ctx = BindingContext(canvas_width=512, canvas_height=512, motion_time_s=None)
+    anim_ctx = BindingContext(canvas_width=512, canvas_height=512, motion_time_s=0.0)
+    still = resolve_layer_rects(state, _asset_loader, 512, 512, static_ctx)[0]
+    orbiting = resolve_layer_rects(state, _asset_loader, 512, 512, anim_ctx)[0]
+    assert abs(orbiting.draw_x - still.draw_x) > 0.5 or abs(orbiting.draw_width - still.draw_width) > 0.5
+
+
 def test_basic_layers_persistence_round_trip(tmp_root: Path | None = None) -> None:
     import tempfile
     from layer_runtime import (
@@ -849,6 +1283,24 @@ def main() -> None:
     test_swing_zero_amplitude()
     test_swing_motion_active_flag()
     test_swing_serialization_round_trip()
+    test_layer_mode_basic_five_migrates()
+    test_add_layer_unique_slot_id()
+    test_remove_layer_clears_references()
+    test_sanitize_layer_references_on_load()
+    test_layer_binding_accepts_dynamic_slot_ids()
+    test_visible_layer_list_order()
+    test_selection_contiguous_in_ui_list()
+    test_move_layers_z_order_block_preserves_relative_order()
+    test_remove_layers_batch()
+    test_orbit_requires_asset_for_active_motion()
+    test_requisitioned_aux_never_draws_native_asset()
+    test_orbit_stack_draws_owner_on_each_side()
+    test_orbit_path_follows_sync_and_reverse_rotation()
+    test_orbit_aux_cannot_target_orbit_motion_layer()
+    test_orbit_aux_cleared_when_target_switches_to_orbit()
+    test_orbit_render_plan_with_aux_hides_one_slot()
+    test_orbit_depth_flips_over_half_turn()
+    test_apply_orbit_offsets_resolved_rect()
     print("smoke_layer_runtime_ok")
 
 

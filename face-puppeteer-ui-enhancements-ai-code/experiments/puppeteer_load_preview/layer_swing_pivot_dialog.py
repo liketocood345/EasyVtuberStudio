@@ -107,6 +107,72 @@ class _PivotCanvasPanel(wx.Panel):
         dc.DrawCircle(px, py, 4)
 
 
+class PivotEditDialog(wx.Dialog):
+    """Generic 'click to pick a normalized pivot on an image' dialog."""
+
+    def __init__(
+            self,
+            parent: wx.Window,
+            image: wx.Image,
+            pivot_u: float,
+            pivot_v: float,
+            *,
+            title: str,
+            help_label: str):
+        super().__init__(
+            parent,
+            title=title,
+            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        root = wx.BoxSizer(wx.VERTICAL)
+        help_text = wx.StaticText(self, label=help_label)
+        help_text.Wrap(480)
+        root.Add(help_text, 0, wx.ALL | wx.EXPAND, 8)
+
+        self.canvas = _PivotCanvasPanel(
+            self,
+            image,
+            pivot_u,
+            pivot_v,
+            on_pivot_changed=self._update_coord_label)
+        self.canvas.SetMinSize((320, 320))
+        root.Add(self.canvas, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+
+        self.coord_text = wx.StaticText(self, label="")
+        root.Add(self.coord_text, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self._update_coord_label()
+
+        btn_row = self.CreateButtonSizer(wx.OK | wx.CANCEL)
+        root.Add(btn_row, 0, wx.ALIGN_RIGHT | wx.ALL, 8)
+        self.SetSizer(root)
+        self.SetMinSize((420, 480))
+        self.Fit()
+
+    def get_pivot(self) -> tuple[float, float]:
+        return self.canvas.get_pivot()
+
+    def _update_coord_label(self) -> None:
+        pivot_u, pivot_v = self.canvas.get_pivot()
+        self.coord_text.SetLabel(f"支点 / Pivot: u={pivot_u:.3f}, v={pivot_v:.3f}")
+
+
+def show_pivot_edit_dialog(
+        parent: wx.Window,
+        image: wx.Image,
+        pivot_u: float,
+        pivot_v: float,
+        *,
+        title: str,
+        help_label: str) -> Optional[tuple[float, float]]:
+    dialog = PivotEditDialog(
+        parent, image, pivot_u, pivot_v, title=title, help_label=help_label)
+    try:
+        if dialog.ShowModal() != wx.ID_OK:
+            return None
+        return dialog.get_pivot()
+    finally:
+        dialog.Destroy()
+
+
 class SwingPivotEditDialog(wx.Dialog):
     def __init__(
             self,

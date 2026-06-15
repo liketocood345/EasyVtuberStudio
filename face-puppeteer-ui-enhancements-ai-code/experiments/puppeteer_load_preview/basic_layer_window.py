@@ -1,4 +1,4 @@
-"""Independent basic five-layer editor window (WeChat-style list, six static previews)."""
+"""Independent layer-system editor window (WeChat-style list with add/remove layers)."""
 from __future__ import annotations
 
 import os
@@ -16,10 +16,28 @@ from layer_runtime import (
     BIND_RAY_PERCENT_DEFAULT,
     BIND_RAY_PERCENT_UI_MAX,
     BIND_RAY_PERCENT_UI_MIN,
-    CHARACTER_STACK_POS,
     HEAD_ANCHOR_RATIO,
     MOTION_MODE_NONE,
     MOTION_MODE_SIMPLE_SWING,
+    MOTION_MODE_CIRCULAR,
+    DEFAULT_LAYER_COUNT,
+    DEFAULT_ORBIT_RADIUS,
+    DEFAULT_ORBIT_PLANE_TILT_DEG,
+    DEFAULT_ORBIT_SPEED_DEG_PER_SEC,
+    DEFAULT_ORBIT_NEAR_SCALE,
+    DEFAULT_ORBIT_FAR_SCALE,
+    ORBIT_RADIUS_MIN,
+    ORBIT_RADIUS_MAX,
+    ORBIT_PLANE_TILT_MIN_DEG,
+    ORBIT_PLANE_TILT_MAX_DEG,
+    ORBIT_SPEED_MIN_DEG_PER_SEC,
+    ORBIT_SPEED_MAX_DEG_PER_SEC,
+    ORBIT_SCALE_MIN,
+    ORBIT_SCALE_MAX,
+    clamp_orbit_radius,
+    clamp_orbit_plane_tilt_deg,
+    clamp_orbit_speed_deg_per_sec,
+    clamp_orbit_scale,
     NECK_ANCHOR_RATIO_DEFAULT,
     SWING_AMPLITUDE_MAX_DEG,
     SWING_AMPLITUDE_MIN_DEG,
@@ -46,14 +64,23 @@ from layer_runtime import (
     iter_ui_list_top_to_bottom,
     map_canvas_point_to_diagram,
     move_layer_z_order,
+    move_layers_z_order_block,
+    remove_layers_batch,
+    selection_contiguous_in_ui_list,
+    visible_layer_slot_ids_top_to_bottom,
     normalize_bind_ray_percent,
     normalize_binding_target,
-    parse_layer_binding_slot,
+    apply_orbit_requisition_visibility,
+    orbit_aux_carriers,
+    orbit_aux_owner,
+    layer_slot_uses_orbit_motion,
+    normalize_orbit_aux_slot_id,
+    sanitize_layer_references,
     stack_position_can_move_down,
     stack_position_can_move_up,
     truncate_display_filename,
 )
-from layer_swing_pivot_dialog import show_swing_pivot_edit_dialog
+from layer_swing_pivot_dialog import show_pivot_edit_dialog, show_swing_pivot_edit_dialog
 
 if TYPE_CHECKING:
     from character_model_mediapipe_puppeteer_load_preview import MainFrame
@@ -64,6 +91,17 @@ SELECTED_BORDER = wx.Colour(255, 210, 0)
 THUMB_HIGHLIGHT = wx.Colour(255, 200, 0)
 DETAIL_DOCK_MIN_HEIGHT = 284
 PLACEHOLDER_HEIGHT = 72
+REMOVE_LAYER_BTN_BG = wx.Colour(210, 45, 45)
+REMOVE_LAYER_BTN_FG = wx.WHITE
+
+
+def _style_remove_layer_button(button: wx.Button) -> None:
+    """Destructive-action styling (red); best-effort on native wx buttons."""
+    button.SetBackgroundColour(REMOVE_LAYER_BTN_BG)
+    button.SetForegroundColour(REMOVE_LAYER_BTN_FG)
+    font = button.GetFont()
+    font.SetWeight(wx.FONTWEIGHT_BOLD)
+    button.SetFont(font)
 
 PLACEHOLDER_TEXT = "点击上方图层行以编辑 / Click a layer row above to edit"
 
@@ -565,7 +603,7 @@ class LayerRowPanel(wx.Panel):
             slot_id: Optional[int],
             title: str,
             is_character_row: bool,
-            on_header_clicked: Optional[Callable[[], None]] = None):
+            on_header_clicked: Optional[Callable[[wx.Event], None]] = None):
         super().__init__(parent, style=wx.BORDER_THEME)
         self.slot_id = slot_id
         self.is_character_row = is_character_row
@@ -601,7 +639,7 @@ class LayerRowPanel(wx.Panel):
             header_sizer.Add(self.down_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
             header_sizer.Add(self.load_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
             if on_header_clicked is not None:
-                _bind_left_click(self.header, lambda e: (on_header_clicked(), e.Skip()))
+                _bind_left_click(self.header, on_header_clicked)
 
         sizer.Add(self.header, 1, wx.EXPAND)
 
@@ -674,6 +712,14 @@ class LayerDetailDock(wx.Panel):
         self.title_text.SetFont(title_font)
         editor_root.Add(self.title_text, 0, wx.ALL, 6)
 
+        self.orbit_requisition_banner = wx.StaticText(self.editor_panel, label="")
+        req_font = self.orbit_requisition_banner.GetFont()
+        req_font.SetWeight(wx.FONTWEIGHT_BOLD)
+        self.orbit_requisition_banner.SetFont(req_font)
+        self.orbit_requisition_banner.SetForegroundColour(wx.Colour(160, 90, 0))
+        self.orbit_requisition_banner.Hide()
+        editor_root.Add(self.orbit_requisition_banner, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
         btn_row = wx.BoxSizer(wx.HORIZONTAL)
         self.reset_btn = wx.Button(self.editor_panel, label="归位 / Center")
         self.clear_btn = wx.Button(self.editor_panel, label="清除 / Clear")
@@ -720,17 +766,13 @@ class LayerDetailDock(wx.Panel):
             0,
             wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
             6)
+        # Items are rebuilt per selection to reflect the live layer list.
         self.binding_choice = wx.Choice(
             self.layer_block,
             choices=[
                 "（无 / None）",
                 "角色·身体 / Character body",
                 "角色·头 / Character head",
-                "图层1 / Layer 1",
-                "图层2 / Layer 2",
-                "图层3 / Layer 3",
-                "图层4 / Layer 4",
-                "图层5 / Layer 5",
             ])
         bind_row.Add(self.binding_choice, 1, wx.EXPAND)
         layer_sizer.Add(bind_row, 0, wx.EXPAND | wx.ALL, 4)
@@ -746,6 +788,7 @@ class LayerDetailDock(wx.Panel):
             choices=[
                 "无 / None",
                 "简单摇摆 / Simple swing",
+                "圆周运动 / Circular orbit",
             ])
         motion_row.Add(self.motion_choice, 1, wx.EXPAND)
         layer_sizer.Add(motion_row, 0, wx.EXPAND | wx.ALL, 4)
@@ -806,6 +849,112 @@ class LayerDetailDock(wx.Panel):
         motion_panel_sizer.Add(self.edit_swing_pivot_btn, 0, wx.ALL, 4)
 
         layer_sizer.Add(self.motion_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+
+        # --- Circular orbit parameter panel (shown only for circular motion) ---
+        self.orbit_panel = wx.Panel(self.layer_block)
+        orbit_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.orbit_panel.SetSizer(orbit_sizer)
+
+        radius_row = wx.BoxSizer(wx.HORIZONTAL)
+        radius_row.Add(
+            wx.StaticText(self.orbit_panel, label="半径 / Radius"),
+            0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        self.orbit_radius_slider = wx.Slider(
+            self.orbit_panel,
+            value=int(DEFAULT_ORBIT_RADIUS),
+            minValue=int(ORBIT_RADIUS_MIN),
+            maxValue=int(ORBIT_RADIUS_MAX),
+            style=wx.SL_HORIZONTAL)
+        self.orbit_radius_slider.SetToolTip("轨道半径（512 画布像素）/ orbit radius in 512-canvas px")
+        radius_row.Add(self.orbit_radius_slider, 1, wx.EXPAND)
+        self.orbit_radius_label = wx.StaticText(self.orbit_panel, label="80")
+        radius_row.Add(self.orbit_radius_label, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 8)
+        orbit_sizer.Add(radius_row, 0, wx.EXPAND | wx.ALL, 4)
+
+        tilt_row = wx.BoxSizer(wx.HORIZONTAL)
+        tilt_row.Add(
+            wx.StaticText(self.orbit_panel, label="平面倾角 / Plane tilt"),
+            0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        self.orbit_tilt_slider = wx.Slider(
+            self.orbit_panel,
+            value=int(DEFAULT_ORBIT_PLANE_TILT_DEG),
+            minValue=int(ORBIT_PLANE_TILT_MIN_DEG),
+            maxValue=int(ORBIT_PLANE_TILT_MAX_DEG),
+            style=wx.SL_HORIZONTAL)
+        self.orbit_tilt_slider.SetToolTip(
+            "0°=环侧看（前后穿插最强），90°=正对镜头的平面圆（无前后）"
+            " / 0=edge-on (max front/back), 90=face-on circle (no depth)")
+        tilt_row.Add(self.orbit_tilt_slider, 1, wx.EXPAND)
+        self.orbit_tilt_label = wx.StaticText(self.orbit_panel, label="25°")
+        tilt_row.Add(self.orbit_tilt_label, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 8)
+        orbit_sizer.Add(tilt_row, 0, wx.EXPAND | wx.ALL, 4)
+
+        orbit_speed_row = wx.BoxSizer(wx.HORIZONTAL)
+        orbit_speed_row.Add(
+            wx.StaticText(self.orbit_panel, label="速度 / Speed"),
+            0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        self.orbit_speed_slider = wx.Slider(
+            self.orbit_panel,
+            value=int(DEFAULT_ORBIT_SPEED_DEG_PER_SEC),
+            minValue=int(ORBIT_SPEED_MIN_DEG_PER_SEC),
+            maxValue=int(ORBIT_SPEED_MAX_DEG_PER_SEC),
+            style=wx.SL_HORIZONTAL)
+        self.orbit_speed_slider.SetToolTip("度/秒 / degrees per second")
+        orbit_speed_row.Add(self.orbit_speed_slider, 1, wx.EXPAND)
+        self.orbit_speed_label = wx.StaticText(self.orbit_panel, label="60°/s")
+        orbit_speed_row.Add(self.orbit_speed_label, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 8)
+        orbit_sizer.Add(orbit_speed_row, 0, wx.EXPAND | wx.ALL, 4)
+
+        near_row = wx.BoxSizer(wx.HORIZONTAL)
+        near_row.Add(
+            wx.StaticText(self.orbit_panel, label="近端缩放 / Near scale"),
+            0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        self.orbit_near_scale_slider = wx.Slider(
+            self.orbit_panel,
+            value=int(round(DEFAULT_ORBIT_NEAR_SCALE * 100)),
+            minValue=int(round(ORBIT_SCALE_MIN * 100)),
+            maxValue=int(round(ORBIT_SCALE_MAX * 100)),
+            style=wx.SL_HORIZONTAL)
+        near_row.Add(self.orbit_near_scale_slider, 1, wx.EXPAND)
+        self.orbit_near_scale_label = wx.StaticText(self.orbit_panel, label="1.30")
+        near_row.Add(self.orbit_near_scale_label, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 8)
+        orbit_sizer.Add(near_row, 0, wx.EXPAND | wx.ALL, 4)
+
+        far_row = wx.BoxSizer(wx.HORIZONTAL)
+        far_row.Add(
+            wx.StaticText(self.orbit_panel, label="远端缩放 / Far scale"),
+            0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        self.orbit_far_scale_slider = wx.Slider(
+            self.orbit_panel,
+            value=int(round(DEFAULT_ORBIT_FAR_SCALE * 100)),
+            minValue=int(round(ORBIT_SCALE_MIN * 100)),
+            maxValue=int(round(ORBIT_SCALE_MAX * 100)),
+            style=wx.SL_HORIZONTAL)
+        far_row.Add(self.orbit_far_scale_slider, 1, wx.EXPAND)
+        self.orbit_far_scale_label = wx.StaticText(self.orbit_panel, label="0.70")
+        far_row.Add(self.orbit_far_scale_label, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 8)
+        orbit_sizer.Add(far_row, 0, wx.EXPAND | wx.ALL, 4)
+
+        aux_row = wx.BoxSizer(wx.HORIZONTAL)
+        aux_row.Add(
+            wx.StaticText(self.orbit_panel, label="辅助图层 / Aux layer"),
+            0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        self.orbit_aux_choice = wx.Choice(self.orbit_panel, choices=["（无 / None）"])
+        self.orbit_aux_choice.SetToolTip(
+            "征用另一图层的堆栈位（非选中该图层）：靠近角色时走上层槽、远离时走下层槽，"
+            "被征用槽不显示自身素材。不能选用已设为圆周运动的图层。"
+            "轨道位置可在输出窗口拖拽轨道线调整。"
+            " / Requisition a stack slot; cannot pick a layer already in circular "
+            "orbit mode; drag the orbit path on the output window to move center.")
+        aux_row.Add(self.orbit_aux_choice, 1, wx.EXPAND)
+        orbit_sizer.Add(aux_row, 0, wx.EXPAND | wx.ALL, 4)
+
+        self.edit_orbit_pivot_btn = wx.Button(
+            self.orbit_panel,
+            label="编辑轨道中心 / Edit orbit center")
+        orbit_sizer.Add(self.edit_orbit_pivot_btn, 0, wx.ALL, 4)
+
+        layer_sizer.Add(self.orbit_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
 
         follow_rot_row = wx.BoxSizer(wx.VERTICAL)
         self.binding_follow_rotation_radio = wx.RadioBox(
@@ -887,16 +1036,31 @@ class LayerDetailDock(wx.Panel):
         editor_root.Add(self.layer_block, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
 
         root.Add(self.editor_scroll, 1, wx.EXPAND)
+
+        self.remove_layer_panel = wx.Panel(self)
+        remove_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.remove_layer_btn = wx.Button(
+            self.remove_layer_panel,
+            label="移除图层 / Remove layer")
+        self.remove_layer_btn.SetToolTip(
+            "删除整个图层槽位（不仅清空素材）/ Remove the whole layer slot")
+        _style_remove_layer_button(self.remove_layer_btn)
+        remove_sizer.Add(self.remove_layer_btn, 1, wx.EXPAND)
+        self.remove_layer_panel.SetSizer(remove_sizer)
+        root.Add(self.remove_layer_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
         self.show_placeholder()
 
     def show_placeholder(self) -> None:
         self.editor_scroll.Hide()
+        self.remove_layer_panel.Hide()
         self.placeholder_panel.Show()
         self.Layout()
 
     def show_editor(self) -> None:
         self.placeholder_panel.Hide()
         self.editor_scroll.Show()
+        self.remove_layer_panel.Show()
         self.editor_panel.Layout()
         self.editor_scroll.Layout()
         self.editor_scroll.FitInside()
@@ -908,13 +1072,19 @@ class BasicLayerWindow(wx.Frame):
         super().__init__(
             parent,
             wx.ID_ANY,
-            title="五层图层 / Basic Five Layers",
+            title="图层系统 / Layers",
             style=wx.DEFAULT_FRAME_STYLE)
         self.main_frame = main_frame
         self._row_panels: dict[int, LayerRowPanel] = {}
         self._character_row: Optional[LayerRowPanel] = None
         self._building = False
         self._detail_slot_id: Optional[int] = None
+        self._selected_slot_ids: set[int] = set()
+        self._selection_anchor_slot_id: Optional[int] = None
+        primary = main_frame.basic_layers_state.selected_slot_id
+        if primary is not None:
+            self._selected_slot_ids = {primary}
+            self._selection_anchor_slot_id = primary
 
         panel = wx.Panel(self)
         sizer = wx.BoxSizer(wx.VERTICAL)
@@ -925,6 +1095,13 @@ class BasicLayerWindow(wx.Frame):
         self.scroll_sizer = wx.BoxSizer(wx.VERTICAL)
         self.scroll.SetSizer(self.scroll_sizer)
         sizer.Add(self.scroll, 1, wx.EXPAND | wx.ALL, 4)
+
+        self.add_layer_button = wx.Button(panel, label="+ 新增图层 / Add layer")
+        self.add_layer_button.SetToolTip(
+            "在最上层(角色前)新增一个空图层；可不上传素材作为绑定/运动锚点。"
+            " / Add an empty layer on top (in front of character)")
+        self.add_layer_button.Bind(wx.EVT_BUTTON, self._on_add_layer)
+        sizer.Add(self.add_layer_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
 
         self.detail_dock = LayerDetailDock(panel)
         sizer.Add(self.detail_dock, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
@@ -984,6 +1161,7 @@ class BasicLayerWindow(wx.Frame):
         if self.detail_dock.editor_scroll.IsShown():
             self.detail_dock.editor_scroll.Layout()
             self.detail_dock.editor_scroll.FitInside()
+        self.detail_dock.remove_layer_panel.Layout()
         self.detail_dock.Layout()
         self.Layout()
 
@@ -991,6 +1169,7 @@ class BasicLayerWindow(wx.Frame):
         dock = self.detail_dock
         dock.reset_btn.Bind(wx.EVT_BUTTON, self._on_reset_transform)
         dock.clear_btn.Bind(wx.EVT_BUTTON, self._on_clear_asset)
+        dock.remove_layer_btn.Bind(wx.EVT_BUTTON, self._on_delete_layer)
         dock.visible_cb.Bind(wx.EVT_CHECKBOX, self._on_detail_changed)
         dock.scale_slider.Bind(wx.EVT_SLIDER, self._on_scale_changed)
         dock.rotation_slider.Bind(wx.EVT_SLIDER, self._on_rotation_changed)
@@ -1006,15 +1185,124 @@ class BasicLayerWindow(wx.Frame):
         dock.swing_speed_slider.Bind(wx.EVT_SLIDER, self._on_swing_speed_changed)
         dock.swing_speed_profile_radio.Bind(wx.EVT_RADIOBOX, self._on_motion_profile_changed)
         dock.edit_swing_pivot_btn.Bind(wx.EVT_BUTTON, self._on_edit_swing_pivot)
+        dock.orbit_radius_slider.Bind(wx.EVT_SLIDER, self._on_orbit_changed)
+        dock.orbit_tilt_slider.Bind(wx.EVT_SLIDER, self._on_orbit_changed)
+        dock.orbit_speed_slider.Bind(wx.EVT_SLIDER, self._on_orbit_changed)
+        dock.orbit_near_scale_slider.Bind(wx.EVT_SLIDER, self._on_orbit_changed)
+        dock.orbit_far_scale_slider.Bind(wx.EVT_SLIDER, self._on_orbit_changed)
+        dock.orbit_aux_choice.Bind(wx.EVT_CHOICE, self._on_orbit_aux_changed)
+        dock.edit_orbit_pivot_btn.Bind(wx.EVT_BUTTON, self._on_edit_orbit_pivot)
+
+    def get_selected_slot_ids(self) -> set[int]:
+        return set(self._selected_slot_ids)
+
+    def get_output_edit_slot_id(self) -> Optional[int]:
+        """Slot id for output-window drag/scale chrome; only when exactly one selected."""
+        if len(self._selected_slot_ids) == 1:
+            return next(iter(self._selected_slot_ids))
+        return None
+
+    def format_selection_status(self) -> str:
+        if not self._selected_slot_ids:
+            return "—"
+        state = self.main_frame.basic_layers_state
+        ordered = [
+            sid for sid in visible_layer_slot_ids_top_to_bottom(state)
+            if sid in self._selected_slot_ids]
+        labels = [f"L{sid + 1}" for sid in ordered]
+        if len(labels) == 1:
+            return labels[0]
+        return f"{','.join(labels)} ({len(labels)})"
+
+    def clear_all_selection(self) -> None:
+        self._selected_slot_ids.clear()
+        self._selection_anchor_slot_id = None
+        self.main_frame.basic_layers_state.selected_slot_id = None
+        self._apply_selection_visuals()
+
+    def set_single_selection(self, slot_id: Optional[int]) -> None:
+        if slot_id is None:
+            self.clear_all_selection()
+            return
+        self._selected_slot_ids = {slot_id}
+        self._selection_anchor_slot_id = slot_id
+        self.main_frame.basic_layers_state.selected_slot_id = slot_id
+        self._apply_selection_visuals()
+
+    def _apply_selection_visuals(self) -> None:
+        selected = self._selected_slot_ids
+        primary = self.main_frame.basic_layers_state.selected_slot_id
+        for sid, row in self._row_panels.items():
+            row.set_selected(sid in selected)
+        if primary is not None and primary in self._row_panels:
+            self._detail_slot_id = primary
+        elif len(selected) == 1:
+            self._detail_slot_id = next(iter(selected))
+        else:
+            self._detail_slot_id = None
+        self._refresh_detail_dock()
+
+    def _on_layer_row_click(self, slot_id: int, event: wx.Event) -> None:
+        state = self.main_frame.basic_layers_state
+        visible = visible_layer_slot_ids_top_to_bottom(state)
+        if slot_id not in visible:
+            return
+        modifiers = wx.GetMouseState()
+        shift_down = modifiers.ShiftDown()
+        ctrl_down = modifiers.ControlDown() or modifiers.CmdDown()
+
+        if shift_down and self._selection_anchor_slot_id is not None:
+            if self._selection_anchor_slot_id in visible:
+                anchor_idx = visible.index(self._selection_anchor_slot_id)
+            else:
+                anchor_idx = visible.index(slot_id)
+            current_idx = visible.index(slot_id)
+            low, high = sorted((anchor_idx, current_idx))
+            self._selected_slot_ids = set(visible[low:high + 1])
+        elif ctrl_down:
+            if slot_id in self._selected_slot_ids:
+                self._selected_slot_ids.discard(slot_id)
+            else:
+                self._selected_slot_ids.add(slot_id)
+                self._selection_anchor_slot_id = slot_id
+        else:
+            self._selected_slot_ids = {slot_id}
+            self._selection_anchor_slot_id = slot_id
+
+        if not self._selected_slot_ids:
+            self.main_frame.basic_layers_state.selected_slot_id = None
+        else:
+            self.main_frame.basic_layers_state.selected_slot_id = slot_id
+        self._apply_selection_visuals()
+        self.main_frame.persist_basic_layers_state()
+        if self.main_frame.last_output_wx_image is not None:
+            self.main_frame.draw_cached_result_image(self.main_frame.last_banner_text)
+        self.main_frame.refresh_layer_blend_status()
+        event.Skip()
 
     def rebuild_rows(self) -> None:
-        selected = self.main_frame.basic_layers_state.selected_slot_id
+        selected_ids = self._selected_slot_ids
+        primary = self.main_frame.basic_layers_state.selected_slot_id
 
         self.scroll_sizer.Clear(True)
         self._row_panels.clear()
         self._character_row = None
         state: BasicLayersState = self.main_frame.basic_layers_state
         cache: LayerAssetCache = self.main_frame.layer_asset_cache
+        live_ids = {layer.slot_id for layer in state.layers}
+        self._selected_slot_ids = {sid for sid in selected_ids if sid in live_ids}
+        if not self._selected_slot_ids and primary is not None and primary in live_ids:
+            self._selected_slot_ids = {primary}
+        if (
+                self._selection_anchor_slot_id is not None
+                and self._selection_anchor_slot_id not in live_ids):
+            self._selection_anchor_slot_id = None
+        if self._selected_slot_ids:
+            if primary not in self._selected_slot_ids:
+                self.main_frame.basic_layers_state.selected_slot_id = next(
+                    iter(self._selected_slot_ids))
+        else:
+            self.main_frame.basic_layers_state.selected_slot_id = None
 
         for kind, slot_id in iter_ui_list_top_to_bottom(state):
             if kind == "character":
@@ -1033,15 +1321,15 @@ class BasicLayerWindow(wx.Frame):
                 slot_id=slot_id,
                 title=f"图层 {slot_id + 1} / Layer {slot_id + 1}",
                 is_character_row=False,
-                on_header_clicked=lambda sid=slot_id: self._select_slot(sid))
+                on_header_clicked=lambda e, sid=slot_id: self._on_layer_row_click(sid, e))
             self._wire_layer_row(row, layer)
             self._populate_row(row, layer, cache)
-            row.set_selected(selected == slot_id)
+            row.set_selected(slot_id in self._selected_slot_ids)
             self._row_panels[slot_id] = row
             self.scroll_sizer.Add(row, 0, wx.EXPAND | wx.BOTTOM, 4)
 
-        if selected is not None and selected in self._row_panels:
-            self._detail_slot_id = selected
+        if self._selected_slot_ids:
+            self._detail_slot_id = self.main_frame.basic_layers_state.selected_slot_id
         self._refresh_detail_dock()
         self._refresh_layout()
 
@@ -1054,14 +1342,17 @@ class BasicLayerWindow(wx.Frame):
         if self._building:
             return
         state = self.main_frame.basic_layers_state
+        live_ids = {layer.slot_id for layer in state.layers}
+        if len(self._row_panels) != len(live_ids) or set(self._row_panels) != live_ids:
+            self.rebuild_rows()
+            return
         cache = self.main_frame.layer_asset_cache
-        selected = state.selected_slot_id
         for layer in state.layers:
             row = self._row_panels.get(layer.slot_id)
             if row is None:
                 continue
             self._populate_row(row, layer, cache)
-            row.set_selected(layer.slot_id == selected)
+            row.set_selected(layer.slot_id in self._selected_slot_ids)
         self._refresh_character_row()
         self._refresh_detail_dock()
         if hasattr(self, "spine_reference"):
@@ -1101,7 +1392,7 @@ class BasicLayerWindow(wx.Frame):
             self._character_row.title_text.SetLabel(
                 f"原图 · {truncate_display_filename(name)}")
             self._character_row.path_text.SetLabel(
-                f"主层 z{CHARACTER_STACK_POS + 1} | 已加载 | 角色底图")
+                f"主层 z{self.main_frame.basic_layers_state.character_stack_position + 1} | 已加载 | 角色底图")
         else:
             self._character_row.thumb.set_bitmap(
                 self.main_frame.layer_asset_cache.thumbnail_bitmap(
@@ -1110,42 +1401,107 @@ class BasicLayerWindow(wx.Frame):
             self._character_row.path_text.SetLabel("主层 | 未加载")
 
     def _populate_row(self, row: LayerRowPanel, layer: BasicLayerSlot, cache: LayerAssetCache) -> None:
+        state = self.main_frame.basic_layers_state
         row.thumb.set_bitmap(cache.thumbnail_bitmap(layer))
         row.title_text.SetLabel(format_layer_row_title(layer.slot_id, layer))
-        row.path_text.SetLabel(format_layer_row_summary(layer))
-        row.up_btn.Enable(stack_position_can_move_up(layer.z_order))
-        row.down_btn.Enable(stack_position_can_move_down(layer.z_order))
+        row.path_text.SetLabel(format_layer_row_summary(layer, state))
+        row.up_btn.Enable(stack_position_can_move_up(state, layer.z_order))
+        row.down_btn.Enable(stack_position_can_move_down(state, layer.z_order))
+
+    def _populate_binding_choice(
+            self, state: BasicLayersState, current_slot_id: Optional[int]) -> list[Optional[str]]:
+        """Rebuild the binding dropdown from the live layer list (excluding the
+        layer being edited) and return the parallel index -> target mapping."""
+        labels = [
+            "（无 / None）",
+            "角色·身体 / Character body",
+            "角色·头 / Character head",
+        ]
+        targets: list[Optional[str]] = [None, BINDING_CHARACTER_BODY, BINDING_CHARACTER_HEAD]
+        for kind, sid in iter_ui_list_top_to_bottom(state):
+            if kind != "layer" or sid is None or sid == current_slot_id:
+                continue
+            labels.append(f"图层 {sid + 1} / Layer {sid + 1}")
+            targets.append(f"layer:{sid}")
+        self.detail_dock.binding_choice.Set(labels)
+        self._binding_targets = targets
+        return targets
 
     def _refresh_detail_dock(self) -> None:
         state = self.main_frame.basic_layers_state
-        slot_id = state.selected_slot_id
-        self._detail_slot_id = slot_id
         dock = self.detail_dock
-        if slot_id is None or slot_id not in self._row_panels:
+        selected_ids = self._selected_slot_ids
+        if not selected_ids:
             dock.show_placeholder()
             self._refresh_layout()
             return
 
         dock.show_editor()
+        multi = len(selected_ids) > 1
+        dock.reset_btn.Enable(not multi)
+        dock.clear_btn.Enable(not multi)
+        dock.layer_block.Enable(not multi)
+
+        if multi:
+            ordered = [
+                sid for sid in visible_layer_slot_ids_top_to_bottom(state)
+                if sid in selected_ids]
+            names = [
+                format_layer_row_title(sid, state.get_slot(sid))
+                for sid in ordered]
+            summary = "、".join(names[:4])
+            if len(names) > 4:
+                summary += f" …+{len(names) - 4}"
+            dock.title_text.SetLabel(
+                f"已选 {len(selected_ids)} 个图层 / {len(selected_ids)} selected: {summary}")
+            self._refresh_layout()
+            return
+
+        slot_id = state.selected_slot_id
+        if slot_id is None or slot_id not in selected_ids:
+            slot_id = next(iter(selected_ids))
+        self._detail_slot_id = slot_id
+        if slot_id not in self._row_panels:
+            dock.show_placeholder()
+            self._refresh_layout()
+            return
+
         layer = state.get_slot(slot_id)
+        requisition_owner = orbit_aux_owner(state, slot_id)
         dock.title_text.SetLabel(format_layer_row_title(slot_id, layer))
+        if requisition_owner is not None:
+            dock.orbit_requisition_banner.SetLabel(
+                f"此堆栈位正被图层 {requisition_owner + 1} 的圆周运动征用，"
+                f"不显示本槽素材与设置。"
+                f" / Stack slot requisitioned by Layer {requisition_owner + 1} "
+                f"orbit; this slot's asset and settings are hidden.")
+            dock.orbit_requisition_banner.Show()
+            dock.reset_btn.Enable(False)
+            dock.clear_btn.Enable(False)
+            dock.layer_block.Disable()
+            dock.motion_choice.Disable()
+            dock.motion_panel.Hide()
+            dock.orbit_panel.Hide()
+            dock.remove_layer_btn.Enable(True)
+            self._refresh_layout()
+            return
+
+        dock.orbit_requisition_banner.Hide()
+        dock.layer_block.Enable()
+        dock.motion_choice.Enable()
         dock.visible_cb.SetValue(layer.visible)
         scale_pct = int(round(max(0.05, layer.transform.scale) * 100))
         dock.scale_slider.SetValue(max(5, min(300, scale_pct)))
         dock.scale_label.SetLabel(f"{layer.transform.scale:.2f}")
         dock.rotation_slider.SetValue(max(-180, min(180, int(round(layer.transform.rotation_deg)))))
         dock.rotation_label.SetLabel(f"{layer.transform.rotation_deg:.0f}°")
-        binding_index = 0
         normalized = normalize_binding_target(layer.binding_parent)
-        if normalized == BINDING_CHARACTER_BODY:
-            binding_index = 1
-        elif normalized == BINDING_CHARACTER_HEAD:
-            binding_index = 2
-        else:
-            parent_slot = parse_layer_binding_slot(normalized)
-            if parent_slot is not None:
-                binding_index = 3 + parent_slot
-        dock.binding_choice.SetSelection(min(binding_index, dock.binding_choice.GetCount() - 1))
+        targets = self._populate_binding_choice(state, slot_id)
+        try:
+            binding_index = targets.index(normalized)
+        except ValueError:
+            binding_index = 0
+        dock.binding_choice.SetSelection(binding_index)
         has_binding = normalize_binding_target(layer.binding_parent) is not None
         follow_mode = 0
         if has_binding:
@@ -1170,7 +1526,12 @@ class BasicLayerWindow(wx.Frame):
             bool(layer.binding_follow_mocap_position) if is_head_binding else False)
         dock.binding_follow_mocap_roll_cb.SetValue(
             bool(layer.binding_follow_mocap_roll) if is_head_binding else False)
-        motion_index = 1 if layer.motion_mode == MOTION_MODE_SIMPLE_SWING else 0
+        if layer.motion_mode == MOTION_MODE_SIMPLE_SWING:
+            motion_index = 1
+        elif layer.motion_mode == MOTION_MODE_CIRCULAR:
+            motion_index = 2
+        else:
+            motion_index = 0
         dock.motion_choice.SetSelection(motion_index)
         amp = int(round(clamp_swing_amplitude_deg(layer.swing_amplitude_deg)))
         dock.swing_amplitude_slider.SetValue(amp)
@@ -1183,25 +1544,52 @@ class BasicLayerWindow(wx.Frame):
         dock.swing_speed_profile_radio.SetSelection(profile_index)
         has_asset = bool(layer.asset_path)
         swing_enabled = layer.motion_mode == MOTION_MODE_SIMPLE_SWING
+        orbit_enabled = layer.motion_mode == MOTION_MODE_CIRCULAR
         dock.motion_panel.Enable(swing_enabled)
+        dock.motion_panel.Show(swing_enabled)
         dock.edit_swing_pivot_btn.Enable(swing_enabled and has_asset)
+        dock.orbit_radius_slider.SetValue(int(round(clamp_orbit_radius(layer.orbit_radius))))
+        dock.orbit_radius_label.SetLabel(f"{clamp_orbit_radius(layer.orbit_radius):.0f}")
+        dock.orbit_tilt_slider.SetValue(
+            int(round(clamp_orbit_plane_tilt_deg(layer.orbit_plane_tilt_deg))))
+        dock.orbit_tilt_label.SetLabel(f"{clamp_orbit_plane_tilt_deg(layer.orbit_plane_tilt_deg):.0f}°")
+        dock.orbit_speed_slider.SetValue(
+            int(round(clamp_orbit_speed_deg_per_sec(layer.orbit_speed_deg_per_sec))))
+        dock.orbit_speed_label.SetLabel(
+            f"{clamp_orbit_speed_deg_per_sec(layer.orbit_speed_deg_per_sec):.0f}°/s")
+        dock.orbit_near_scale_slider.SetValue(
+            int(round(clamp_orbit_scale(layer.orbit_near_scale) * 100)))
+        dock.orbit_near_scale_label.SetLabel(f"{clamp_orbit_scale(layer.orbit_near_scale):.2f}")
+        dock.orbit_far_scale_slider.SetValue(
+            int(round(clamp_orbit_scale(layer.orbit_far_scale) * 100)))
+        dock.orbit_far_scale_label.SetLabel(f"{clamp_orbit_scale(layer.orbit_far_scale):.2f}")
+        aux_targets = self._populate_orbit_aux_choice(state, slot_id)
+        try:
+            aux_index = aux_targets.index(layer.orbit_aux_slot_id)
+        except ValueError:
+            aux_index = 0
+        dock.orbit_aux_choice.SetSelection(aux_index)
+        dock.orbit_panel.Enable(orbit_enabled)
+        dock.orbit_panel.Show(orbit_enabled)
+        dock.edit_orbit_pivot_btn.Enable(orbit_enabled)
+        dock.binding_signal_help.SetLabel(
+            "两段射线（可延伸）：① 底→脖 ② 脖→头；参考 % 仅移动示意点，不移动已绑图层。"
+            " / Unbounded spine rays; reference % moves diagram only.")
         self._refresh_layout()
 
     def apply_selection(self, slot_id: Optional[int]) -> None:
-        self._detail_slot_id = slot_id
-        for sid, row in self._row_panels.items():
-            row.set_selected(slot_id is not None and sid == slot_id)
-        self._refresh_detail_dock()
+        self.set_single_selection(slot_id)
 
     def _select_slot(self, slot_id: int) -> None:
-        self.main_frame.basic_layers_state.selected_slot_id = slot_id
-        self.apply_selection(slot_id)
+        self.set_single_selection(slot_id)
         self.main_frame.persist_basic_layers_state()
         if self.main_frame.last_output_wx_image is not None:
             self.main_frame.draw_cached_result_image(self.main_frame.last_banner_text)
         self.main_frame.refresh_layer_blend_status()
 
     def _current_detail_slot(self) -> Optional[int]:
+        if len(self._selected_slot_ids) != 1:
+            return None
         selected = self.main_frame.basic_layers_state.selected_slot_id
         if selected is None or selected < 0:
             return None
@@ -1246,10 +1634,90 @@ class BasicLayerWindow(wx.Frame):
         self.main_frame.on_layer_state_changed()
         event.Skip()
 
+    def _on_add_layer(self, event: wx.Event) -> None:
+        state = self.main_frame.basic_layers_state
+        layer = state.add_layer()
+        self.set_single_selection(layer.slot_id)
+        self.main_frame.persist_basic_layers_state()
+        self.rebuild_rows()
+        self.main_frame.on_layer_state_changed()
+        if (
+                len(state.layers) > DEFAULT_LAYER_COUNT
+                and not self.main_frame.persistent_ui_state.get("layer_count_perf_warned")):
+            self.main_frame.persistent_ui_state["layer_count_perf_warned"] = True
+            self.main_frame.save_persistent_ui_state()
+            wx.MessageBox(
+                "图层数量没有硬性上限，但每个可见图层都会增加每帧合成开销，"
+                "图层过多可能降低输出帧率。请按机器性能酌情添加。\n"
+                "Layer count is unlimited, but every visible layer adds per-frame "
+                "compositing cost; too many layers may lower the output framerate.",
+                "性能提示 / Performance note",
+                wx.OK | wx.ICON_INFORMATION,
+                parent=self)
+        event.Skip()
+
+    def _on_delete_layer(self, event: wx.Event) -> None:
+        state = self.main_frame.basic_layers_state
+        targets = set(self._selected_slot_ids)
+        if not targets:
+            slot_id = self._current_detail_slot()
+            if slot_id is None:
+                return
+            targets = {slot_id}
+        if len(targets) == 1:
+            slot_id = next(iter(targets))
+            layer = state.get_slot(slot_id)
+            prompt = (
+                f"确定移除「{format_layer_row_title(slot_id, layer)}」整个图层槽位？\n"
+                "此操作不可撤销。/ Remove this whole layer slot? This cannot be undone.")
+        else:
+            prompt = (
+                f"确定移除已选的 {len(targets)} 个图层槽位？\n"
+                f"此操作不可撤销。/ Remove {len(targets)} selected layer slots? "
+                "This cannot be undone.")
+        with wx.MessageDialog(
+                self,
+                prompt,
+                "移除图层 / Remove layer",
+                wx.YES_NO | wx.ICON_WARNING) as dlg:
+            if dlg.ShowModal() != wx.ID_YES:
+                return
+        for slot_id in targets:
+            layer = state.get_slot(slot_id)
+            self.main_frame.layer_asset_cache.invalidate(layer.asset_path)
+        remove_layers_batch(state, targets)
+        self.clear_all_selection()
+        self.main_frame.persist_basic_layers_state()
+        self.rebuild_rows()
+        self.main_frame.on_layer_state_changed()
+        event.Skip()
+
     def _move_layer(self, slot_id: int, delta: int) -> None:
-        if not move_layer_z_order(self.main_frame.basic_layers_state, slot_id, delta):
-            return
-        self.main_frame.basic_layers_state.selected_slot_id = slot_id
+        state = self.main_frame.basic_layers_state
+        selected = set(self._selected_slot_ids)
+        if len(selected) > 1:
+            if slot_id not in selected:
+                return
+            if not selection_contiguous_in_ui_list(state, selected):
+                wx.MessageBox(
+                    "未连续选中，不能批量移动。\n"
+                    "请用 Shift 选择连续区间，或改为单选。\n"
+                    "Non-contiguous selection: batch move is not allowed "
+                    "(use Shift for a continuous range).",
+                    "批量移动 / Batch move",
+                    wx.OK | wx.ICON_INFORMATION,
+                    parent=self)
+                return
+            if not move_layers_z_order_block(state, selected, delta):
+                return
+            preserved = set(selected)
+        else:
+            if not move_layer_z_order(state, slot_id, delta):
+                return
+            preserved = {slot_id}
+        state.selected_slot_id = slot_id
+        self._selected_slot_ids = preserved
+        self._selection_anchor_slot_id = slot_id
         self.main_frame.persist_basic_layers_state()
         self._building = True
         try:
@@ -1296,10 +1764,14 @@ class BasicLayerWindow(wx.Frame):
         if slot_id is None:
             return
         layer = self.main_frame.basic_layers_state.get_slot(slot_id)
-        layer.motion_mode = (
-            MOTION_MODE_SIMPLE_SWING
-            if self.detail_dock.motion_choice.GetSelection() == 1
-            else MOTION_MODE_NONE)
+        selection = self.detail_dock.motion_choice.GetSelection()
+        if selection == 1:
+            layer.motion_mode = MOTION_MODE_SIMPLE_SWING
+        elif selection == 2:
+            layer.motion_mode = MOTION_MODE_CIRCULAR
+        else:
+            layer.motion_mode = MOTION_MODE_NONE
+        sanitize_layer_references(self.main_frame.basic_layers_state)
         self.main_frame.persist_basic_layers_state()
         self._refresh_detail_dock()
         self.refresh_all()
@@ -1368,6 +1840,105 @@ class BasicLayerWindow(wx.Frame):
         self.main_frame.on_layer_state_changed()
         event.Skip()
 
+    def _on_orbit_changed(self, event: wx.Event) -> None:
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            return
+        dock = self.detail_dock
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        layer.orbit_radius = clamp_orbit_radius(float(dock.orbit_radius_slider.GetValue()))
+        layer.orbit_plane_tilt_deg = clamp_orbit_plane_tilt_deg(
+            float(dock.orbit_tilt_slider.GetValue()))
+        layer.orbit_speed_deg_per_sec = clamp_orbit_speed_deg_per_sec(
+            float(dock.orbit_speed_slider.GetValue()))
+        layer.orbit_near_scale = clamp_orbit_scale(dock.orbit_near_scale_slider.GetValue() / 100.0)
+        layer.orbit_far_scale = clamp_orbit_scale(dock.orbit_far_scale_slider.GetValue() / 100.0)
+        dock.orbit_radius_label.SetLabel(f"{layer.orbit_radius:.0f}")
+        dock.orbit_tilt_label.SetLabel(f"{layer.orbit_plane_tilt_deg:.0f}°")
+        dock.orbit_speed_label.SetLabel(f"{layer.orbit_speed_deg_per_sec:.0f}°/s")
+        dock.orbit_near_scale_label.SetLabel(f"{layer.orbit_near_scale:.2f}")
+        dock.orbit_far_scale_label.SetLabel(f"{layer.orbit_far_scale:.2f}")
+        self.main_frame.persist_basic_layers_state()
+        self.main_frame.on_layer_state_changed()
+        event.Skip()
+
+    def _on_orbit_aux_changed(self, event: wx.Event) -> None:
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            return
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        targets = getattr(self, "_orbit_aux_targets", [None])
+        choice = self.detail_dock.orbit_aux_choice.GetSelection()
+        layer.orbit_aux_slot_id = normalize_orbit_aux_slot_id(
+            self.main_frame.basic_layers_state,
+            slot_id,
+            targets[choice] if 0 <= choice < len(targets) else None)
+        apply_orbit_requisition_visibility(self.main_frame.basic_layers_state)
+        self.main_frame.persist_basic_layers_state()
+        self.refresh_all()
+        self.main_frame.on_layer_state_changed()
+        event.Skip()
+
+    def _on_edit_orbit_pivot(self, event: wx.Event) -> None:
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            return
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        image = self._orbit_pivot_reference_image(layer)
+        if image is None:
+            wx.MessageBox(
+                "无可用参考图（请先加载角色或本图层素材）/ "
+                "No reference image (load the character or this layer's asset first)",
+                "编辑轨道中心 / Edit orbit center",
+                wx.OK | wx.ICON_WARNING,
+                parent=self)
+            return
+        result = show_pivot_edit_dialog(
+            self,
+            image,
+            layer.orbit_pivot_u,
+            layer.orbit_pivot_v,
+            title="编辑轨道中心 / Edit orbit center",
+            help_label=(
+                "在画面上单击设置圆周运动的轨道中心（相对输出画布的归一化坐标）。"
+                " / Click to set the orbit center (normalized to the output canvas)."))
+        if result is None:
+            event.Skip()
+            return
+        layer.orbit_pivot_u, layer.orbit_pivot_v = result
+        self.main_frame.persist_basic_layers_state()
+        self.refresh_all()
+        self.main_frame.on_layer_state_changed()
+        event.Skip()
+
+    def _orbit_pivot_reference_image(self, layer: BasicLayerSlot) -> Optional[wx.Image]:
+        bitmap = self._character_preview_bitmap()
+        if bitmap is not None and bitmap.IsOk():
+            return bitmap.ConvertToImage()
+        if layer.asset_path:
+            return self.main_frame.layer_asset_cache.load_image(layer)
+        return None
+
+    def _populate_orbit_aux_choice(
+            self, state: BasicLayersState, current_slot_id: int) -> list[Optional[int]]:
+        labels = ["（无 / None）"]
+        targets: list[Optional[int]] = [None]
+        carriers = orbit_aux_carriers(state)
+        for kind, sid in iter_ui_list_top_to_bottom(state):
+            if kind != "layer" or sid is None or sid == current_slot_id:
+                continue
+            owner = carriers.get(sid)
+            if owner is not None and owner != current_slot_id:
+                continue
+            if layer_slot_uses_orbit_motion(state, sid):
+                continue
+            labels.append(
+                f"图层 {sid + 1} 堆栈位 / Layer {sid + 1} stack slot")
+            targets.append(sid)
+        self.detail_dock.orbit_aux_choice.Set(labels)
+        self._orbit_aux_targets = targets
+        return targets
+
     def _on_smooth_alpha_changed(self, event: wx.Event) -> None:
         slot_id = self._current_detail_slot()
         if slot_id is None:
@@ -1393,30 +1964,24 @@ class BasicLayerWindow(wx.Frame):
         old_bind = normalize_binding_target(layer.binding_parent)
         layer.visible = dock.visible_cb.GetValue()
         choice = dock.binding_choice.GetSelection()
-        if choice <= 0:
+        targets = getattr(self, "_binding_targets", [None])
+        target = targets[choice] if 0 <= choice < len(targets) else None
+        if target is None:
             layer.binding_parent = None
             layer.binding_follow_rotation_same = False
             layer.binding_follow_rotation_reverse = False
             layer.binding_follow_mocap_position = False
             layer.binding_follow_mocap_roll = False
-        elif choice == 1:
+        elif target == BINDING_CHARACTER_BODY:
             layer.binding_parent = BINDING_CHARACTER_BODY
             layer.binding_follow_mocap_position = False
             layer.binding_follow_mocap_roll = False
-        elif choice == 2:
+        elif target == BINDING_CHARACTER_HEAD:
             layer.binding_parent = BINDING_CHARACTER_HEAD
         else:
-            parent_slot = choice - 3
-            if parent_slot == slot_id:
-                layer.binding_parent = None
-                layer.binding_follow_rotation_same = False
-                layer.binding_follow_rotation_reverse = False
-                layer.binding_follow_mocap_position = False
-                layer.binding_follow_mocap_roll = False
-            else:
-                layer.binding_parent = f"layer:{parent_slot}"
-                layer.binding_follow_mocap_position = False
-                layer.binding_follow_mocap_roll = False
+            layer.binding_parent = target
+            layer.binding_follow_mocap_position = False
+            layer.binding_follow_mocap_roll = False
         layer.binding_parent = normalize_binding_target(layer.binding_parent)
         new_bind = normalize_binding_target(layer.binding_parent)
         if new_bind is None:

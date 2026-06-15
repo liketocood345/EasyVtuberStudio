@@ -28,6 +28,7 @@ SRCCOPY = 0x00CC0020
 
 _dpi_awareness_set = False
 _prototypes_initialized = False
+_capture_method_cache: dict[int, int] = {}
 
 
 def _init_win32_prototypes() -> None:
@@ -285,6 +286,38 @@ def _frame_mean_luma(bgr: numpy.ndarray) -> float:
     return float(gray.mean())
 
 
+def _frame_thumb_mean_luma(bgr: numpy.ndarray) -> float:
+    height, width = bgr.shape[:2]
+    if height <= 64 and width <= 64:
+        return _frame_mean_luma(bgr)
+    thumb = cv2.resize(bgr, (64, 64), interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(thumb, cv2.COLOR_BGR2GRAY)
+    return float(gray.mean())
+
+
+def _capture_methods():
+    return (
+        _capture_print_window_client,
+        _capture_obs_window_dc_bitblt,
+        _capture_screen_bitblt,
+    )
+
+
+def invalidate_capture_method_cache(hwnd: Optional[int] = None) -> None:
+    """Drop cached grab strategy (all windows, or one hwnd after a stall/switch)."""
+    if hwnd is None:
+        _capture_method_cache.clear()
+        return
+    _capture_method_cache.pop(int(hwnd), None)
+
+
+def _try_capture_method(method, hwnd: int, width: int, height: int) -> Optional[numpy.ndarray]:
+    try:
+        return method(hwnd, width, height)
+    except Exception:
+        return None
+
+
 def list_capture_targets() -> List[WindowInfo]:
     """Visible top-level windows with non-empty titles."""
     results: List[WindowInfo] = []
@@ -329,26 +362,30 @@ def capture_window_client_bgr(hwnd: int) -> Optional[numpy.ndarray]:
         if width < 2 or height < 2:
             return None
 
-        methods = (
-            _capture_print_window_client,
-            _capture_obs_window_dc_bitblt,
-            lambda h, w, ht: _capture_screen_bitblt(h, w, ht),
-        )
+        methods = _capture_methods()
+        cached_idx = _capture_method_cache.get(hwnd)
+        if cached_idx is not None and 0 <= cached_idx < len(methods):
+            frame = _try_capture_method(methods[cached_idx], hwnd, width, height)
+            if frame is not None and _frame_thumb_mean_luma(frame) >= _USABLE_FRAME_LUMA_MIN:
+                return frame
+
         best: Optional[numpy.ndarray] = None
+        best_idx = -1
         best_score = -1.0
-        for method in methods:
-            try:
-                frame = method(hwnd, width, height)
-            except Exception:
-                continue
+        for idx, method in enumerate(methods):
+            frame = _try_capture_method(method, hwnd, width, height)
             if frame is None:
                 continue
-            score = _frame_mean_luma(frame)
+            score = _frame_thumb_mean_luma(frame)
             if score > best_score:
                 best = frame
+                best_idx = idx
                 best_score = score
-            if score >= 4.0:
+            if score >= _GOOD_FRAME_LUMA_MIN:
+                _capture_method_cache[hwnd] = idx
                 return frame
+        if best_idx >= 0 and best is not None:
+            _capture_method_cache[hwnd] = best_idx
         return best
     finally:
         _restore_thread_dpi(previous_dpi)

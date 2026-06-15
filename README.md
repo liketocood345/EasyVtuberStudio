@@ -114,7 +114,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 
 - `data/character_models/baiten_from_project_forlon9/bai_450k/`：示例白腾（代号：九星独行角色） student 模型（yaml + 图）
 - 文档：`docs/HANDOVER.md`、`docs/HARDWARE_REQUIREMENTS.md`、`docs/TROUBLESHOOTING_QA.md`、`docs/DOC_INDEX.md` 等
-- `his/`：按时间归档的历史快照；`archive_to_his.ps1` 留档
+
 
 更细的条目见 `face-puppeteer-ui-enhancements-ai-code/CHANGELOG.md`。
 
@@ -166,6 +166,13 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 
 ## 最近推送
 
-| 提交 | 说明 |
-|------|------|
-| `v1.0` | 便携 DEPLOY 四档、Mouse + Audio 面捕、文档与 GitHub 发布 [EasyVtuberStudio](https://github.com/liketocood345/EasyVtuberStudio) |
+完整改动见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
+
+| 提交 / 日期 | 说明 |
+|-------------|------|
+| `2026-06-15` | **图层圆周运动**（给你角色加个围着角色飞的卫星哪肯定是香的咧）；**鼠标三区校准**与 ix-025 三条校准界限（周期 = 自动点对应按钮）；**窗口捕获**长时卡顿优化；`CODEBASE_MAP` / BUG 热点清单与 git hooks；DEPLOY 增补 THA3 **AI 生成立绘**中英混合提示词 |
+| `3a32f04` · 2026-06-13 | **透明 ULW 真 alpha 输出**、wx-free，合成与显示帧率修复；图层**绑定随躯干倾斜**（Lean shift / rotate 双增益）；任务栏统一 exe 图标、三窗同启；背景下拉四档重构 |
+| `3213b0e` · PR #8 | DEPLOY：**THA3 立绘 PNG** 规格表与构图示意 |
+| `952b32b` · PR #6 | 图层**简单摇摆**运动；图层窗立绘行刷新修复 |
+| `f81363b` · 2026-06-04 | **Mouse + Audio** 布局补全；三栏分割持久化；校准控件迁至预览行右侧 |
+| `v1.0` | 便携 **DEPLOY 四档**、Mouse + Audio 面捕、文档与 GitHub 首发 [EasyVtuberStudio](https://github.com/liketocood345/EasyVtuberStudio) |

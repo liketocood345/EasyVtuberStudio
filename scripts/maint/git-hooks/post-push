@@ -1,0 +1,14 @@
+#!/bin/sh
+# After git push: refresh BUG_HOTSPOT_CHECKLIST from e:\record\labeled_prompt.md
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+if [ -z "$ROOT" ]; then
+  exit 0
+fi
+SCRIPT="$ROOT/scripts/maint/refresh_bug_hotspot_checklist.ps1"
+if [ ! -f "$SCRIPT" ]; then
+  exit 0
+fi
+if command -v powershell.exe >/dev/null 2>&1; then
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$SCRIPT" -Quiet </dev/null
+fi
+exit 0

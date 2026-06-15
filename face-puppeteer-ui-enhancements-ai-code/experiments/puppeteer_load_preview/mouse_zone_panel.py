@@ -138,7 +138,7 @@ class MouseZonePanel(wx.Panel):
         return nx, ny
 
     def _zone_norm_edges(self) -> Tuple[float, float, float, float]:
-        zone = self._zone.clamped()
+        zone = self._zone.clamped_to_surface()
         return (
             zone.center_nx - zone.half_width,
             zone.center_nx + zone.half_width,
@@ -396,7 +396,7 @@ class MouseZonePanel(wx.Panel):
         nx, ny = self._panel_to_norm(pos.x, pos.y)
 
         if self._drag_mode == "move":
-            zone = self._zone.clamped()
+            zone = self._zone.clamped_to_surface()
             anchor_nx, anchor_ny = self._drag_anchor_norm
             delta_nx = nx - anchor_nx
             delta_ny = ny - anchor_ny

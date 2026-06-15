@@ -30,6 +30,7 @@ from mouse_mocap_driver import (
     face_size_from_zone_distance,
     get_mouse_tracking_surface,
     is_mouse_inside_center_zone,
+    mouse_center_zone_calibration_point,
     mouse_gaze_relative_coords,
     sample_global_mouse_normalized,
 )
@@ -141,6 +142,25 @@ def test_horizontal_roll_blend() -> None:
     assert compute_mouse_horizontal_roll_deg(1.5, 30.0, 1.0) < 0.0
 
 
+def test_center_zone_surface_fit_matches_inside_test() -> None:
+    zone = MouseCenterZone(center_nx=0.85, center_ny=0.0, half_width=0.25, half_height=0.25)
+    fitted = zone.clamped_to_surface()
+    assert fitted.half_width < 0.25 - 1e-6
+    left_edge = fitted.center_nx - fitted.half_width
+    assert is_mouse_inside_center_zone(left_edge, 0.0, zone)
+    assert not is_mouse_inside_center_zone(left_edge - 0.02, 0.0, zone)
+
+
+def test_calibration_point_matches_fitted_zone_center() -> None:
+    zone = MouseCenterZone(center_nx=0.0, center_ny=0.0, half_width=0.4, half_height=0.3)
+    moved = zone.with_center_at_preserving_size(1.0, -1.0).clamped_to_surface()
+    calib_nx, calib_ny = mouse_center_zone_calibration_point(moved)
+    assert abs(calib_nx - moved.center_nx) < 1e-6
+    assert abs(calib_ny - moved.center_ny) < 1e-6
+    assert moved.center_nx + moved.half_width <= 1.0 + 1e-5
+    assert moved.center_ny - moved.half_height >= -1.0 - 1e-5
+
+
 def test_gaze_neutral_yields_forward_pose_at_calib_point() -> None:
     config = MouseMocapConfig(gaze_neutral_nx=0.4, gaze_neutral_ny=-0.2)
     assert mouse_gaze_relative_coords(0.4, -0.2, config) == (0.0, 0.0)
@@ -222,6 +242,8 @@ def main() -> None:
     test_horizontal_out_tilt_mix_motion()
     test_vertical_out_keeps_legacy_y()
     test_horizontal_roll_blend()
+    test_center_zone_surface_fit_matches_inside_test()
+    test_calibration_point_matches_fitted_zone_center()
     test_gaze_neutral_yields_forward_pose_at_calib_point()
     test_eye_look_follows_mouse_horizontal()
     test_horizontal_tilt_mix_clamp()

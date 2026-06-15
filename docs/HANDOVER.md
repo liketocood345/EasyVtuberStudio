@@ -1,4 +1,4 @@
-﻿# EasyVtuberStudio — 项目交接说明（新 Agent / 维护者主入口）
+# EasyVtuberStudio — 项目交接说明（新 Agent / 维护者主入口）
 
 > **文档权威副本在 fork 发布总库 `E:\easyvtuberstudio-main\docs\`（本文件）。**  
 > 代码日常开发在 **`E:\easyvtuberstudio-develop`**，稳定后 `scripts\maint\sync_develop_to_fork.ps1` 合并到 fork 再 push。  
@@ -56,6 +56,7 @@ scripts\launch\run_load_preview_puppeteer.bat
 
 | 用途 | 相对路径 |
 |------|----------|
+| **代码地图（CodeGraph）** | [docs/CODEBASE_MAP.md](CODEBASE_MAP.md) — 仓库分区、调用链、热点；结构性问题先 CodeGraph |
 | 主 UI / 合成 | `face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/character_model_mediapipe_puppeteer_load_preview.py` |
 | 图层模块 | `.../layer_runtime.py`、`.../basic_layer_window.py` |
 | 面捕 / 呼吸 / 嘴部 | `face-puppeteer-ui-enhancements-ai-code/talking-head-anime-4-demo/src/tha4/mocap/mediapipe_face_pose_converter_00.py` |
@@ -69,12 +70,14 @@ scripts\launch\run_load_preview_puppeteer.bat
 
 | 文档 | 何时读 |
 |------|--------|
+| [CODEBASE_MAP.md](CODEBASE_MAP.md) | **结构性上手**：模块分区、入口、调用链、热点；配合 CodeGraph MCP/CLI |
 | [../plans/layer-runtime-replan_3a393fc1.plan.md](../plans/layer-runtime-replan_3a393fc1.plan.md) | 做多图层 / L1–L3 功能前（先读「交接摘要」「当前代码现实」） |
 | [../plans/EXTERNAL_LAYER_INTERFACE.md](../plans/EXTERNAL_LAYER_INTERFACE.md) | 外挂 bridge 已废弃说明 |
 | [../face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/THA3_INTEGRATION.md](../face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/THA3_INTEGRATION.md) | THA3 立绘黑盒、`deps/tha3` |
 | [DEPLOY.md](DEPLOY.md) | **首次部署**：GitHub ZIP → 第一次正常启动 |
 | [ADDONS_LAYOUT.md](ADDONS_LAYOUT.md) | 可选包 `addons/` 与 junction |
 | [PREP_PUSH.md](PREP_PUSH.md) | **fork push 前检查清单** |
+| [BUG_HOTSPOT_CHECKLIST.md](BUG_HOTSPOT_CHECKLIST.md) | **新功能必查**：历史 bug 热点 Top10（push / sync 后自动刷新） |
 | [TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md) | **排障（最全）** |
 | [UI_DIALOG_SAFETY.md](UI_DIALOG_SAFETY.md) | **高危**：定时器弹窗频率限制 |
 | [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md) | 硬件 |
@@ -224,10 +227,11 @@ E:\easyvtuberstudio-main\
 | 项 | 位置 |
 |----|------|
 | 五层混合 UI | 后处理区：**启用图层混合** → `BasicLayerWindow` |
-| 无限层占位 | 后处理区：**启动无限图层系统**（无功能，L2 预留） |
+| 无限层 / 动态槽 | 后处理区：**启动无限图层系统** → 图层窗内可增删槽位（L2 基础）；持久化 `basic_layers/manifest` |
 | 持久化 | `layer_blend_enabled`、`unlimited_layers_enabled`；`basic_layers/` |
-| 模块 | `layer_runtime.py`、`basic_layer_window.py`、`layer_swing_pivot_dialog.py` |
-| 简单摇摆运动 | 图层详情 **运动** → 简单摇摆：支点编辑、幅度、速度（度/秒）、全程匀速/到两侧放缓；叠加在容器绑定/旋转/缩放之后 |
+| 模块 | `layer_runtime.py`、`basic_layer_window.py`、`layer_swing_pivot_dialog.py`、`numpy_layer_compositor.py` |
+| 简单摇摆运动 | 图层详情 **运动 → 简单摇摆**：支点编辑、幅度、速度（度/秒）、全程匀速/到两侧放缓 |
+| 圆周运动 | **运动 → 圆周运动**：轨道/绑定点编辑、近远缩放、前后槽征用；见手册 ix 条目与 `CUSTOM_FUNCTION_INDEX.md` |
 
 合成在 `draw_result_wx_image()` 内完成，输出至内置 `OutputFrame`。**已无**向外挂进程写 bridge 文件。
 
@@ -267,7 +271,7 @@ set PYTHONPATH=%cd%\src
 ## 9) 已知限制 / 推荐后续
 
 1. 紧凑/完整窗切换未降低 MediaPipe 与预览绘制开销（需 gate `update_capture_panel` 等）。
-2. 图层级 L1 已落地；L2「无限图层」开关为占位。
+2. 图层级 L1 已落地；L2「无限图层」已可增删槽位，高级编组/环路校验仍待做。
 3. ~~外挂 bridge~~ 已移除，全部内置。
 
 ---

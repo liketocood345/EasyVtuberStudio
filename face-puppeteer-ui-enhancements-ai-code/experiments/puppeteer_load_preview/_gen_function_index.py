@@ -35,7 +35,6 @@ UI_OVERRIDES: Dict[str, str] = {
     "output_background_image_browse_button": "Browse Background Image",
     "mirror_output_checkbox": "Character Mirror",
     "layer_blend_enabled_checkbox": "Enable Layer Blending",
-    "unlimited_layers_enabled_checkbox": "Enable Unlimited Layer System",
     "mouth_infer_cap_choice": "GPU Infer Cap (Hz)",
     "smooth_affine_30hz_checkbox": "Smooth Motion 30Hz",
     "output_frame_interpolation_choice": "Frame Interpolation multiplier",
@@ -102,8 +101,8 @@ MAINFRAME_SECTIONS: List[Tuple[str, List[str]]] = [
         "schedule_active_capture", "schedule_idle_capture",
     ]),
     ("Layers and external bridge", [
-        "layer_", "basic_layer", "unlimited_layers", "layer_blend",
-        "external_layer", "refresh_unlimited", "open_basic_layer",
+        "layer_", "basic_layer", "layer_blend",
+        "external_layer", "open_basic_layer",
     ]),
     ("Persistence and UI state", [
         "persistent_ui", "save_persistent", "load_persistent", "apply_persistent",
@@ -162,12 +161,11 @@ MODULE_PURPOSE_OVERRIDES: Dict[str, str] = {
     "MainFrame.on_display_timer": "30 Hz display tick: update cached affine and present output frame.",
     "MainFrame.on_infer_tick": "Infer scheduling tick: audio refresh + image source tick + async GPU infer.",
     "MainFrame.on_display_transform_control_changed": "Persist and apply auto pan/scale, calibration toggles, mirror, slider values.",
-    "MainFrame.on_unlimited_layers_changed": "Enable/disable unlimited layer system; show/hide BasicLayerWindow.",
     "MainFrame.on_layer_blend_changed": "Enable/disable compositing basic layers into previews and output.",
     "MainFrame.on_smooth_affine_30hz_changed": "Toggle smooth 30 Hz cached-affine display vs infer-rate-only display.",
     "MainFrame.on_output_frame_interpolation_changed": "Set pose interpolation multiplier; adjusts effective infer cap.",
     "MainFrame.on_mouth_infer_cap_changed": "Set base GPU infer cap (Hz); persisted to ui state.",
-    "MainFrame.show_basic_layer_window": "Create/show BasicLayerWindow when unlimited layers enabled.",
+    "MainFrame.show_basic_layer_window": "Create/show BasicLayerWindow when layer blending enabled.",
     "MainFrame.open_basic_layer_window_if_needed": "Lazy-open layer editor on first enable.",
 }
 

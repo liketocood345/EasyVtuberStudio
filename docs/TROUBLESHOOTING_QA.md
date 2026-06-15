@@ -1,4 +1,4 @@
-﻿# EasyVtuberStudio — 排障与常见误解 Q&A / Troubleshooting FAQ
+# EasyVtuberStudio — 排障与常见误解 Q&A / Troubleshooting FAQ
 
 基于 EasyVtuberStudio 面捕增强版、camfix 隔离测试与排障经历整理。  
 **文档权威副本（本文件）：** `E:\easyvtuberstudio-main\` · **活跃代码开发：** `E:\easyvtuberstudio-develop\`（稳定后合并到 fork 再 push）。
@@ -559,6 +559,12 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 ### Q42：完整调参窗四边拖不动或只能缩小？
 
 **A：** 若最小客户区宽度被设得过大（旧版曾 ≈2060px），在常见分辨率下会出现 **min≈max** 无法缩放。现行版 `CONTROLS_MIN_CLIENT_WIDTH` 约 **1124px**，四边应可拖动。若仍异常：确认运行的是 develop/main **2026-06-04 之后**构建；临时删除 json 中 `controls_frame_w/h` 后重启。
+
+---
+
+### Q43：窗口捕获用久了偶尔卡一下？
+
+**A：** Win32 `PrintWindow` / BitBlt 在目标窗 GPU 合成或遮挡时可能**单次抓取耗时很长**；现行版已在 **后台 worker** 抓取（UI 只读缓存帧），并做：**抓取方式缓存**（稳定后不再每帧三连试）、**长边缩至 1280** 再面捕、**卡顿后换抓取路径**。若仍偶发：略缩小目标窗分辨率、避免捕获全屏游戏/OBS 预览等大窗；预览卡顿但输出仍动 → 多为面捕线程负载，可关完整窗摄像头预览或换较小捕获源。详见 [CHANGELOG.md](CHANGELOG.md) §2026-06-15 W1–W2。
 
 ---
 

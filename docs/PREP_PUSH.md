@@ -10,11 +10,13 @@
 
 | 检查 | 命令 / 说明 |
 |------|-------------|
-| develop → fork 已同步 | `powershell -ExecutionPolicy Bypass -File E:\easyvtuberstudio-develop\scripts\maint\sync_develop_to_fork.ps1` |
+| develop → fork 已同步 | `powershell -ExecutionPolicy Bypass -File E:\easyvtuberstudio-develop\scripts\maint\sync_develop_to_fork.ps1`（含 bug 热点清单刷新） |
+| Git hooks 已安装（一次性） | `powershell -ExecutionPolicy Bypass -File E:\easyvtuberstudio-main\scripts\maint\install_git_hooks.ps1` |
 | 瘦包验收 | `packaging\verify_fresh_extract.ps1 -PortableRoot E:\easyvtuberstudio-main` |
 | GitHub ZIP 构建（可选） | `packaging\build_github_zip.ps1 -ForkRoot E:\easyvtuberstudio-main` |
 | 双仓角色 | `scripts\maint\verify_repo_roles.ps1` |
 | 路径引用扫描 | `scripts\maint\verify_path_refs.ps1` |
+| 图层/面捕 smoke（develop venv） | `smoke_layer_runtime.py` · `smoke_mouse_mocap.py` · `smoke_window_capture.py` · `smoke_edit_chrome.py` |
 
 **不要提交进 Git 的大目录**（见 `.gitignore`）：`addons/face_puppeteer/`、`addons/tha3_models/`、`addons/tha4_training/`、`workspace/student_venv/`、`runtime/`、`workspace/*` 用户状态、**`.codegraph/`**、**`**/his/`**（历史快照）、**`docs/training/`**（旧续训流程）、**`docs/oid.md`**（本地聊天摘录）。
 
@@ -45,6 +47,12 @@
 - [addons/README.md](../addons/README.md)
 - [TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md)
 - [CHANGELOG.md](CHANGELOG.md)
+- [CODEBASE_MAP.md](CODEBASE_MAP.md)
+- [BUG_HOTSPOT_CHECKLIST.md](BUG_HOTSPOT_CHECKLIST.md)
+- [HANDOVER.md](HANDOVER.md)
+- 实验索引：`face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/CUSTOM_FUNCTION_INDEX.md`
+
+研发手册（**不入 Git**）：`E:\record\easyvtuberstudio条目设计手册.md`（ix-023 / ix-025 校准界限以该手册为准）。
 
 ---
 
@@ -58,14 +66,27 @@ git commit -m "your message"
 git push origin main
 ```
 
+**push 后**：`post-push` hook 自动运行 `scripts\maint\refresh_bug_hotspot_checklist.ps1`，从 `e:\record\labeled_prompt.md` 刷新 `docs\BUG_HOTSPOT_CHECKLIST.md`（develop + main 双副本）。首次需执行 `scripts\maint\install_git_hooks.ps1` 安装 hook。
+
 推送后：GitHub **Download ZIP** 应为 CORE（无 runtime/可选包）；用户解压后运行 `DEPLOY.bat`。
+
+**建议 commit 主题（2026-06-15 批次）**：
+
+```text
+Layer circular orbit + mouse calibration boundaries + window capture perf.
+
+- Orbit motion, aux-slot requisition, orbit edit chrome, binding follow tilt
+- Three calibration paths (ix-025): periodic = auto-click matching button
+- Window capture method cache, downscale, stall recovery; CODEBASE_MAP docs
+```
 
 ---
 
-## 5. 2026-05-31 本轮待推送要点（摘要）
+## 5. 2026-06-15 本轮待推送要点（摘要）
 
-- DEPLOY：重复安装、venv 复制后 pip 路径、`SkipTorchInstall` 与 `python -m pip`
-- 面捕：`MOCAP_INPUT_MODE_MEDIAPIPE` 导入修复；`verify_deploy` 面捕 UI probe
-- 文档：四档 Y/N 统一；本清单与 [DOC_INDEX.md](DOC_INDEX.md) 更新
+- **图层**：圆周运动 + 辅助槽征用 + 轨道编辑 UI；堆栈增删基础（L2 起步）
+- **校准**：ix-025 三条路径/三条周期；Mouse 中心区 fitted 一致；`_perform_*` 统一手动与周期
+- **窗口捕获**：抓取缓存、worker 缩帧、长时卡顿缓解（`smoke_window_capture.py`）
+- **文档**：`CHANGELOG` §2026-06-15、`CODEBASE_MAP`、`BUG_HOTSPOT_CHECKLIST`、hooks 刷新链
 
-详细条目见 [CHANGELOG.md](CHANGELOG.md) §2026-05-31。
+详细条目见 [CHANGELOG.md](CHANGELOG.md) §2026-06-15。
