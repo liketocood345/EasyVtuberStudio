@@ -1,4 +1,4 @@
-﻿# EasyVtuberStudio — 文档总索引
+# EasyVtuberStudio — 文档总索引
 
 > **软件名称：** **EasyVtuberStudio**（主程序 `EasyVtuberStudio.exe`）  
 > **发布总库** `E:\easyvtuberstudio-main` 根目录仅保留 `README.md` + `EasyVtuberStudio.exe` + 文件夹；说明文档集中在 `docs/`。  
@@ -19,6 +19,8 @@
 | [READMEfrom-main.md](READMEfrom-main.md) | 上游 THA4 demo 原 README |
 | [FORK_ROOT.md](FORK_ROOT.md) | Git 远程、fork / develop 分工、同步命令 |
 | [HANDOVER.md](HANDOVER.md) | **Agent / 维护者主入口** |
+| [CODEBASE_MAP.md](CODEBASE_MAP.md) | **代码地图**：仓库分区、调用链、热点（CodeGraph 梳理） |
+| [BUG_HOTSPOT_CHECKLIST.md](BUG_HOTSPOT_CHECKLIST.md) | **新功能防复发**：历史 bug 热点 Top10 回归清单 |
 | [../plans/README.md](../plans/README.md) | 计划文档目录 |
 | [../plans/REPO_LAYOUT.plan.md](../plans/REPO_LAYOUT.plan.md) | 根目录整理与路径对照 |
 
@@ -28,6 +30,7 @@
 
 | 文档 | 说明 |
 |------|------|
+| [BUG_HOTSPOT_CHECKLIST.md](BUG_HOTSPOT_CHECKLIST.md) | **新功能必查**：用户历史 bug 热点 Top10 回归（`record` 自动生成） |
 | [TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md) | **最全**排障 Q&A |
 | [HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md) | 显卡/内存/多软件同开建议 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更摘要 |
@@ -90,6 +93,7 @@
 开发回退：scripts\launch\run_load_preview_puppeteer.bat
 卸载可选包：RESET_ADDON.bat
 排障：docs\TROUBLESHOOTING_QA.md
+新功能回归：docs\BUG_HOTSPOT_CHECKLIST.md
 安装日志：workspace\deploy.log · workspace\launch.log
 依赖：deps\pip\ 或 DEPLOY.bat
 UI 状态：workspace\load_preview_ui_state.json

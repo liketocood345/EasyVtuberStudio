@@ -20,8 +20,6 @@ import numpy
 from character_edge_postprocess import composite_rgba_arrays
 from rgba_capture_compose import scale_rgba
 from layer_runtime import (
-    CHARACTER_STACK_POS,
-    DRAW_STACK_BOTTOM_TO_TOP,
     MOTION_MODE_SIMPLE_SWING,
     BasicLayersState,
     BasicLayerSlot,
@@ -31,7 +29,9 @@ from layer_runtime import (
     clamp_swing_pivot_v,
     compute_swing_angle_deg,
     layer_at_stack_position,
+    orbit_frame_plan,
     resolve_layer_rects,
+    resolve_stack_layer_draw,
     resolved_layer_rotation_deg,
 )
 
@@ -212,26 +212,30 @@ def compose_full_stack_rgba(
     canvas = numpy.zeros((canvas_h, canvas_w, 4), dtype=numpy.uint8)
     motion_time_s = (
         binding_context.motion_time_s if binding_context is not None else None)
+    orbit_plan, hidden_slots = orbit_frame_plan(state, binding_context)
 
-    for pos in DRAW_STACK_BOTTOM_TO_TOP:
-        if pos == CHARACTER_STACK_POS:
+    character_pos = state.character_stack_position
+    for pos in range(state.total_stack_positions):
+        if pos == character_pos:
             canvas = composite_rgba_arrays(
                 canvas, _fit_canvas(character_rgba, canvas_w, canvas_h))
             continue
         layer = layer_at_stack_position(state, pos)
-        if (
-                layer is None
-                or not layer.enabled
-                or not layer.visible
-                or not layer.asset_path):
+        if layer is None or not layer.enabled:
             continue
-        rect = resolved.get(layer.slot_id)
-        view = _resolver_loader(layer)
-        if rect is None or view is None:
+        draw_pair = resolve_stack_layer_draw(
+            state, layer, resolved, orbit_plan, hidden_slots)
+        if draw_pair is None:
+            continue
+        draw_layer, rect = draw_pair
+        if not draw_layer.visible:
+            continue
+        view = _resolver_loader(draw_layer)
+        if view is None:
             continue
         contribution = _render_layer_contribution(
             view.rgba,
-            layer,
+            draw_layer,
             rect,
             state,
             binding_context,

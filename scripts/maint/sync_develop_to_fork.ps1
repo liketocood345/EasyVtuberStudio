@@ -14,6 +14,11 @@ $roots = Resolve-DevelopForkRoots -DevRoot $DevRoot -ForkRoot $ForkRoot
 $DevRoot = $roots.DevRoot
 $ForkRoot = $roots.ForkRoot
 
+$refreshHotspots = Join-Path $DevRoot "scripts\maint\refresh_bug_hotspot_checklist.ps1"
+if (Test-Path $refreshHotspots) {
+    & $refreshHotspots -Quiet
+}
+
 if (-not (Test-Path (Join-Path $ForkRoot ".git"))) {
     throw "Fork git repo not found: $ForkRoot"
 }

@@ -270,8 +270,19 @@ class MouseMocapState:
     last_sample_time: float = 0.0
 
 
+def resolved_mouse_center_zone(zone: MouseCenterZone) -> MouseCenterZone:
+    """Zone as used at runtime: clamped and fitted inside the normalized screen box."""
+    return zone.clamped_to_surface()
+
+
+def mouse_center_zone_calibration_point(zone: MouseCenterZone) -> Tuple[float, float]:
+    """Normalized point treated as forward/neutral after zone fit (center of center zone)."""
+    fitted = resolved_mouse_center_zone(zone)
+    return fitted.center_nx, fitted.center_ny
+
+
 def zone_local_coords(nx: float, ny: float, zone: MouseCenterZone) -> Tuple[float, float]:
-    z = zone.clamped_to_surface()
+    z = resolved_mouse_center_zone(zone)
     local_x = (nx - z.center_nx) / max(z.half_width, 1e-6)
     local_y = (ny - z.center_ny) / max(z.half_height, 1e-6)
     return local_x, local_y
@@ -383,7 +394,7 @@ def sample_global_mouse_normalized() -> Tuple[float, float]:
 
 
 def is_mouse_inside_center_zone(nx: float, ny: float, zone: MouseCenterZone) -> bool:
-    z = zone.clamped()
+    z = resolved_mouse_center_zone(zone)
     local_x = (nx - z.center_nx) / max(z.half_width, 1e-6)
     local_y = (ny - z.center_ny) / max(z.half_height, 1e-6)
     return abs(local_x) <= 1.0 and abs(local_y) <= 1.0
@@ -391,7 +402,7 @@ def is_mouse_inside_center_zone(nx: float, ny: float, zone: MouseCenterZone) -> 
 
 def face_size_from_zone_distance(nx: float, ny: float, zone: MouseCenterZone) -> float:
     """Map distance outside zone center to a face_size similar to MediaPipe bbox scale."""
-    z = zone.clamped()
+    z = resolved_mouse_center_zone(zone)
     local_x = (nx - z.center_nx) / max(z.half_width, 1e-6)
     local_y = (ny - z.center_ny) / max(z.half_height, 1e-6)
     distance = math.sqrt(local_x * local_x + local_y * local_y)

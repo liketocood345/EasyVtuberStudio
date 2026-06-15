@@ -1,14 +1,16 @@
 """
-Basic five-layer runtime: state, geometry, composition, persistence.
+Layer-system runtime: state, geometry, composition, persistence.
 
-L1 scope: static PNG/WebP and animated GIF layer assets (GIF composited with
-transparent disposal); preview thumbnails use the first frame.
+Supports a dynamic number of layers (variable-length stack with the character
+pinned in the middle). Layer assets are static PNG/WebP and animated GIF (GIF
+composited with transparent disposal); preview thumbnails use the first frame.
 """
 from __future__ import annotations
 
 import json
 import math
 import os
+import re
 import time
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Optional
@@ -26,13 +28,14 @@ LAYER_ASSET_FILE_WILDCARD = (
     "All files (*.*)|*.*")
 
 LAYER_COORD_SIZE = 512
-NUM_BASIC_LAYERS = 5
+DEFAULT_LAYER_COUNT = 5
 BASIC_LAYERS_DIR_NAME = "basic_layers"
 
 OCCLUSION_BEHIND = "behind_character"
 OCCLUSION_FRONT = "in_front_of_character"
 
-LAYER_MODE_BASIC = "basic_five"
+LAYER_MODE_BASIC = "layers"
+LAYER_MODE_BASIC_LEGACY = "basic_five"
 LAYER_MODE_ADVANCED = "advanced_unlimited"
 
 HEAD_ANCHOR_RATIO = 0.84
@@ -121,6 +124,34 @@ SWING_AMPLITUDE_MAX_DEG = 90.0
 SWING_SPEED_MIN_DEG_PER_SEC = 5.0
 SWING_SPEED_MAX_DEG_PER_SEC = 180.0
 SWING_MIN_AMPLITUDE_EPS = 1e-6
+
+# Circular orbit: a single object travels a circle that lives in a tilted plane
+# and is projected onto the screen. In-plane point = (R*cos t, R*sin t); the
+# plane tilt tips the "depth" axis between fully into-screen (tilt 0 deg, strong
+# front/back swap, edge-on ring) and fully vertical (tilt 90 deg, face-on circle,
+# no depth). depth>0 = near -> drawn in front of character (upper slot); depth<0
+# = far -> drawn behind (lower slot). depth also drives a near/far scale (fake
+# perspective). The orbit center is a manually-placed pivot. The main + auxiliary
+# layers are the same object's two sprites (currently the SAME asset, with a slot
+# reserved for future distinct front/back 3D art); which one shows is decided by
+# depth (upper vs lower), NOT by which is "main".
+MOTION_MODE_CIRCULAR = "circular_orbit"
+DEFAULT_ORBIT_RADIUS = 80.0
+ORBIT_RADIUS_MIN = 0.0
+ORBIT_RADIUS_MAX = float(LAYER_COORD_SIZE) / 2.0
+DEFAULT_ORBIT_PLANE_TILT_DEG = 25.0
+ORBIT_PLANE_TILT_MIN_DEG = 0.0
+ORBIT_PLANE_TILT_MAX_DEG = 90.0
+DEFAULT_ORBIT_SPEED_DEG_PER_SEC = 60.0
+ORBIT_SPEED_MIN_DEG_PER_SEC = 5.0
+ORBIT_SPEED_MAX_DEG_PER_SEC = 360.0
+DEFAULT_ORBIT_NEAR_SCALE = 1.3
+DEFAULT_ORBIT_FAR_SCALE = 0.7
+ORBIT_SCALE_MIN = 0.1
+ORBIT_SCALE_MAX = 3.0
+DEFAULT_ORBIT_PIVOT_U = 0.5
+DEFAULT_ORBIT_PIVOT_V = 0.5
+ORBIT_MIN_RADIUS_EPS = 1e-6
 
 
 def clamp_binding_smooth_alpha(value: float) -> float:
@@ -222,7 +253,7 @@ def normalize_binding_target(value: Optional[str]) -> Optional[str]:
             slot_id = int(text.split(":", 1)[1])
         except (IndexError, ValueError):
             return None
-        if 0 <= slot_id < NUM_BASIC_LAYERS:
+        if slot_id >= 0:
             return f"{BINDING_LAYER_PREFIX}{slot_id}"
     return None
 
@@ -283,8 +314,16 @@ def layer_asset_kind_label(kind: str) -> str:
     return ""
 
 
-def format_layer_row_summary(layer: BasicLayerSlot) -> str:
-    side = "上" if layer.z_order > CHARACTER_STACK_POS else "下"
+def format_layer_row_summary(
+        layer: BasicLayerSlot,
+        state: Optional[BasicLayersState] = None) -> str:
+    if state is not None:
+        owner = orbit_aux_owner(state, layer.slot_id)
+        if owner is not None:
+            return (
+                f"堆栈位被图层 {owner + 1} 圆周运动征用"
+                f" / Stack slot used by Layer {owner + 1} orbit")
+    side = "上" if layer.occlusion == OCCLUSION_FRONT else "下"
     parts = [f"{side} z{layer.z_order + 1}"]
     kind_label = layer_asset_kind_label(classify_layer_asset_kind(layer.asset_path))
     if kind_label:
@@ -362,7 +401,9 @@ def _binding_inherited_rotation_deg(
         if layer.slot_id in visiting:
             return 0.0
         visiting.add(layer.slot_id)
-        parent = state.get_slot(parent_slot)
+        parent = find_layer_slot(state, parent_slot)
+        if parent is None:
+            return 0.0
         return effective_layer_rotation_deg(
             parent, state, binding_context, visiting=visiting)
     return 0.0
@@ -391,6 +432,40 @@ def effective_layer_rotation_deg(
     return local + addon
 
 
+def orbit_binding_follow_rotation_deg(
+        layer: BasicLayerSlot,
+        state: BasicLayersState,
+        binding_context: Optional[BindingContext]) -> float:
+    """Binding follow-roll addon applied to the orbit plane (not local transform)."""
+    if binding_context is None:
+        return 0.0
+    same = bool(layer.binding_follow_rotation_same)
+    reverse = bool(layer.binding_follow_rotation_reverse)
+    if not same and not reverse:
+        return 0.0
+    inherited = _binding_inherited_rotation_deg(layer, state, binding_context)
+    addon = 0.0
+    if same:
+        addon += inherited
+    if reverse:
+        addon -= inherited
+    return addon
+
+
+def rotate_orbit_plane_offsets(
+        offset_x: float,
+        offset_y: float,
+        rotation_deg: float) -> tuple[float, float]:
+    if abs(rotation_deg) <= 1e-4:
+        return offset_x, offset_y
+    rad = math.radians(float(rotation_deg))
+    cos_r = math.cos(rad)
+    sin_r = math.sin(rad)
+    return (
+        offset_x * cos_r - offset_y * sin_r,
+        offset_x * sin_r + offset_y * cos_r)
+
+
 def parse_layer_binding_slot(value: Optional[str]) -> Optional[int]:
     normalized = normalize_binding_target(value)
     if normalized is None or not normalized.startswith(BINDING_LAYER_PREFIX):
@@ -399,6 +474,75 @@ def parse_layer_binding_slot(value: Optional[str]) -> Optional[int]:
         return int(normalized.split(":")[1])
     except (IndexError, ValueError):
         return None
+
+
+def find_layer_slot(state: BasicLayersState, slot_id: int) -> Optional[BasicLayerSlot]:
+    """Return an existing layer without resurrecting deleted slots."""
+    for layer in state.layers:
+        if layer.slot_id == slot_id:
+            return layer
+    return None
+
+
+def sanitize_layer_references(state: BasicLayersState) -> None:
+    """Drop bindings/aux targets that point at layers no longer in the stack."""
+    live = {layer.slot_id for layer in state.layers}
+    for layer in state.layers:
+        aux_id = layer.orbit_aux_slot_id
+        if aux_id is not None and aux_id not in live:
+            layer.orbit_aux_slot_id = None
+            aux_id = None
+        if aux_id is not None:
+            layer.orbit_aux_slot_id = normalize_orbit_aux_slot_id(
+                state, layer.slot_id, aux_id)
+        parent_slot = parse_layer_binding_slot(layer.binding_parent)
+        if parent_slot is not None and parent_slot not in live:
+            layer.binding_parent = None
+    apply_orbit_requisition_visibility(state)
+
+
+def layer_slot_uses_orbit_motion(state: BasicLayersState, slot_id: int) -> bool:
+    layer = find_layer_slot(state, slot_id)
+    return layer is not None and layer.motion_mode == MOTION_MODE_CIRCULAR
+
+
+def orbit_aux_slot_is_allowed(
+        state: BasicLayersState,
+        owner_slot_id: int,
+        aux_slot_id: Optional[int]) -> bool:
+    if aux_slot_id is None:
+        return True
+    if aux_slot_id == owner_slot_id:
+        return False
+    if find_layer_slot(state, aux_slot_id) is None:
+        return False
+    if layer_slot_uses_orbit_motion(state, aux_slot_id):
+        return False
+    carrier_owner = orbit_aux_carriers(state).get(aux_slot_id)
+    if carrier_owner is not None and carrier_owner != owner_slot_id:
+        return False
+    return True
+
+
+def normalize_orbit_aux_slot_id(
+        state: BasicLayersState,
+        owner_slot_id: int,
+        aux_slot_id: Optional[int]) -> Optional[int]:
+    if aux_slot_id is None:
+        return None
+    if orbit_aux_slot_is_allowed(state, owner_slot_id, int(aux_slot_id)):
+        return int(aux_slot_id)
+    return None
+
+
+def cleanup_layer_references(state: BasicLayersState, removed_slot_id: int) -> None:
+    """Clear cross-layer pointers after ``remove_layer``."""
+    bind_target = f"{BINDING_LAYER_PREFIX}{removed_slot_id}"
+    for layer in state.layers:
+        if layer.orbit_aux_slot_id == removed_slot_id:
+            layer.orbit_aux_slot_id = None
+        if normalize_binding_target(layer.binding_parent) == bind_target:
+            layer.binding_parent = None
 
 
 def _parse_follow_rotation_same(data: dict) -> bool:
@@ -481,6 +625,15 @@ class BasicLayerSlot:
     swing_speed_deg_per_sec: float = DEFAULT_SWING_SPEED_DEG_PER_SEC
     swing_speed_profile: str = SWING_SPEED_PROFILE_EASE_ENDS
     swing_phase_rad: float = 0.0
+    orbit_radius: float = DEFAULT_ORBIT_RADIUS
+    orbit_plane_tilt_deg: float = DEFAULT_ORBIT_PLANE_TILT_DEG
+    orbit_speed_deg_per_sec: float = DEFAULT_ORBIT_SPEED_DEG_PER_SEC
+    orbit_phase_rad: float = 0.0
+    orbit_pivot_u: float = DEFAULT_ORBIT_PIVOT_U
+    orbit_pivot_v: float = DEFAULT_ORBIT_PIVOT_V
+    orbit_near_scale: float = DEFAULT_ORBIT_NEAR_SCALE
+    orbit_far_scale: float = DEFAULT_ORBIT_FAR_SCALE
+    orbit_aux_slot_id: Optional[int] = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -512,6 +665,18 @@ class BasicLayerSlot:
             payload["swing_speed_profile"] = normalize_swing_speed_profile(
                 self.swing_speed_profile)
             payload["swing_phase_rad"] = float(self.swing_phase_rad)
+        if self.motion_mode == MOTION_MODE_CIRCULAR:
+            payload["orbit_radius"] = clamp_orbit_radius(self.orbit_radius)
+            payload["orbit_plane_tilt_deg"] = clamp_orbit_plane_tilt_deg(self.orbit_plane_tilt_deg)
+            payload["orbit_speed_deg_per_sec"] = clamp_orbit_speed_deg_per_sec(
+                self.orbit_speed_deg_per_sec)
+            payload["orbit_phase_rad"] = float(self.orbit_phase_rad)
+            payload["orbit_pivot_u"] = clamp_swing_pivot_u(self.orbit_pivot_u)
+            payload["orbit_pivot_v"] = clamp_swing_pivot_v(self.orbit_pivot_v)
+            payload["orbit_near_scale"] = clamp_orbit_scale(self.orbit_near_scale)
+            payload["orbit_far_scale"] = clamp_orbit_scale(self.orbit_far_scale)
+            payload["orbit_aux_slot_id"] = (
+                int(self.orbit_aux_slot_id) if self.orbit_aux_slot_id is not None else None)
         return payload
 
     @classmethod
@@ -555,6 +720,25 @@ class BasicLayerSlot:
             swing_speed_profile=normalize_swing_speed_profile(
                 data.get("swing_speed_profile")),
             swing_phase_rad=float(data.get("swing_phase_rad", default_swing_phase_rad(slot_id))),
+            orbit_radius=clamp_orbit_radius(
+                float(data.get("orbit_radius", DEFAULT_ORBIT_RADIUS))),
+            orbit_plane_tilt_deg=clamp_orbit_plane_tilt_deg(
+                float(data.get("orbit_plane_tilt_deg", DEFAULT_ORBIT_PLANE_TILT_DEG))),
+            orbit_speed_deg_per_sec=clamp_orbit_speed_deg_per_sec(
+                float(data.get("orbit_speed_deg_per_sec", DEFAULT_ORBIT_SPEED_DEG_PER_SEC))),
+            orbit_phase_rad=float(data.get("orbit_phase_rad", 0.0)),
+            orbit_pivot_u=clamp_swing_pivot_u(
+                float(data.get("orbit_pivot_u", DEFAULT_ORBIT_PIVOT_U))),
+            orbit_pivot_v=clamp_swing_pivot_v(
+                float(data.get("orbit_pivot_v", DEFAULT_ORBIT_PIVOT_V))),
+            orbit_near_scale=clamp_orbit_scale(
+                float(data.get("orbit_near_scale", DEFAULT_ORBIT_NEAR_SCALE))),
+            orbit_far_scale=clamp_orbit_scale(
+                float(data.get("orbit_far_scale", DEFAULT_ORBIT_FAR_SCALE))),
+            orbit_aux_slot_id=(
+                int(data["orbit_aux_slot_id"])
+                if data.get("orbit_aux_slot_id") is not None
+                else None),
         )
 
 
@@ -566,13 +750,51 @@ class BasicLayersState:
 
     def __post_init__(self) -> None:
         if not self.layers:
-            self.layers = [default_basic_layer_slot(i) for i in range(NUM_BASIC_LAYERS)]
+            self.layers = [default_layer_slot(i) for i in range(DEFAULT_LAYER_COUNT)]
+
+    @property
+    def character_stack_position(self) -> int:
+        """Stack index (bottom = 0) where the character sits: above every
+        'behind' layer and below every 'front' layer. Dynamic with layer count."""
+        return sum(1 for layer in self.layers if layer.occlusion == OCCLUSION_BEHIND)
+
+    @property
+    def total_stack_positions(self) -> int:
+        """Bottom-to-top draw slots: every layer plus the character sentinel."""
+        return len(self.layers) + 1
+
+    def next_slot_id(self) -> int:
+        """Stable, never-reused id for a newly added layer (id != stack pos)."""
+        return max((layer.slot_id for layer in self.layers), default=-1) + 1
+
+    def add_layer(self) -> BasicLayerSlot:
+        """Append a fresh empty layer on TOP of the stack (in front of character)."""
+        slot_id = self.next_slot_id()
+        top_z = max((layer.z_order for layer in self.layers), default=-1)
+        layer = default_layer_slot(slot_id)
+        layer.z_order = top_z + 1
+        layer.occlusion = OCCLUSION_FRONT
+        self.layers.append(layer)
+        normalize_layer_stack_positions(self)
+        return layer
+
+    def remove_layer(self, slot_id: int) -> bool:
+        """Delete an entire layer slot (not just its asset)."""
+        before = len(self.layers)
+        self.layers = [layer for layer in self.layers if layer.slot_id != slot_id]
+        if len(self.layers) == before:
+            return False
+        if self.selected_slot_id == slot_id:
+            self.selected_slot_id = None
+        cleanup_layer_references(self, slot_id)
+        normalize_layer_stack_positions(self)
+        return True
 
     def get_slot(self, slot_id: int) -> BasicLayerSlot:
         for layer in self.layers:
             if layer.slot_id == slot_id:
                 return layer
-        layer = default_basic_layer_slot(slot_id)
+        layer = default_layer_slot(slot_id)
         self.layers.append(layer)
         return layer
 
@@ -600,38 +822,45 @@ class BasicLayersState:
         layers_data = data.get("layers")
         layers: list[BasicLayerSlot] = []
         if isinstance(layers_data, list):
-            for index, item in enumerate(layers_data[:NUM_BASIC_LAYERS]):
+            for index, item in enumerate(layers_data):
                 if isinstance(item, dict):
                     slot_id = int(item.get("slot_id", index))
                     layers.append(BasicLayerSlot.from_dict(item, slot_id))
-        if len(layers) < NUM_BASIC_LAYERS:
-            existing_ids = {layer.slot_id for layer in layers}
-            for slot_id in range(NUM_BASIC_LAYERS):
-                if slot_id not in existing_ids:
-                    layers.append(default_basic_layer_slot(slot_id))
+        if not layers:
+            for slot_id in range(DEFAULT_LAYER_COUNT):
+                layers.append(default_layer_slot(slot_id))
         layer_mode = str(data.get("layer_mode", LAYER_MODE_BASIC))
+        if layer_mode == LAYER_MODE_BASIC_LEGACY:
+            layer_mode = LAYER_MODE_BASIC
         selected = data.get("selected_slot_id")
         selected_slot_id = int(selected) if selected is not None else None
         if selected_slot_id is not None and selected_slot_id < 0:
             selected_slot_id = None
         result = cls(layer_mode=layer_mode, layers=layers, selected_slot_id=selected_slot_id)
         normalize_layer_stack_positions(result)
+        sanitize_layer_references(result)
+        if selected_slot_id is not None and selected_slot_id not in {
+                layer.slot_id for layer in result.layers}:
+            result.selected_slot_id = None
         return result
 
 
-CHARACTER_STACK_POS = 2
-LAYER_STACK_POSITIONS = (0, 1, 3, 4, 5)
-DRAW_STACK_BOTTOM_TO_TOP = (0, 1, 2, 3, 4, 5)
+# Seed-only: where the character sits in the DEFAULT layer stack (behind: 0,1;
+# front: 3,4,5). The real character position is now dynamic
+# (BasicLayersState.character_stack_position), so the stack length is variable
+# and layers can be added / removed at runtime.
+DEFAULT_CHARACTER_STACK_POS = 2
 
 
 def default_stack_position_for_slot(slot_id: int) -> int:
-    if slot_id < 2:
+    if slot_id < DEFAULT_CHARACTER_STACK_POS:
         return slot_id
     return slot_id + 1
 
 
 def occlusion_for_stack_position(stack_pos: int) -> str:
-    return OCCLUSION_BEHIND if stack_pos < CHARACTER_STACK_POS else OCCLUSION_FRONT
+    """Seed default only; runtime occlusion is owned by the layer + normalize."""
+    return OCCLUSION_BEHIND if stack_pos < DEFAULT_CHARACTER_STACK_POS else OCCLUSION_FRONT
 
 
 def layer_at_stack_position(state: BasicLayersState, stack_pos: int) -> Optional[BasicLayerSlot]:
@@ -642,41 +871,130 @@ def layer_at_stack_position(state: BasicLayersState, stack_pos: int) -> Optional
 
 
 def normalize_layer_stack_positions(state: BasicLayersState) -> None:
-    """Ensure five layers occupy stack slots 0,1,3,4,5 (2 = character)."""
-    valid = set(LAYER_STACK_POSITIONS)
-    used: set[int] = set()
-    for layer in state.layers:
-        if layer.z_order in valid and layer.z_order not in used:
-            used.add(layer.z_order)
-            layer.occlusion = occlusion_for_stack_position(layer.z_order)
-            continue
-        new_pos = default_stack_position_for_slot(layer.slot_id)
-        while new_pos in used:
-            new_pos = min(valid, key=lambda p: (p in used, p))
-        layer.z_order = new_pos
-        layer.occlusion = occlusion_for_stack_position(new_pos)
-        used.add(new_pos)
+    """Pack layers into a contiguous bottom-to-top stack with the character in
+    the middle: behind layers get 0..b-1, the character occupies index b, front
+    layers get b+1..  Ordering inside each side follows the current z_order, so
+    existing saves keep their look while any layer count is supported."""
+    behind = sorted(
+        (layer for layer in state.layers if layer.occlusion == OCCLUSION_BEHIND),
+        key=lambda layer: layer.z_order)
+    front = sorted(
+        (layer for layer in state.layers if layer.occlusion == OCCLUSION_FRONT),
+        key=lambda layer: layer.z_order)
+    index = 0
+    for layer in behind:
+        layer.z_order = index
+        index += 1
+    index += 1  # character sentinel slot
+    for layer in front:
+        layer.z_order = index
+        index += 1
 
 
 def iter_ui_list_top_to_bottom(state: BasicLayersState):
-    """UI list: top = drawn last; character row sits at stack position 2."""
-    for pos in (5, 4, 3):
+    """UI list top-to-bottom (top = drawn last / front). Character row sits at
+    the dynamic character_stack_position."""
+    char_pos = state.character_stack_position
+    for pos in range(state.total_stack_positions - 1, -1, -1):
+        if pos == char_pos:
+            yield ("character", None)
+            continue
         layer = layer_at_stack_position(state, pos)
         if layer is not None:
             yield ("layer", layer.slot_id)
-    yield ("character", None)
-    for pos in (1, 0):
-        layer = layer_at_stack_position(state, pos)
-        if layer is not None:
-            yield ("layer", layer.slot_id)
 
 
-def stack_position_can_move_up(stack_pos: int) -> bool:
-    return stack_pos < max(LAYER_STACK_POSITIONS)
+def visible_layer_slot_ids_top_to_bottom(state: BasicLayersState) -> list[int]:
+    """Layer slot ids in UI list order (top/front first), excluding character."""
+    return [
+        slot_id
+        for kind, slot_id in iter_ui_list_top_to_bottom(state)
+        if kind == "layer" and slot_id is not None
+    ]
 
 
-def stack_position_can_move_down(stack_pos: int) -> bool:
-    return stack_pos > min(LAYER_STACK_POSITIONS)
+def selection_contiguous_in_ui_list(
+        state: BasicLayersState,
+        slot_ids: set[int]) -> bool:
+    """True when ``slot_ids`` form one contiguous run in the visible layer list."""
+    if not slot_ids:
+        return False
+    visible = visible_layer_slot_ids_top_to_bottom(state)
+    indices = sorted(
+        i for i, sid in enumerate(visible) if sid in slot_ids)
+    if len(indices) != len(slot_ids):
+        return False
+    return indices == list(range(indices[0], indices[-1] + 1))
+
+
+def move_layers_z_order_block(
+        state: BasicLayersState,
+        slot_ids: set[int],
+        delta: int) -> bool:
+    """Move a contiguous layer block one stack step (+1 = toward front).
+
+    Preserves relative order inside the block. Returns False when the block is
+    not contiguous in the UI list or the move is blocked at a stack edge.
+    """
+    if delta not in (-1, 1) or not slot_ids:
+        return False
+    if not selection_contiguous_in_ui_list(state, slot_ids):
+        return False
+    normalize_layer_stack_positions(state)
+    total = state.total_stack_positions
+    char_pos = state.character_stack_position
+    sequence: list[object] = [None] * total
+    sequence[char_pos] = "__character__"
+    for item in state.layers:
+        if 0 <= item.z_order < total:
+            sequence[item.z_order] = item
+    indices = sorted(
+        i for i, item in enumerate(sequence)
+        if isinstance(item, BasicLayerSlot) and item.slot_id in slot_ids)
+    if not indices or indices != list(range(indices[0], indices[-1] + 1)):
+        return False
+    start, end = indices[0], indices[-1]
+    block = sequence[start:end + 1]
+    if delta > 0:
+        if end + 1 >= total:
+            return False
+        new_sequence = (
+            sequence[:start]
+            + [sequence[end + 1]]
+            + block
+            + sequence[end + 2:])
+    else:
+        if start - 1 < 0:
+            return False
+        new_sequence = (
+            sequence[:start - 1]
+            + block
+            + [sequence[start - 1]]
+            + sequence[end + 1:])
+    new_char_pos = new_sequence.index("__character__")
+    for pos, item in enumerate(new_sequence):
+        if item == "__character__" or item is None:
+            continue
+        item.z_order = pos
+        item.occlusion = OCCLUSION_BEHIND if pos < new_char_pos else OCCLUSION_FRONT
+    return True
+
+
+def remove_layers_batch(state: BasicLayersState, slot_ids: set[int]) -> int:
+    """Remove many layers; returns count removed."""
+    removed = 0
+    for slot_id in sorted(slot_ids, reverse=True):
+        if state.remove_layer(slot_id):
+            removed += 1
+    return removed
+
+
+def stack_position_can_move_up(state: BasicLayersState, stack_pos: int) -> bool:
+    return stack_pos < state.total_stack_positions - 1
+
+
+def stack_position_can_move_down(state: BasicLayersState, stack_pos: int) -> bool:
+    return stack_pos > 0
 
 
 def default_swing_phase_rad(slot_id: int) -> float:
@@ -686,7 +1004,25 @@ def default_swing_phase_rad(slot_id: int) -> float:
 def normalize_motion_mode(value: Optional[str]) -> str:
     if value == MOTION_MODE_SIMPLE_SWING:
         return MOTION_MODE_SIMPLE_SWING
+    if value == MOTION_MODE_CIRCULAR:
+        return MOTION_MODE_CIRCULAR
     return MOTION_MODE_NONE
+
+
+def clamp_orbit_radius(value: float) -> float:
+    return max(ORBIT_RADIUS_MIN, min(ORBIT_RADIUS_MAX, float(value)))
+
+
+def clamp_orbit_plane_tilt_deg(value: float) -> float:
+    return max(ORBIT_PLANE_TILT_MIN_DEG, min(ORBIT_PLANE_TILT_MAX_DEG, float(value)))
+
+
+def clamp_orbit_speed_deg_per_sec(value: float) -> float:
+    return max(ORBIT_SPEED_MIN_DEG_PER_SEC, min(ORBIT_SPEED_MAX_DEG_PER_SEC, float(value)))
+
+
+def clamp_orbit_scale(value: float) -> float:
+    return max(ORBIT_SCALE_MIN, min(ORBIT_SCALE_MAX, float(value)))
 
 
 def normalize_swing_speed_profile(value: Optional[str]) -> str:
@@ -722,7 +1058,9 @@ def layer_has_active_swing(layer: BasicLayerSlot) -> bool:
 
 
 def basic_layers_state_has_active_motion(state: BasicLayersState) -> bool:
-    return any(layer_has_active_swing(layer) for layer in state.layers)
+    return any(
+        layer_has_active_swing(layer) or layer_has_active_orbit(layer)
+        for layer in state.layers)
 
 
 def compute_swing_angle_deg(layer: BasicLayerSlot, time_s: float) -> float:
@@ -747,7 +1085,64 @@ def compute_swing_angle_deg(layer: BasicLayerSlot, time_s: float) -> float:
     return amplitude * math.sin(omega * t + phase)
 
 
-def default_basic_layer_slot(slot_id: int) -> BasicLayerSlot:
+@dataclass
+class OrbitState:
+    """Projected state of a circular-orbit object for one frame.
+
+    offset_x / offset_y are screen offsets (in LAYER_COORD_SIZE = 512 space) from
+    the orbit pivot; scale is the near/far perspective factor; depth_norm in
+    [-1, 1] (1 = nearest / fully in front, -1 = farthest / fully behind);
+    in_front = drawn in front of the character this frame.
+    """
+    offset_x: float = 0.0
+    offset_y: float = 0.0
+    scale: float = 1.0
+    depth_norm: float = 0.0
+    in_front: bool = True
+
+
+def compute_orbit_state(layer: BasicLayerSlot, time_s: float) -> OrbitState:
+    """Evaluate the tilted-plane circular orbit and project it to the screen.
+
+    In-plane point P(t) = (R*cos t, R*sin t). Tilt the plane by `tilt` about the
+    horizontal screen axis: the sin-component splits into screen-vertical
+    (sin t * sin tilt) and into-screen depth (sin t * cos tilt). Orthographic
+    projection then gives screen offsets and a depth used for scale + occlusion.
+    """
+    radius = clamp_orbit_radius(layer.orbit_radius)
+    if radius <= ORBIT_MIN_RADIUS_EPS:
+        return OrbitState(scale=1.0, depth_norm=0.0, in_front=True)
+    speed = clamp_orbit_speed_deg_per_sec(layer.orbit_speed_deg_per_sec)
+    tilt = math.radians(clamp_orbit_plane_tilt_deg(layer.orbit_plane_tilt_deg))
+    angle = math.radians(speed * float(time_s)) + float(layer.orbit_phase_rad)
+    cos_t = math.cos(angle)
+    sin_t = math.sin(angle)
+    offset_x = radius * cos_t
+    offset_y = -radius * sin_t * math.sin(tilt)
+    depth_norm = sin_t * math.cos(tilt)  # in [-1, 1]
+    near = clamp_orbit_scale(layer.orbit_near_scale)
+    far = clamp_orbit_scale(layer.orbit_far_scale)
+    blend = (depth_norm + 1.0) / 2.0  # 0 = far, 1 = near
+    scale = far + (near - far) * blend
+    return OrbitState(
+        offset_x=offset_x,
+        offset_y=offset_y,
+        scale=scale,
+        depth_norm=depth_norm,
+        in_front=depth_norm >= 0.0)
+
+
+def layer_has_active_orbit(layer: BasicLayerSlot) -> bool:
+    return (
+        layer.enabled
+        and layer.visible
+        and bool(layer.asset_path)
+        and layer.motion_mode == MOTION_MODE_CIRCULAR
+        and clamp_orbit_radius(layer.orbit_radius) > ORBIT_MIN_RADIUS_EPS
+        and clamp_orbit_speed_deg_per_sec(layer.orbit_speed_deg_per_sec) > ORBIT_MIN_RADIUS_EPS)
+
+
+def default_layer_slot(slot_id: int) -> BasicLayerSlot:
     stack_pos = default_stack_position_for_slot(slot_id)
     return BasicLayerSlot(
         slot_id=slot_id,
@@ -1578,8 +1973,9 @@ class LayerGeometryResolver:
                 layer, image, canvas_width, canvas_height)
 
         resolved: dict[int, ResolvedLayerRect] = {}
-        for pos in DRAW_STACK_BOTTOM_TO_TOP:
-            if pos == CHARACTER_STACK_POS:
+        character_pos = state.character_stack_position
+        for pos in range(state.total_stack_positions):
+            if pos == character_pos:
                 continue
             layer = layer_at_stack_position(state, pos)
             if layer is None or layer.slot_id not in local_rects:
@@ -1706,6 +2102,443 @@ class LayerBindingSmoother:
         return result
 
 
+@dataclass
+class _OrbitDrawPlan:
+    source_slot_id: int
+    offset_x: float
+    offset_y: float
+    scale: float
+    pivot_u: float
+    pivot_v: float
+
+
+def orbit_aux_carriers(state: BasicLayersState) -> dict[int, int]:
+    """Aux stack slots requisitioned for orbit occlusion (aux_id -> owner slot_id)."""
+    carriers: dict[int, int] = {}
+    live = {layer.slot_id for layer in state.layers}
+    for layer in state.layers:
+        if layer.motion_mode != MOTION_MODE_CIRCULAR:
+            continue
+        aux_id = layer.orbit_aux_slot_id
+        if aux_id is None or aux_id == layer.slot_id or aux_id not in live:
+            continue
+        carriers[int(aux_id)] = layer.slot_id
+    return carriers
+
+
+def orbit_aux_owner(state: BasicLayersState, slot_id: int) -> Optional[int]:
+    return orbit_aux_carriers(state).get(slot_id)
+
+
+def orbit_requisitioned_slot_ids(state: BasicLayersState) -> set[int]:
+    return set(orbit_aux_carriers(state))
+
+
+def apply_orbit_requisition_visibility(state: BasicLayersState) -> None:
+    """Lent stack slots hide their own sprite; only the orbit owner draws there."""
+    for aux_id in orbit_requisitioned_slot_ids(state):
+        aux = find_layer_slot(state, aux_id)
+        if aux is not None:
+            aux.visible = False
+
+
+def strip_orbit_requisitioned_native_rects(
+        state: BasicLayersState,
+        resolved: dict[int, ResolvedLayerRect],
+        active_display_slots: Optional[set[int]] = None) -> None:
+    """Drop independent geometry for lent slots (keep orbit-display rects only)."""
+    keep = active_display_slots or set()
+    for aux_id in orbit_requisitioned_slot_ids(state):
+        if aux_id not in keep:
+            resolved.pop(aux_id, None)
+
+
+def orbit_upper_lower_slot_ids(
+        main: BasicLayerSlot,
+        aux: BasicLayerSlot) -> tuple[int, int]:
+    """Return (upper, lower) stack slots for front / behind orbit display."""
+    if main.occlusion == OCCLUSION_FRONT and aux.occlusion == OCCLUSION_BEHIND:
+        return main.slot_id, aux.slot_id
+    if aux.occlusion == OCCLUSION_FRONT and main.occlusion == OCCLUSION_BEHIND:
+        return aux.slot_id, main.slot_id
+    if main.z_order >= aux.z_order:
+        return main.slot_id, aux.slot_id
+    return aux.slot_id, main.slot_id
+
+
+def resolve_local_layer_rects(
+        state: BasicLayersState,
+        asset_loader: Callable[[BasicLayerSlot], Optional[wx.Image]],
+        canvas_width: int,
+        canvas_height: int) -> dict[int, ResolvedLayerRect]:
+    """Unbound layer rects (transform only), keyed by slot_id."""
+    local_rects: dict[int, ResolvedLayerRect] = {}
+    requisitioned = orbit_requisitioned_slot_ids(state)
+    for layer in state.layers:
+        if layer.slot_id in requisitioned:
+            continue
+        if not layer.enabled or not layer.visible or not layer.asset_path:
+            continue
+        image = asset_loader(layer)
+        if image is None:
+            continue
+        local_rects[layer.slot_id] = LayerGeometryResolver.resolve_layer_rect_local(
+            layer, image, canvas_width, canvas_height)
+    return local_rects
+
+
+def orbit_binding_shift(
+        bound_rect: ResolvedLayerRect,
+        local_rect: ResolvedLayerRect) -> tuple[float, float]:
+    """How far binding moved the layer center from its local transform anchor."""
+    bound_cx = bound_rect.draw_x + bound_rect.draw_width / 2.0
+    bound_cy = bound_rect.draw_y + bound_rect.draw_height / 2.0
+    local_cx = local_rect.draw_x + local_rect.draw_width / 2.0
+    local_cy = local_rect.draw_y + local_rect.draw_height / 2.0
+    return bound_cx - local_cx, bound_cy - local_cy
+
+
+def binding_context_for_layer_geometry(
+        binding_context: Optional[BindingContext],
+        *,
+        include_motion: bool) -> Optional[BindingContext]:
+    """Strip motion_time_s for edit chrome / hit-tests (static bound box)."""
+    if binding_context is None or include_motion:
+        return binding_context
+    return replace(binding_context, motion_time_s=None)
+
+
+def layer_uses_orbit_edit_chrome(layer: BasicLayerSlot) -> bool:
+    return layer.motion_mode == MOTION_MODE_CIRCULAR and bool(layer.asset_path)
+
+
+@dataclass
+class OrbitEditGeometry:
+    slot_id: int
+    path_points: list[tuple[float, float]]
+    pivot_xy: tuple[float, float]
+    bind_xy: Optional[tuple[float, float]]
+    canvas_width: int
+    canvas_height: int
+
+
+def sample_orbit_path_canvas_points(
+        layer: BasicLayerSlot,
+        canvas_width: int,
+        canvas_height: int,
+        shift_x: float = 0.0,
+        shift_y: float = 0.0,
+        *,
+        state: Optional[BasicLayersState] = None,
+        binding_context: Optional[BindingContext] = None,
+        num_samples: int = 72) -> tuple[list[tuple[float, float]], tuple[float, float]]:
+    canvas_width = max(1, int(canvas_width))
+    canvas_height = max(1, int(canvas_height))
+    pivot_x = (
+        clamp_swing_pivot_u(layer.orbit_pivot_u) * float(canvas_width) + shift_x)
+    pivot_y = (
+        clamp_swing_pivot_v(layer.orbit_pivot_v) * float(canvas_height) + shift_y)
+    sx = float(canvas_width) / float(LAYER_COORD_SIZE)
+    sy = float(canvas_height) / float(LAYER_COORD_SIZE)
+    radius = max(clamp_orbit_radius(layer.orbit_radius), 8.0)
+    tilt = math.radians(clamp_orbit_plane_tilt_deg(layer.orbit_plane_tilt_deg))
+    follow_rot = 0.0
+    if state is not None and binding_context is not None:
+        follow_rot = orbit_binding_follow_rotation_deg(layer, state, binding_context)
+    points: list[tuple[float, float]] = []
+    phase = float(layer.orbit_phase_rad)
+    for index in range(max(8, int(num_samples))):
+        angle = 2.0 * math.pi * (index / float(num_samples)) + phase
+        cos_t = math.cos(angle)
+        sin_t = math.sin(angle)
+        offset_x = radius * cos_t * sx
+        offset_y = -radius * sin_t * math.sin(tilt) * sy
+        offset_x, offset_y = rotate_orbit_plane_offsets(
+            offset_x, offset_y, follow_rot)
+        points.append((pivot_x + offset_x, pivot_y + offset_y))
+    return points, (pivot_x, pivot_y)
+
+
+def layer_binding_anchor_canvas_xy(
+        layer: BasicLayerSlot,
+        state: BasicLayersState,
+        binding_context: BindingContext,
+        resolved: dict[int, ResolvedLayerRect],
+        canvas_width: int,
+        canvas_height: int) -> Optional[tuple[float, float]]:
+    target = normalize_binding_target(layer.binding_parent)
+    if target == BINDING_CHARACTER_BODY:
+        bind_x, bind_y, _angle = binding_context.character_body_layer_bind_on_spine(
+            ray_percent=layer_binding_ray_percent(layer))
+        return float(bind_x), float(bind_y)
+    if target == BINDING_CHARACTER_HEAD:
+        bind_x, bind_y, _angle = binding_context.character_head_bind_on_spine(
+            ray_percent=layer_binding_ray_percent(layer),
+            extra_pose_offset=bool(layer.binding_follow_mocap_position))
+        return float(bind_x), float(bind_y)
+    parent_slot = parse_layer_binding_slot(target)
+    if parent_slot is not None:
+        parent_rect = resolved.get(parent_slot)
+        if parent_rect is not None:
+            return (
+                parent_rect.draw_x + parent_rect.draw_width / 2.0,
+                parent_rect.draw_y + parent_rect.draw_height / 2.0)
+    anchor_x = canvas_width / 2.0 + LayerGeometryResolver.map_coord(
+        layer.transform.offset_x, canvas_width)
+    anchor_y = canvas_height / 2.0 + LayerGeometryResolver.map_coord(
+        layer.transform.offset_y, canvas_height)
+    return float(anchor_x), float(anchor_y)
+
+
+def orbit_binding_shift_for_layer(
+        state: BasicLayersState,
+        layer: BasicLayerSlot,
+        asset_loader: Callable[[BasicLayerSlot], Optional[wx.Image]],
+        canvas_width: int,
+        canvas_height: int,
+        binding_context: BindingContext) -> tuple[float, float]:
+    local_rects = resolve_local_layer_rects(
+        state, asset_loader, canvas_width, canvas_height)
+    local_rect = local_rects.get(layer.slot_id)
+    if local_rect is None:
+        return 0.0, 0.0
+    geometry_context = binding_context_for_layer_geometry(
+        binding_context, include_motion=False)
+    resolved = LayerGeometryResolver.resolve_all(
+        state, asset_loader, canvas_width, canvas_height, geometry_context)
+    smoother = (
+        geometry_context.binding_smoother if geometry_context is not None else None)
+    if smoother is not None and geometry_context is not None:
+        resolved = smoother.apply(state, resolved, geometry_context)
+    bound_rect = resolved.get(layer.slot_id)
+    if bound_rect is None:
+        return 0.0, 0.0
+    return orbit_binding_shift(bound_rect, local_rect)
+
+
+def compute_orbit_edit_geometry(
+        state: BasicLayersState,
+        layer: BasicLayerSlot,
+        asset_loader: Callable[[BasicLayerSlot], Optional[wx.Image]],
+        canvas_width: int,
+        canvas_height: int,
+        binding_context: BindingContext) -> Optional[OrbitEditGeometry]:
+    if not layer_uses_orbit_edit_chrome(layer):
+        return None
+    canvas_width = max(1, int(canvas_width))
+    canvas_height = max(1, int(canvas_height))
+    shift_x, shift_y = orbit_binding_shift_for_layer(
+        state, layer, asset_loader, canvas_width, canvas_height, binding_context)
+    path_points, pivot_xy = sample_orbit_path_canvas_points(
+        layer,
+        canvas_width,
+        canvas_height,
+        shift_x,
+        shift_y,
+        state=state,
+        binding_context=binding_context)
+    geometry_context = binding_context_for_layer_geometry(
+        binding_context, include_motion=False)
+    resolved = LayerGeometryResolver.resolve_all(
+        state, asset_loader, canvas_width, canvas_height, geometry_context)
+    smoother = (
+        geometry_context.binding_smoother if geometry_context is not None else None)
+    if smoother is not None and geometry_context is not None:
+        resolved = smoother.apply(state, resolved, geometry_context)
+    bind_xy = layer_binding_anchor_canvas_xy(
+        layer, state, binding_context, resolved, canvas_width, canvas_height)
+    return OrbitEditGeometry(
+        slot_id=layer.slot_id,
+        path_points=path_points,
+        pivot_xy=pivot_xy,
+        bind_xy=bind_xy,
+        canvas_width=canvas_width,
+        canvas_height=canvas_height)
+
+
+def resolve_stack_layer_draw(
+        state: BasicLayersState,
+        display_layer: BasicLayerSlot,
+        resolved: dict[int, ResolvedLayerRect],
+        orbit_plan: Optional[dict[int, _OrbitDrawPlan]],
+        hidden_slots: set[int]) -> Optional[tuple[BasicLayerSlot, ResolvedLayerRect]]:
+    """Map a stack slot to the layer asset + rect actually drawn this frame.
+
+    Requisitioned stack slots never draw their own asset: only the orbit owner
+    may appear there, and only on the depth-selected slot for this frame.
+    """
+    slot_id = display_layer.slot_id
+    if slot_id in hidden_slots:
+        return None
+
+    owner_slot_id = orbit_aux_owner(state, slot_id)
+    if owner_slot_id is not None:
+        if orbit_plan is None:
+            return None
+        plan = orbit_plan.get(slot_id)
+        if plan is None:
+            return None
+        source = find_layer_slot(state, plan.source_slot_id)
+        if source is None or not source.asset_path or not source.visible:
+            return None
+        rect = resolved.get(slot_id)
+        if rect is None:
+            return None
+        return source, rect
+
+    if orbit_plan is not None and slot_id in orbit_plan:
+        plan = orbit_plan[slot_id]
+        source = find_layer_slot(state, plan.source_slot_id)
+        if source is None or not source.asset_path or not source.visible:
+            return None
+        rect = resolved.get(slot_id)
+        if rect is None:
+            return None
+        return source, rect
+
+    if not display_layer.asset_path or not display_layer.visible:
+        return None
+    rect = resolved.get(slot_id)
+    if rect is None:
+        return None
+    return display_layer, rect
+
+
+def collect_stack_layer_draws(
+        state: BasicLayersState,
+        asset_loader: Callable[[BasicLayerSlot], Optional[wx.Image]],
+        canvas_width: int,
+        canvas_height: int,
+        binding_context: Optional[BindingContext]) -> list[tuple[int, int]]:
+    """Return (stack_slot_id, asset_owner_slot_id) drawn this frame."""
+    resolved = resolve_layer_rects(
+        state, asset_loader, canvas_width, canvas_height, binding_context)
+    orbit_plan, hidden_slots = orbit_frame_plan(state, binding_context)
+    draws: list[tuple[int, int]] = []
+    character_pos = state.character_stack_position
+    for pos in range(state.total_stack_positions):
+        if pos == character_pos:
+            continue
+        layer = layer_at_stack_position(state, pos)
+        if layer is None or not layer.enabled:
+            continue
+        draw_pair = resolve_stack_layer_draw(
+            state, layer, resolved, orbit_plan, hidden_slots)
+        if draw_pair is None:
+            continue
+        draw_layer, _rect = draw_pair
+        draws.append((layer.slot_id, draw_layer.slot_id))
+    return draws
+
+
+def orbit_frame_plan(
+        state: BasicLayersState,
+        binding_context: Optional[BindingContext]) -> tuple[dict[int, _OrbitDrawPlan], set[int]]:
+    if binding_context is None or binding_context.motion_time_s is None:
+        return {}, set()
+    return compute_orbit_render_plan(state, binding_context.motion_time_s)
+
+
+def orbit_selection_slot_id(
+        display_slot_id: int,
+        orbit_plan: dict[int, _OrbitDrawPlan]) -> int:
+    plan = orbit_plan.get(display_slot_id)
+    if plan is not None:
+        return plan.source_slot_id
+    return display_slot_id
+
+
+def compute_orbit_render_plan(
+        state: BasicLayersState,
+        time_s: float) -> tuple[dict[int, _OrbitDrawPlan], set[int]]:
+    """Per-frame plan for circular-orbit objects.
+
+    Returns (overrides, hidden): `overrides[slot_id]` carries the orbit offset /
+    scale / pivot to apply to that slot's rect; `hidden` lists slots to skip this
+    frame. With an auxiliary slot the object shows through whichever slot sits on
+    the depth-correct side of the character (upper when near / in front, lower
+    when far / behind) and the other is hidden, so the single object swaps in
+    front of / behind the character without reordering the static stack.
+    """
+    overrides: dict[int, _OrbitDrawPlan] = {}
+    hidden: set[int] = set()
+    for layer in state.layers:
+        if not layer_has_active_orbit(layer):
+            continue
+        st = compute_orbit_state(layer, time_s)
+        plan = _OrbitDrawPlan(
+            source_slot_id=layer.slot_id,
+            offset_x=st.offset_x,
+            offset_y=st.offset_y,
+            scale=st.scale,
+            pivot_u=clamp_swing_pivot_u(layer.orbit_pivot_u),
+            pivot_v=clamp_swing_pivot_v(layer.orbit_pivot_v))
+        aux_id = layer.orbit_aux_slot_id
+        aux_layer = find_layer_slot(state, aux_id) if aux_id is not None else None
+        if aux_layer is None or aux_id == layer.slot_id:
+            overrides[layer.slot_id] = plan
+            continue
+        upper_id, lower_id = orbit_upper_lower_slot_ids(layer, aux_layer)
+        shown_id = upper_id if st.in_front else lower_id
+        hidden_id = lower_id if st.in_front else upper_id
+        overrides[shown_id] = plan
+        hidden.add(hidden_id)
+    return overrides, hidden
+
+
+def apply_orbit_to_resolved(
+        state: BasicLayersState,
+        resolved: dict[int, ResolvedLayerRect],
+        binding_context: BindingContext,
+        canvas_width: int,
+        canvas_height: int,
+        *,
+        local_rects: Optional[dict[int, ResolvedLayerRect]] = None) -> dict[int, ResolvedLayerRect]:
+    motion_time_s = binding_context.motion_time_s
+    if motion_time_s is None:
+        return resolved
+    overrides, hidden = compute_orbit_render_plan(state, motion_time_s)
+    if not overrides and not hidden:
+        return resolved
+    if local_rects is None:
+        local_rects = {}
+    pre_orbit = dict(resolved)
+    sx = float(canvas_width) / float(LAYER_COORD_SIZE)
+    sy = float(canvas_height) / float(LAYER_COORD_SIZE)
+    for slot_id, plan in overrides.items():
+        source_bound = pre_orbit.get(plan.source_slot_id)
+        base_rect = source_bound if source_bound is not None else pre_orbit.get(slot_id)
+        if base_rect is None:
+            continue
+        shift_x = 0.0
+        shift_y = 0.0
+        local_rect = local_rects.get(plan.source_slot_id)
+        if source_bound is not None and local_rect is not None:
+            shift_x, shift_y = orbit_binding_shift(source_bound, local_rect)
+        pivot_x = plan.pivot_u * float(canvas_width) + shift_x
+        pivot_y = plan.pivot_v * float(canvas_height) + shift_y
+        source_layer = find_layer_slot(state, plan.source_slot_id)
+        follow_rot = (
+            orbit_binding_follow_rotation_deg(source_layer, state, binding_context)
+            if source_layer is not None else 0.0)
+        offset_x = plan.offset_x * sx
+        offset_y = plan.offset_y * sy
+        offset_x, offset_y = rotate_orbit_plane_offsets(
+            offset_x, offset_y, follow_rot)
+        center_x = pivot_x + offset_x
+        center_y = pivot_y + offset_y
+        width = max(1.0, base_rect.draw_width * plan.scale)
+        height = max(1.0, base_rect.draw_height * plan.scale)
+        new_rect = LayerGeometryResolver._rect_from_center(
+            slot_id, center_x, center_y, width, height)
+        new_rect.smoothed_rotation_deg = base_rect.smoothed_rotation_deg
+        resolved[slot_id] = new_rect
+    for slot_id in hidden:
+        resolved.pop(slot_id, None)
+    strip_orbit_requisitioned_native_rects(state, resolved, set(overrides))
+    return resolved
+
+
 def resolve_layer_rects(
         state: BasicLayersState,
         asset_loader: Callable[[BasicLayerSlot], Optional[wx.Image]],
@@ -1713,16 +2546,30 @@ def resolve_layer_rects(
         canvas_height: int,
         binding_context: Optional[BindingContext] = None,
         *,
-        binding_smoother: Optional[LayerBindingSmoother] = None) -> dict[int, ResolvedLayerRect]:
+        binding_smoother: Optional[LayerBindingSmoother] = None,
+        include_motion: bool = True) -> dict[int, ResolvedLayerRect]:
+    geometry_context = binding_context_for_layer_geometry(
+        binding_context, include_motion=include_motion)
+    local_rects = resolve_local_layer_rects(
+        state, asset_loader, canvas_width, canvas_height)
     resolved = LayerGeometryResolver.resolve_all(
-        state, asset_loader, canvas_width, canvas_height, binding_context)
-    if binding_context is None:
+        state, asset_loader, canvas_width, canvas_height, geometry_context)
+    if geometry_context is None:
         return resolved
     if binding_smoother is None:
-        binding_smoother = binding_context.binding_smoother
-    if binding_smoother is None:
-        return resolved
-    return binding_smoother.apply(state, resolved, binding_context)
+        binding_smoother = geometry_context.binding_smoother
+    if binding_smoother is not None:
+        resolved = binding_smoother.apply(state, resolved, geometry_context)
+    resolved = apply_orbit_to_resolved(
+        state,
+        resolved,
+        geometry_context,
+        canvas_width,
+        canvas_height,
+        local_rects=local_rects)
+    if geometry_context is None or geometry_context.motion_time_s is None:
+        strip_orbit_requisitioned_native_rects(state, resolved)
+    return resolved
 
 
 def resolved_layer_rotation_deg(
@@ -2075,13 +2922,22 @@ class LayerCompositor:
             binding_context: Optional[BindingContext] = None) -> None:
         resolved = resolve_layer_rects(
             state, asset_loader, canvas_width, canvas_height, binding_context)
+        orbit_plan, hidden_slots = orbit_frame_plan(state, binding_context)
         for layer in state.sorted_layers_for_draw(occlusion):
-            image = asset_loader(layer)
-            rect = resolved.get(layer.slot_id)
-            if image is None or rect is None:
+            if not layer.enabled:
+                continue
+            draw_pair = resolve_stack_layer_draw(
+                state, layer, resolved, orbit_plan, hidden_slots)
+            if draw_pair is None:
+                continue
+            draw_layer, rect = draw_pair
+            if not draw_layer.visible:
+                continue
+            image = asset_loader(draw_layer)
+            if image is None:
                 continue
             cls.draw_layer_on_dc(
-                dc, layer, rect, image=image,
+                dc, draw_layer, rect, image=image,
                 binding_context=binding_context, layers_state=state)
 
     @classmethod
@@ -2105,18 +2961,24 @@ class LayerCompositor:
             canvas_width,
             canvas_height,
             binding_context)
-        for pos in DRAW_STACK_BOTTOM_TO_TOP:
-            if pos == CHARACTER_STACK_POS:
+        orbit_plan, hidden_slots = orbit_frame_plan(state, binding_context)
+        character_pos = state.character_stack_position
+        for pos in range(state.total_stack_positions):
+            if pos == character_pos:
                 dc.DrawBitmap(character_bitmap, 0, 0, True)
                 continue
             layer = layer_at_stack_position(state, pos)
-            if layer is None or not layer.enabled or not layer.visible or not layer.asset_path:
+            if layer is None or not layer.enabled:
                 continue
-            rect = resolved.get(layer.slot_id)
-            if rect is None:
+            draw_pair = resolve_stack_layer_draw(
+                state, layer, resolved, orbit_plan, hidden_slots)
+            if draw_pair is None:
+                continue
+            draw_layer, rect = draw_pair
+            if not draw_layer.visible:
                 continue
             cls.draw_layer_on_dc(
-                dc, layer, rect, asset_cache=asset_cache,
+                dc, draw_layer, rect, asset_cache=asset_cache,
                 binding_context=binding_context, layers_state=state)
         return resolved
 
@@ -2132,19 +2994,27 @@ class LayerCompositor:
             binding_context: Optional[BindingContext] = None) -> None:
         resolved = resolve_layer_rects(
             state, asset_loader, canvas_width, canvas_height, binding_context)
-        for pos in DRAW_STACK_BOTTOM_TO_TOP:
-            if pos == CHARACTER_STACK_POS:
+        orbit_plan, hidden_slots = orbit_frame_plan(state, binding_context)
+        character_pos = state.character_stack_position
+        for pos in range(state.total_stack_positions):
+            if pos == character_pos:
                 draw_character()
                 continue
             layer = layer_at_stack_position(state, pos)
-            if layer is None or not layer.enabled or not layer.visible or not layer.asset_path:
+            if layer is None or not layer.enabled:
                 continue
-            image = asset_loader(layer)
-            rect = resolved.get(layer.slot_id)
-            if image is None or rect is None:
+            draw_pair = resolve_stack_layer_draw(
+                state, layer, resolved, orbit_plan, hidden_slots)
+            if draw_pair is None:
+                continue
+            draw_layer, rect = draw_pair
+            if not draw_layer.visible:
+                continue
+            image = asset_loader(draw_layer)
+            if image is None:
                 continue
             cls.draw_layer_on_dc(
-                dc, layer, rect, image=image,
+                dc, draw_layer, rect, image=image,
                 binding_context=binding_context, layers_state=state)
 
     @staticmethod
@@ -2158,19 +3028,25 @@ class LayerCompositor:
             binding_context: Optional[BindingContext] = None) -> Optional[int]:
         resolved = resolve_layer_rects(
             state, asset_loader, canvas_width, canvas_height, binding_context)
+        orbit_plan, hidden_slots = orbit_frame_plan(state, binding_context)
         hit_slot: Optional[int] = None
-        for pos in DRAW_STACK_BOTTOM_TO_TOP:
-            if pos == CHARACTER_STACK_POS:
+        character_pos = state.character_stack_position
+        for pos in range(state.total_stack_positions):
+            if pos == character_pos:
                 continue
             layer = layer_at_stack_position(state, pos)
-            if layer is None or not layer.enabled or not layer.visible or not layer.asset_path:
+            if layer is None or not layer.enabled:
                 continue
-            rect = resolved.get(layer.slot_id)
-            if rect is None:
+            draw_pair = resolve_stack_layer_draw(
+                state, layer, resolved, orbit_plan, hidden_slots)
+            if draw_pair is None:
+                continue
+            draw_layer, rect = draw_pair
+            if not draw_layer.visible:
                 continue
             if (rect.draw_x <= x <= rect.draw_x + rect.draw_width
                     and rect.draw_y <= y <= rect.draw_y + rect.draw_height):
-                hit_slot = layer.slot_id
+                hit_slot = orbit_selection_slot_id(layer.slot_id, orbit_plan)
         return hit_slot
 
     @staticmethod
@@ -2232,20 +3108,25 @@ def _load_layers_from_slot_files(
         directory: str,
         resolve_path: Callable[[Optional[str]], Optional[str]]) -> list[BasicLayerSlot]:
     layers: list[BasicLayerSlot] = []
-    for slot_id in range(NUM_BASIC_LAYERS):
+    slot_ids: list[int] = []
+    try:
+        for name in os.listdir(directory):
+            match = re.fullmatch(r"layer_(\d+)\.json", name)
+            if match:
+                slot_ids.append(int(match.group(1)))
+    except OSError:
+        return []
+    for slot_id in sorted(slot_ids):
         slot_path = os.path.join(directory, f"layer_{slot_id}.json")
-        if os.path.isfile(slot_path):
-            try:
-                with open(slot_path, encoding="utf-8") as fp:
-                    item = json.load(fp)
-                layer = BasicLayerSlot.from_dict(item, slot_id)
-                if layer.asset_path:
-                    layer.asset_path = resolve_path(layer.asset_path)
-                layers.append(layer)
-                continue
-            except Exception:
-                pass
-        layers.append(default_basic_layer_slot(slot_id))
+        try:
+            with open(slot_path, encoding="utf-8") as fp:
+                item = json.load(fp)
+            layer = BasicLayerSlot.from_dict(item, slot_id)
+            if layer.asset_path:
+                layer.asset_path = resolve_path(layer.asset_path)
+            layers.append(layer)
+        except Exception:
+            continue
     return layers
 
 
@@ -2253,9 +3134,22 @@ def save_basic_layers_state(
         state: BasicLayersState,
         ui_state_file_path: str,
         relativize_path: Callable[[Optional[str]], Optional[str]]) -> None:
+    sanitize_layer_references(state)
     directory = get_basic_layers_directory(ui_state_file_path)
     os.makedirs(directory, exist_ok=True)
     manifest_layers = []
+    live_slot_ids = {layer.slot_id for layer in state.layers}
+    # Drop stale per-slot files left behind by deleted layers.
+    try:
+        for name in os.listdir(directory):
+            match = re.fullmatch(r"layer_(\d+)\.json", name)
+            if match and int(match.group(1)) not in live_slot_ids:
+                try:
+                    os.remove(os.path.join(directory, name))
+                except OSError:
+                    pass
+    except OSError:
+        pass
     for layer in state.layers:
         slot_path = os.path.join(directory, f"layer_{layer.slot_id}.json")
         layer_dict = layer.to_dict()
@@ -2302,27 +3196,36 @@ def load_basic_layers_state(
     layers = _load_layers_from_slot_files(directory, resolve_path)
     state = BasicLayersState(layers=layers)
     normalize_layer_stack_positions(state)
+    sanitize_layer_references(state)
     return state
 
 
 def move_layer_z_order(state: BasicLayersState, slot_id: int, delta: int) -> bool:
-    """Move layer in unified stack (+1 = toward top / in front of character)."""
-    layer = state.get_slot(slot_id)
-    positions = list(LAYER_STACK_POSITIONS)
-    try:
-        idx = positions.index(layer.z_order)
-    except ValueError:
-        normalize_layer_stack_positions(state)
-        idx = positions.index(state.get_slot(slot_id).z_order)
-    new_idx = idx + delta
-    if new_idx < 0 or new_idx >= len(positions):
+    """Move a layer one step in the unified stack (+1 = toward top / in front of
+    character). Crossing the character flips behind<->front. Works for any layer
+    count by swapping with the adjacent stack item (layer or character)."""
+    if delta == 0:
         return False
-    target_pos = positions[new_idx]
-    other = next((item for item in state.layers if item.slot_id != slot_id and item.z_order == target_pos), None)
-    if other is not None:
-        other.z_order, layer.z_order = layer.z_order, target_pos
-        other.occlusion = occlusion_for_stack_position(other.z_order)
-    else:
-        layer.z_order = target_pos
-    layer.occlusion = occlusion_for_stack_position(layer.z_order)
+    normalize_layer_stack_positions(state)
+    layer = state.get_slot(slot_id)
+    total = state.total_stack_positions
+    char_pos = state.character_stack_position
+    # Bottom-to-top sequence: index -> layer slot, with the character sentinel.
+    sequence: list[object] = [None] * total
+    sequence[char_pos] = "__character__"
+    for item in state.layers:
+        if 0 <= item.z_order < total:
+            sequence[item.z_order] = item
+    idx = layer.z_order
+    step = 1 if delta > 0 else -1
+    target = idx + step
+    if target < 0 or target >= total:
+        return False
+    sequence[idx], sequence[target] = sequence[target], sequence[idx]
+    new_char_pos = sequence.index("__character__")
+    for pos, item in enumerate(sequence):
+        if item == "__character__" or item is None:
+            continue
+        item.z_order = pos
+        item.occlusion = OCCLUSION_BEHIND if pos < new_char_pos else OCCLUSION_FRONT
     return True

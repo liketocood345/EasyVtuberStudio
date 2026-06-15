@@ -1,4 +1,4 @@
-﻿# 改动列表 / Change Log
+# 改动列表 / Change Log
 
 相对于 THA4 原版 `character_model_mediapipe_puppeteer.py`（固定 `VideoCapture(0)`、无视频源选择、单窗口布局）。
 
@@ -7,6 +7,45 @@
 **代码包历史快照：** `face-puppeteer-ui-enhancements-ai-code/his/`
 
 ---
+
+---
+
+## 2026-06-15
+
+> 详尽设计/排障记录见研发手册 `record/easyvtuberstudio条目设计手册.md`（圆周运动、ix-023/ix-025 校准、窗口捕获）。本节为面向发布的汇总。
+
+### 图层 · 圆周运动 · 无限层扩展
+
+| # | 改动 |
+|---|------|
+| G1 | **圆周运动**：图层 **运动 → 圆周运动**；轨道中心/半径/速度/平面倾斜/近远缩放；**同步/反向跟转** 倾斜轨道 |
+| G2 | **辅助槽征用**：运动图层可征用另一槽位堆叠顺序实现前后遮挡切换；辅助槽仅借 z 序，**不**交替显示两图层素材；不可选另一圆周图层作辅助 |
+| G3 | **轨道编辑 UI**：选中圆周图层显示轨道环 + 绑定点（非方框）；拖轨道改 `orbit_pivot`；`numpy_edit_chrome` / `layer_interaction` 专用路径 |
+| G4 | **绑定+轨道**：`orbit_binding_shift` 轨道中心随绑定移动；编辑高亮/点选不含运动相位 |
+| G5 | **堆栈通用化**：`collect_stack_layer_draws` / `resolve_stack_layer_draw` 支持动态槽位增删（L2 基础） |
+
+### 鼠标面捕 · 三区校准
+
+| # | 改动 |
+|---|------|
+| C1 | **中心区一致**：示意图/区内外判定/face_size 统一 `clamped_to_surface()`；手拖区同步 `gaze_neutral` |
+| C2 | **三条校准界限（ix-025）**：path A 标定朝向；path B 摄像头动态增强；Mouse ix-023（同按钮 + UI-B07 周期）；周期 = 自动点对应按钮 |
+| C3 | **校准后中性点**：`mouse_center_zone_calibration_point` 与 fitted 区中心对齐，避免贴边错位 |
+
+### 窗口捕获 · 长时性能
+
+| # | 改动 |
+|---|------|
+| W1 | **抓取方式缓存**：稳定后单路径 PrintWindow/BitBlt，不再每帧三连试 + 全图亮度评分 |
+| W2 | **worker 优化**：长边缩至 1280 再面捕；抓取 ≥0.35s 清缓存换路径；同帧跳过重复 MediaPipe |
+| W3 | **`smoke_window_capture.py`**：缩略图亮度与缓存失效无 GUI 回归 |
+
+### 文档与维护
+
+| # | 改动 |
+|---|------|
+| D1 | **`docs/CODEBASE_MAP.md`**、**`docs/BUG_HOTSPOT_CHECKLIST.md`** 入库；`DOC_INDEX` / `HANDOVER` 链入 |
+| D2 | **`refresh_bug_hotspot_checklist.ps1`** + git hooks；`sync_develop_to_fork` 同步前刷新热点清单 |
 
 ---
 

@@ -9,7 +9,7 @@ import numpy
 EXPERIMENT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(EXPERIMENT_DIR))
 
-from numpy_edit_chrome import render_selection_chrome_rgba
+from numpy_edit_chrome import render_orbit_edit_chrome_rgba, render_selection_chrome_rgba
 
 
 def test_chrome_outline_drawn() -> None:
@@ -18,8 +18,8 @@ def test_chrome_outline_drawn() -> None:
         canvas_w, canvas_h, (20.0, 20.0, 60.0, 60.0),
         highlight_rgb=(255, 200, 0))
     assert chrome.shape == (canvas_h, canvas_w, 4)
-    # interior of the rectangle is transparent (outline only, not filled)
-    assert int(chrome[50, 50, 3]) == 0
+    # interior uses minimal drag alpha (not fully transparent on layered output)
+    assert int(chrome[50, 50, 3]) == 1
     # the top edge near y=20 has opaque highlight pixels
     top_edge = chrome[18:23, 25:75, 3]
     assert int(top_edge.max()) == 255
@@ -56,11 +56,32 @@ def test_chrome_empty_when_offscreen() -> None:
     assert int(chrome[:, :, 3].max()) == 0
 
 
+def test_orbit_chrome_draws_path_and_bind_point() -> None:
+    canvas_w = canvas_h = 256
+    path = [
+        (80.0, 128.0),
+        (128.0, 80.0),
+        (176.0, 128.0),
+        (128.0, 176.0),
+    ]
+    chrome = render_orbit_edit_chrome_rgba(
+        canvas_w,
+        canvas_h,
+        path,
+        pivot_xy=(128.0, 128.0),
+        bind_xy=(100.0, 140.0),
+        highlight_rgb=(255, 200, 0))
+    assert chrome.shape == (canvas_h, canvas_w, 4)
+    assert int(chrome[128, 80:176, 3].max()) == 255
+    assert int(chrome[140, 100, 3]) == 255
+
+
 def main() -> None:
     test_chrome_outline_drawn()
     test_chrome_handle_filled_bottom_right()
     test_chrome_rotation_changes_pixels()
     test_chrome_empty_when_offscreen()
+    test_orbit_chrome_draws_path_and_bind_point()
     print("smoke_edit_chrome_ok")
 
 

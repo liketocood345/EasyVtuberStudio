@@ -126,6 +126,7 @@ from mouse_mocap_driver import (
     extract_head_roll_degrees,
     face_size_from_zone_distance,
     is_mouse_inside_center_zone,
+    mouse_center_zone_calibration_point,
     normalize_mocap_input_mode,
     zone_local_coords,
 )
@@ -155,7 +156,10 @@ from layer_runtime import (
     BODY_BIND_LEAN_FOLLOW_GAIN,
     contrast_highlight_colour,
     basic_layers_state_has_active_motion,
+    compute_orbit_edit_geometry,
+    layer_uses_orbit_edit_chrome,
     load_basic_layers_state,
+    OrbitEditGeometry,
     resolve_layer_rects,
     resolved_layer_rotation_deg,
     save_basic_layers_state,
@@ -163,8 +167,10 @@ from layer_runtime import (
 from layer_interaction import (
     LayerEditMode,
     apply_move_delta,
+    apply_orbit_pivot_canvas_delta,
     apply_scale_from_drag,
     hit_test_layer_edit,
+    hit_test_orbit_edit,
     hit_test_resolved_rect,
     nudge_layer,
     panel_to_layer_delta,
@@ -198,7 +204,11 @@ from transparent_capture_window import (
     _straight_rgba_to_premultiplied_bgra,
 )
 from numpy_layer_compositor import compose_full_stack_rgba
-from numpy_edit_chrome import DEFAULT_HIGHLIGHT_RGB, render_selection_chrome_rgba
+from numpy_edit_chrome import (
+    DEFAULT_HIGHLIGHT_RGB,
+    render_orbit_edit_chrome_rgba,
+    render_selection_chrome_rgba,
+)
 from output_backends import resolve_output_backend
 
 _PERF_LOG_PATH = r"e:\debug-3353ed.log"
@@ -957,6 +967,9 @@ class MainFrame(wx.Frame):
     MIN_OUT_PRESENT_HZ = 12
     HOVER_HELP_DELAY_MS = 1000
     MEDIAPIPE_MIN_INTERVAL_MS = 33
+    WINDOW_CAPTURE_MOCAP_MAX_EDGE = 1280
+    WINDOW_CAPTURE_STALL_SEC = 0.35
+    WINDOW_CAPTURE_MEDIAPIPE_INTERVAL_MS = 50
     # Shared cadence for continuously-refreshing animated UI in the controls and
     # layer windows (FPS text, scale-curve preview, spine diagram): 40ms = 25 fps,
     # within the 20-30 fps band. The output window is NOT throttled by this.
@@ -1006,6 +1019,11 @@ class MainFrame(wx.Frame):
         self._image_file_path: Optional[str] = None
         self._window_capture_hwnd: Optional[int] = None
         self._window_capture_title: Optional[str] = None
+        self._window_capture_lock = threading.Lock()
+        self._window_capture_latest_frame = None
+        self._window_capture_frame_serial = 0
+        self._last_mediapipe_capture_serial = -1
+        self._window_capture_worker_active = False
         self._last_good_webcam_bgr_frame = None
         self._capture_frame_serial = 0
         self._last_mediapipe_process_time = 0.0
@@ -1289,7 +1307,6 @@ class MainFrame(wx.Frame):
             self.resolve_persistent_output_background_image_path(persisted))
         self._layer_blend_enabled_state = ValueState(False)
         self._layer_force_full_follow_state = ValueState(False)
-        self._unlimited_layers_enabled_state = ValueState(False)
         self._invert_tilt_mapping_state = ValueState(True)
         self.antialias_strength_spin = ValueState(1.00)
         self.character_edge_mode_state = ValueState(CHARACTER_EDGE_NONE)
@@ -1350,10 +1367,6 @@ class MainFrame(wx.Frame):
             "layer_force_full_follow_checkbox",
             self._layer_force_full_follow_state,
             default=False)
-
-    def is_unlimited_layers_enabled(self) -> bool:
-        return self._safe_checkbox_value(
-            "unlimited_layers_enabled_checkbox", self._unlimited_layers_enabled_state, default=False)
 
     def is_body_tilt_opposite_to_head_enabled(self) -> bool:
         """Body segment tilt opposite to head segment (model body_z vs neck_z, spine lower vs upper)."""
@@ -1577,11 +1590,16 @@ class MainFrame(wx.Frame):
         active = sum(
             1 for layer in self.basic_layers_state.layers
             if layer.asset_path and layer.visible and layer.enabled)
-        selected = self.basic_layers_state.selected_slot_id
-        selected_text = f"L{(selected + 1)}" if selected is not None else "—"
+        selected_text = "—"
+        window = self._get_basic_layer_window()
+        if window is not None and window.IsShown():
+            selected_text = window.format_selection_status()
+        elif self.basic_layers_state.selected_slot_id is not None:
+            sid = self.basic_layers_state.selected_slot_id
+            selected_text = f"L{sid + 1}"
         hidden_hint = ""
         if not self._basic_layer_window_visible():
-            hidden_hint = "；图层窗已隐藏，点下方「打开五层图层窗」/ hidden — use Open Layer Editor"
+            hidden_hint = "；图层窗已隐藏，点下方「打开图层窗」/ hidden — use Open Layer Editor"
         self.layer_blend_status_text.SetLabel(
             f"已启用：{active} 个图层；选中 {selected_text}{hidden_hint} / "
             f"Enabled: {active} layer(s); selected {selected_text}")
@@ -1643,6 +1661,15 @@ class MainFrame(wx.Frame):
             return
         self.clear_layer_selection()
 
+    def _output_edit_slot_id(self) -> Optional[int]:
+        """Layer slot editable on the output surface; None when none or multi-select."""
+        if not self.is_layer_blend_enabled():
+            return None
+        window = self._get_basic_layer_window()
+        if window is not None and window.IsShown():
+            return window.get_output_edit_slot_id()
+        return self.basic_layers_state.selected_slot_id
+
     def clear_layer_selection(self) -> None:
         if getattr(self, "_controls_build_in_progress", False):
             return
@@ -1650,12 +1677,15 @@ class MainFrame(wx.Frame):
             return
         if getattr(self, "_suppress_layer_deselect", False):
             return
-        if self.basic_layers_state.selected_slot_id is None:
+        window = self._get_basic_layer_window()
+        has_selection = self.basic_layers_state.selected_slot_id is not None
+        if window is not None and window.IsShown():
+            has_selection = has_selection or bool(window.get_selected_slot_ids())
+        if not has_selection:
             return
         self.basic_layers_state.selected_slot_id = None
-        window = self._get_basic_layer_window()
         if window is not None:
-            window.apply_selection(None)
+            window.clear_all_selection()
         if self.last_output_wx_image is not None:
             self.draw_cached_result_image(self.last_banner_text)
             self._maybe_schedule_transparent_capture_update(immediate=True)
@@ -1787,24 +1817,6 @@ class MainFrame(wx.Frame):
             self.draw_cached_result_image(self.last_banner_text)
         self.save_persistent_ui_state()
         event.Skip()
-
-    def on_unlimited_layers_changed(self, event: wx.Event):
-        """Placeholder for L2; persists checkbox state only."""
-        self._safe_checkbox_value(
-            "unlimited_layers_enabled_checkbox", self._unlimited_layers_enabled_state)
-        self.refresh_unlimited_layers_status()
-        self.save_persistent_ui_state()
-        event.Skip()
-
-    def refresh_unlimited_layers_status(self) -> None:
-        if not hasattr(self, "unlimited_layers_status_text"):
-            return
-        if self.is_unlimited_layers_enabled():
-            self.unlimited_layers_status_text.SetLabel(
-                "已勾选（功能尚未开放，L2 实现）/ Checked (not available yet; reserved for L2)")
-        else:
-            self.unlimited_layers_status_text.SetLabel(
-                "无限图层系统尚未开放 / Unlimited layers not available yet")
 
     def on_close(self, event: wx.Event):
         self._is_closing = True
@@ -3848,24 +3860,52 @@ class MainFrame(wx.Frame):
         if not self.is_layer_blend_enabled():
             self._last_edit_chrome_geom = None
             return None
-        selected = self.basic_layers_state.selected_slot_id
-        if selected is None or selected < 0:
+        selected = self._output_edit_slot_id()
+        if selected is None:
             self._last_edit_chrome_geom = None
             return None
         canvas_width = max(1, int(canvas_width))
         canvas_height = max(1, int(canvas_height))
         binding_context = self._make_binding_context(canvas_width, canvas_height)
+        layer = self.basic_layers_state.get_slot(selected)
+        try:
+            colour = self.get_layer_selection_highlight_colour(
+                canvas_width, canvas_height)
+            highlight = (colour.Red(), colour.Green(), colour.Blue())
+        except Exception:
+            highlight = DEFAULT_HIGHLIGHT_RGB
+
+        if layer_uses_orbit_edit_chrome(layer):
+            orbit_geom = compute_orbit_edit_geometry(
+                self.basic_layers_state,
+                layer,
+                self.layer_asset_cache.load_image,
+                canvas_width,
+                canvas_height,
+                binding_context)
+            if orbit_geom is None:
+                self._last_edit_chrome_geom = None
+                return None
+            self._last_edit_chrome_geom = orbit_geom
+            return render_orbit_edit_chrome_rgba(
+                canvas_width,
+                canvas_height,
+                orbit_geom.path_points,
+                orbit_geom.pivot_xy,
+                orbit_geom.bind_xy,
+                highlight_rgb=highlight)
+
         resolved = resolve_layer_rects(
             self.basic_layers_state,
             self.layer_asset_cache.load_image,
             canvas_width,
             canvas_height,
-            binding_context)
+            binding_context,
+            include_motion=False)
         rect = resolved.get(selected)
         if rect is None:
             self._last_edit_chrome_geom = None
             return None
-        layer = self.basic_layers_state.get_slot(selected)
         rotation_deg = resolved_layer_rotation_deg(
             layer, self.basic_layers_state, rect, binding_context)
         # Cache the exact drawn box so the layered-output hit-test can match the
@@ -3875,12 +3915,6 @@ class MainFrame(wx.Frame):
         self._last_edit_chrome_geom = (
             int(selected), rect, float(rotation_deg),
             int(canvas_width), int(canvas_height))
-        try:
-            colour = self.get_layer_selection_highlight_colour(
-                canvas_width, canvas_height)
-            highlight = (colour.Red(), colour.Green(), colour.Blue())
-        except Exception:
-            highlight = DEFAULT_HIGHLIGHT_RGB
         return render_selection_chrome_rgba(
             canvas_width,
             canvas_height,
@@ -4550,7 +4584,6 @@ class MainFrame(wx.Frame):
         scale_calibration_interval_seconds = self.auto_scale_calibration_interval_seconds_ctrl.GetValue()
         layer_blend_enabled = self.is_layer_blend_enabled()
         layer_force_full_follow = self.is_layer_force_full_follow_enabled()
-        unlimited_layers_enabled = self.is_unlimited_layers_enabled()
         output_frame_interpolation = self.get_output_frame_interpolation_multiplier()
         mouth_infer_cap_hz = self.get_mouth_infer_cap_hz()
         smooth_affine_30hz = self.is_smooth_affine_30hz_enabled()
@@ -4579,7 +4612,6 @@ class MainFrame(wx.Frame):
             "spine_neck_anchor_ratio": self.get_spine_neck_anchor_ratio(),
             "spine_body_bind_ray_percent": self.get_spine_body_bind_ray_percent(),
             "spine_head_bind_ray_percent": self.get_spine_head_bind_ray_percent(),
-            "unlimited_layers_enabled": unlimited_layers_enabled,
             "output_frame_interpolation": output_frame_interpolation,
             "mouth_infer_cap_hz": mouth_infer_cap_hz,
             "smooth_affine_30hz": smooth_affine_30hz,
@@ -4736,14 +4768,6 @@ class MainFrame(wx.Frame):
                     self.layer_force_full_follow_checkbox.SetValue(value)
                 except RuntimeError:
                     pass
-        if "unlimited_layers_enabled" in data:
-            value = bool(data["unlimited_layers_enabled"])
-            self._unlimited_layers_enabled_state.SetValue(value)
-            if self._wx_control_alive(getattr(self, "unlimited_layers_enabled_checkbox", None)):
-                try:
-                    self.unlimited_layers_enabled_checkbox.SetValue(value)
-                except RuntimeError:
-                    pass
         if "output_frame_interpolation" in data:
             multiplier = output_frame_interp.normalize_multiplier(data["output_frame_interpolation"])
             control = getattr(self, "output_frame_interpolation_choice", None)
@@ -4796,7 +4820,6 @@ class MainFrame(wx.Frame):
         self.on_display_transform_control_changed()
         wx.CallAfter(self.apply_layer_blend_visibility)
         wx.CallAfter(self.update_character_edge_controls_visibility)
-        wx.CallAfter(self.refresh_unlimited_layers_status)
         wx.CallAfter(self.sync_transparent_capture_output_window)
         if self.get_controls_window() is not None:
             wx.CallAfter(self._apply_persisted_controls_layout)
@@ -4857,7 +4880,6 @@ class MainFrame(wx.Frame):
             "output_transparent_capture_hint",
             "character_edge_hint_text",
             "layer_blend_status_text",
-            "unlimited_layers_status_text",
             "antialias_hint",
             "mouth_infer_cap_hint",
             "smooth_affine_hint",
@@ -5503,6 +5525,14 @@ class MainFrame(wx.Frame):
 
     def on_mouse_center_zone_changed(self, zone: MouseCenterZone) -> None:
         self._mouse_mocap_config.center_zone = zone.clamped_to_surface()
+        calib_nx, calib_ny = mouse_center_zone_calibration_point(self._mouse_mocap_config.center_zone)
+        self._mouse_mocap_config.gaze_neutral_nx = calib_nx
+        self._mouse_mocap_config.gaze_neutral_ny = calib_ny
+        if self.neutral_face_screen_motion is not None:
+            self.update_neutral_output_enhancement(FaceScreenMotion(
+                center_x=calib_nx,
+                center_y=calib_ny,
+                face_size=self.neutral_face_screen_motion.face_size))
         if hasattr(self, "mouse_zone_panel"):
             self.mouse_zone_panel.set_zone(self._mouse_mocap_config.center_zone, refresh=False)
         self.save_persistent_ui_state()
@@ -5536,28 +5566,47 @@ class MainFrame(wx.Frame):
         self.save_persistent_ui_state()
         event.Skip()
 
-    def calibrate_mouse_dynamic_enhancement(self, nx: float, ny: float) -> bool:
-        """Calibrate neutral enhancement; move center-zone center to mouse without resizing the zone."""
+    def calibrate_mouse_dynamic_enhancement(
+            self,
+            nx: float,
+            ny: float,
+            *,
+            calibration_time: Optional[float] = None) -> bool:
+        """Mouse ix-023: path B (zone/gaze/neutral) + path A at calibrated forward gaze."""
+        return self._calibrate_mouse_dynamic_enhancement_ix023(
+            nx,
+            ny,
+            calibration_time=calibration_time)
+
+    def _calibrate_mouse_dynamic_enhancement_ix023(
+            self,
+            nx: float,
+            ny: float,
+            *,
+            calibration_time: Optional[float] = None) -> bool:
+        """ix-023 body shared by UI-A02/A10 manual click and UI-B07 periodic auto-click."""
         zone = self._mouse_mocap_config.center_zone.clamped_to_surface()
-        face_size = face_size_from_zone_distance(nx, ny, zone)
-        motion = FaceScreenMotion(center_x=nx, center_y=ny, face_size=face_size)
+        self._mouse_mocap_config.center_zone = zone.with_center_at_preserving_size(nx, ny).clamped_to_surface()
+        calib_nx, calib_ny = mouse_center_zone_calibration_point(self._mouse_mocap_config.center_zone)
+        face_size = face_size_from_zone_distance(calib_nx, calib_ny, self._mouse_mocap_config.center_zone)
+        motion = FaceScreenMotion(center_x=calib_nx, center_y=calib_ny, face_size=face_size)
         self.update_neutral_output_enhancement(motion)
-        self._mouse_mocap_config.center_zone = zone.with_center_at_preserving_size(nx, ny)
         if hasattr(self, "mouse_zone_panel"):
             self.mouse_zone_panel.set_zone(self._mouse_mocap_config.center_zone)
 
-        self._mouse_mocap_config.gaze_neutral_nx = clamp(nx, -1.0, 1.0)
-        self._mouse_mocap_config.gaze_neutral_ny = clamp(ny, -1.0, 1.0)
-        time_now = time.time()
+        self._mouse_mocap_config.gaze_neutral_nx = calib_nx
+        self._mouse_mocap_config.gaze_neutral_ny = calib_ny
+        time_now = time.time() if calibration_time is None else calibration_time
         forward_pose, _, _ = build_mouse_mediapipe_face_pose(
             time_now,
             self._mouse_mocap_config,
-            nx=nx,
-            ny=ny)
+            nx=calib_nx,
+            ny=calib_ny)
         self.mediapipe_face_pose = forward_pose
         pose_converter = getattr(self, "pose_converter", None)
         if pose_converter is not None and hasattr(pose_converter, "apply_face_orientation_calibration"):
-            pose_converter.apply_face_orientation_calibration()
+            if pose_converter.apply_face_orientation_calibration():
+                self.last_direction_calibration_time = time_now
         roll_deg = extract_head_roll_degrees(forward_pose)
         self.neutral_head_roll_deg = roll_deg
         self.latest_head_roll_deg = roll_deg
@@ -5565,15 +5614,47 @@ class MainFrame(wx.Frame):
         self.last_scale_calibration_time = time_now
         return True
 
+    def _perform_output_dynamic_enhancement_calibration(
+            self,
+            *,
+            calibration_time: Optional[float] = None) -> bool:
+        """Path B manual body: camera = neutral pan/scale; mouse = ix-023 (includes path A at gaze neutral)."""
+        if self.is_mouse_audio_mocap_mode():
+            return self._calibrate_mouse_dynamic_enhancement_ix023(
+                self._last_mouse_mocap_nx,
+                self._last_mouse_mocap_ny,
+                calibration_time=calibration_time)
+        if self.latest_face_screen_motion is None:
+            return False
+        time_now = time.time() if calibration_time is None else calibration_time
+        self.update_neutral_output_enhancement(self.latest_face_screen_motion)
+        self.last_scale_calibration_time = time_now
+        return True
+
+    def _refresh_after_output_dynamic_enhancement_calibration(self) -> None:
+        self.refresh_scale_curve_status()
+        self.request_scale_curve_repaint(force=True)
+        self.update_display_transform_state(
+            snap_to_target=not self.enable_auto_transform_checkbox.GetValue())
+        self.refresh_auto_transform_status(
+            "READY" if self.enable_auto_transform_checkbox.GetValue() else "OFF")
+        if self.last_output_wx_image is not None:
+            self.draw_cached_result_image(self.last_banner_text)
+        self.save_persistent_ui_state()
+
     def maybe_apply_periodic_mouse_calibration(self, time_now: float, nx: float, ny: float) -> None:
+        """UI-B07: periodic auto-click of UI-A02/A10 in Mouse+Audio mode."""
+        del nx, ny  # same sample as _last_mouse_mocap_* used by _perform_output_dynamic_enhancement_calibration
         if not self.is_mouse_audio_mocap_mode() or not self._enable_mouse_auto_calibration:
             return
         interval_seconds = max(1.0, float(self._mouse_auto_calibration_interval_seconds))
-        if self.last_mouse_calibration_time is not None \
-                and time_now - self.last_mouse_calibration_time < interval_seconds:
+        if self.last_mouse_calibration_time is None:
+            self.last_mouse_calibration_time = time_now
             return
-        self.calibrate_mouse_dynamic_enhancement(nx, ny)
-        self.save_persistent_ui_state()
+        if time_now - self.last_mouse_calibration_time < interval_seconds:
+            return
+        if self._perform_output_dynamic_enhancement_calibration(calibration_time=time_now):
+            self._refresh_after_output_dynamic_enhancement_calibration()
 
     def _update_mouse_dynamic_enhancement_motion(
             self,
@@ -6369,6 +6450,24 @@ class MainFrame(wx.Frame):
         return MainFrame.get_windows_camera_device_names()
 
     @staticmethod
+    def limit_bgr_frame_for_mocap(
+            frame,
+            *,
+            max_edge: int = WINDOW_CAPTURE_MOCAP_MAX_EDGE) -> Optional[numpy.ndarray]:
+        """Downscale large window grabs before face detection to cut CPU/RAM churn."""
+        frame = MainFrame.normalize_bgr_frame(frame)
+        if frame is None:
+            return None
+        height, width = frame.shape[:2]
+        edge = max(height, width)
+        if edge <= max_edge:
+            return frame
+        scale = max_edge / float(edge)
+        new_width = max(16, int(round(width * scale)))
+        new_height = max(16, int(round(height * scale)))
+        return cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+    @staticmethod
     def normalize_bgr_frame(frame) -> Optional[numpy.ndarray]:
         if frame is None or not hasattr(frame, "size") or frame.size == 0:
             return None
@@ -6691,17 +6790,17 @@ class MainFrame(wx.Frame):
         if self.video_source_kind == "window":
             if self._window_capture_hwnd is None:
                 return None
-            try:
-                return window_capture.capture_window_client_bgr(self._window_capture_hwnd)
-            except Exception as exc:
-                if not getattr(self, "_window_capture_read_error", None):
-                    self._window_capture_read_error = repr(exc)
-                    _err_record(
-                        "H-WINCAP",
-                        "character_model_mediapipe_puppeteer_load_preview.py:read_capture_frame_bgr",
-                        exc,
-                        data={"hwnd": self._window_capture_hwnd})
-                return None
+            # PrintWindow/BitBlt window grabs can block for a long time when the
+            # target window is busy/hardware-accelerated, which would freeze the
+            # wx UI if done here (this runs on the UI-thread capture timer).
+            # Do the grab on a background worker (latest-wins) and only read the
+            # most recent frame so a stalled grab never blocks the UI.
+            self._ensure_window_capture_worker()
+            with self._window_capture_lock:
+                frame = self._window_capture_latest_frame
+                if frame is None:
+                    return None
+                return frame.copy()
 
         if self.video_source_kind == "image":
             if not self._image_file_path:
@@ -6759,6 +6858,8 @@ class MainFrame(wx.Frame):
         if not self.is_capture_source_active():
             return False
         interval_ms = MainFrame.MEDIAPIPE_MIN_INTERVAL_MS
+        if self.video_source_kind == "window":
+            interval_ms = max(interval_ms, MainFrame.WINDOW_CAPTURE_MEDIAPIPE_INTERVAL_MS)
         if not self.full_controls_expanded:
             interval_ms = max(interval_ms, 66)
         return (time_now - self._last_mediapipe_process_time) >= (interval_ms / 1000.0)
@@ -7037,12 +7138,17 @@ class MainFrame(wx.Frame):
         self.schedule_idle_capture_timer()
 
     def set_video_capture_window(self, hwnd: int, title: str):
+        previous_hwnd = self._window_capture_hwnd
         self.release_video_capture()
         self._image_file_path = None
+        if previous_hwnd is not None:
+            window_capture.invalidate_capture_method_cache(previous_hwnd)
         self._window_capture_hwnd = int(hwnd)
         self._window_capture_title = title.strip() or window_capture.get_window_title(int(hwnd))
+        window_capture.invalidate_capture_method_cache(self._window_capture_hwnd)
         self._last_good_webcam_bgr_frame = None
         self._window_invalid_autoswitch_attempted = False
+        self._last_mediapipe_capture_serial = -1
         self.persistent_ui_state["window_capture_hwnd"] = self._window_capture_hwnd
         self.persistent_ui_state["window_capture_title"] = self._window_capture_title
         self.save_persistent_ui_state()
@@ -7174,7 +7280,6 @@ class MainFrame(wx.Frame):
         character_edge_color_hex = self.normalize_background_hex(
             str(self.persistent_ui_state.get("character_edge_color_hex") or "#FFFFFF"),
             "#FFFFFF")
-        unlimited_layers_enabled = self.is_unlimited_layers_enabled()
         layer_force_full_follow = bool(self.persistent_ui_state.get("layer_force_full_follow", False))
         self._layer_force_full_follow_state.SetValue(layer_force_full_follow)
         antialias_strength = self.antialias_strength_spin.GetValue()
@@ -7389,30 +7494,12 @@ class MainFrame(wx.Frame):
 
         self.open_basic_layer_window_button = wx.Button(
             self.postprocess_panel,
-            label="打开五层图层窗 / Open Layer Editor")
+            label="打开图层窗 / Open Layer Editor")
         self.open_basic_layer_window_button.Bind(
             wx.EVT_BUTTON, self.on_open_basic_layer_window_clicked)
         self.postprocess_panel_sizer.Add(
             self.open_basic_layer_window_button,
             wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4).Expand())
-
-        self.unlimited_layers_enabled_checkbox = wx.CheckBox(
-            self.postprocess_panel,
-            label="启动无限图层系统 / Enable Unlimited Layer System")
-        self.unlimited_layers_enabled_checkbox.SetValue(unlimited_layers_enabled)
-        self._unlimited_layers_enabled_state.SetValue(unlimited_layers_enabled)
-        self.unlimited_layers_enabled_checkbox.Bind(wx.EVT_CHECKBOX, self.on_unlimited_layers_changed)
-        self.postprocess_panel_sizer.Add(
-            self.unlimited_layers_enabled_checkbox,
-            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
-
-        self.unlimited_layers_status_text = wx.StaticText(
-            self.postprocess_panel,
-            label="",
-            style=wx.ALIGN_LEFT)
-        self.postprocess_panel_sizer.Add(
-            self.unlimited_layers_status_text,
-            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT, 4).Expand())
 
         self.layer_force_full_follow_checkbox = wx.CheckBox(
             self.postprocess_panel,
@@ -7537,7 +7624,6 @@ class MainFrame(wx.Frame):
         self.postprocess_panel_sizer.Layout()
         self.apply_layer_blend_visibility()
         self.update_character_edge_controls_visibility()
-        self.refresh_unlimited_layers_status()
         wx.CallAfter(self.refresh_image_source_ui_visibility)
         wx.CallAfter(self.schedule_postprocess_layout_refresh)
 
@@ -7673,8 +7759,11 @@ class MainFrame(wx.Frame):
     def switch_to_compact_clicked(self, event: wx.Event):
         self.show_compact_launcher()
 
-    def _perform_head_orientation_calibration(self) -> bool:
-        """Model-input head offsets only; does not reset output dynamic enhancement."""
+    def _perform_head_orientation_calibration(
+            self,
+            *,
+            calibration_time: Optional[float] = None) -> bool:
+        """Path A only: converter head orientation; never resets output dynamic enhancement."""
         if self.latest_face_screen_motion is None:
             self.refresh_auto_transform_status("NO FACE")
             return False
@@ -7682,7 +7771,8 @@ class MainFrame(wx.Frame):
             self.refresh_auto_transform_status("NO FACE")
             return False
 
-        self.last_direction_calibration_time = time.time()
+        time_now = time.time() if calibration_time is None else calibration_time
+        self.last_direction_calibration_time = time_now
         self.refresh_auto_transform_status(
             "READY" if self.enable_auto_transform_checkbox.GetValue() else "OFF")
         self.save_persistent_ui_state()
@@ -7697,38 +7787,10 @@ class MainFrame(wx.Frame):
         event.Skip()
 
     def calibrate_scale_clicked(self, event: wx.Event):
-        if self.is_mouse_audio_mocap_mode():
-            if self.calibrate_mouse_dynamic_enhancement(
-                    self._last_mouse_mocap_nx, self._last_mouse_mocap_ny):
-                self.refresh_scale_curve_status()
-                self.request_scale_curve_repaint(force=True)
-                self.update_display_transform_state(
-                    snap_to_target=not self.enable_auto_transform_checkbox.GetValue())
-                self.refresh_auto_transform_status(
-                    "READY" if self.enable_auto_transform_checkbox.GetValue() else "OFF")
-                if self.last_output_wx_image is not None:
-                    self.draw_cached_result_image(self.last_banner_text)
-                self.save_persistent_ui_state()
-            else:
-                self.refresh_auto_transform_status("NO FACE")
-            event.Skip()
-            return
-
-        if self.latest_face_screen_motion is None:
+        if self._perform_output_dynamic_enhancement_calibration():
+            self._refresh_after_output_dynamic_enhancement_calibration()
+        else:
             self.refresh_auto_transform_status("NO FACE")
-            event.Skip()
-            return
-
-        time_now = time.time()
-        self.update_neutral_output_enhancement(self.latest_face_screen_motion)
-        self.last_scale_calibration_time = time_now
-        self.refresh_scale_curve_status()
-        self.request_scale_curve_repaint(force=True)
-        self.update_display_transform_state(snap_to_target=not self.enable_auto_transform_checkbox.GetValue())
-        self.refresh_auto_transform_status("READY" if self.enable_auto_transform_checkbox.GetValue() else "OFF")
-        if self.last_output_wx_image is not None:
-            self.draw_cached_result_image(self.last_banner_text)
-        self.save_persistent_ui_state()
         event.Skip()
 
     def is_model_loaded(self) -> bool:
@@ -7974,7 +8036,7 @@ class MainFrame(wx.Frame):
             self.last_scale_calibration_time = None
 
     def try_apply_auto_forward_gaze_calibration(self, time_now: float, *, respect_interval: bool) -> bool:
-        """Periodic or on-load auto run of model-input Calibrate Forward Gaze."""
+        """Periodic auto-click of UI-A01/A09/B04 (path A only)."""
         if not self.enable_direction_calibration_checkbox.GetValue():
             return False
 
@@ -7986,16 +8048,15 @@ class MainFrame(wx.Frame):
             if time_now - self.last_direction_calibration_time < interval_seconds:
                 return False
 
-        if not self.pose_converter.apply_face_orientation_calibration():
-            return False
-
-        self.last_direction_calibration_time = time_now
-        return True
+        return self._perform_head_orientation_calibration(calibration_time=time_now)
 
     def maybe_apply_periodic_direction_calibration(self):
         self.try_apply_auto_forward_gaze_calibration(time.time(), respect_interval=True)
 
     def maybe_apply_periodic_scale_calibration(self, latest_motion: FaceScreenMotion):
+        """Periodic auto-click of UI-A02/A10 (camera path B only; mouse uses UI-B07)."""
+        if self.is_mouse_audio_mocap_mode():
+            return
         if not self.enable_scale_calibration_checkbox.GetValue():
             return
 
@@ -8008,8 +8069,8 @@ class MainFrame(wx.Frame):
         if time_now - self.last_scale_calibration_time < interval_seconds:
             return
 
-        self.update_neutral_output_enhancement(latest_motion)
-        self.last_scale_calibration_time = time_now
+        if self._perform_output_dynamic_enhancement_calibration(calibration_time=time_now):
+            self._refresh_after_output_dynamic_enhancement_calibration()
 
     @staticmethod
     def extract_face_screen_motion(detection_result) -> Optional[FaceScreenMotion]:
@@ -8343,6 +8404,7 @@ class MainFrame(wx.Frame):
                     self._last_preview_ui_time = time_now
                     self.draw_capture_status_message(
                         self.video_capture_status_message or "Nothing yet!")
+                self.schedule_active_capture_timer()
                 return
         else:
             self._last_good_webcam_bgr_frame = bgr_frame
@@ -8354,10 +8416,22 @@ class MainFrame(wx.Frame):
             self.update_capture_preview_bitmap(bgr_frame)
 
         if self.should_process_mediapipe(time_now):
+            if (
+                    self.video_source_kind == "window"
+                    and self._capture_frame_serial == self._last_mediapipe_capture_serial):
+                self.schedule_active_capture_timer()
+                return
             if self.face_landmarker is None and not self.ensure_face_landmarker(show_dialog=False):
+                self.schedule_active_capture_timer()
                 return
             self._last_mediapipe_process_time = time_now
-            rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+            self._last_mediapipe_capture_serial = self._capture_frame_serial
+            mocap_frame = bgr_frame
+            if self.video_source_kind == "window":
+                limited = self.limit_bgr_frame_for_mocap(bgr_frame)
+                if limited is not None:
+                    mocap_frame = limited
+            rgb_frame = cv2.cvtColor(mocap_frame, cv2.COLOR_BGR2RGB)
             if self.should_mirror_capture_preview():
                 rgb_frame = cv2.flip(rgb_frame, 1)
             time_ms = self._next_mediapipe_video_timestamp_ms(time_now)
@@ -8368,6 +8442,8 @@ class MainFrame(wx.Frame):
             # rgb_frame is kept referenced by the job so its buffer stays alive
             # until the (deferred) detection consumes the wrapping mp.Image.
             self._schedule_mediapipe_detect(mediapipe_image, time_ms, rgb_frame)
+
+        self.schedule_active_capture_timer()
 
     def _schedule_mediapipe_detect(self, mediapipe_image, time_ms: int, frame_buffer) -> None:
         """Queue a frame for off-thread MediaPipe detection (latest-wins, single worker)."""
@@ -8413,6 +8489,62 @@ class MainFrame(wx.Frame):
         finally:
             with self._mediapipe_lock:
                 self._mediapipe_worker_active = False
+
+    def _ensure_window_capture_worker(self) -> None:
+        """Start the background window-capture grabber if it is not running."""
+        if self._is_closing:
+            return
+        with self._window_capture_lock:
+            if self._window_capture_worker_active:
+                return
+            self._window_capture_worker_active = True
+        threading.Thread(
+            target=self._window_capture_worker,
+            daemon=True,
+            name="window-capture").start()
+
+    def _window_capture_worker(self) -> None:
+        """Continuously grab the target window off the UI thread (latest-wins).
+
+        Keeps the blocking PrintWindow/BitBlt grab off the wx UI thread so a
+        stalled grab degrades to a reused frame instead of freezing the app.
+        """
+        interval = MainFrame.CAPTURE_PROCESS_INTERVAL_MS / 1000.0
+        try:
+            while not self._is_closing and self.video_source_kind == "window":
+                hwnd = self._window_capture_hwnd
+                if hwnd is None:
+                    break
+                start = time.perf_counter()
+                try:
+                    frame = window_capture.capture_window_client_bgr(hwnd)
+                except Exception as exc:
+                    frame = None
+                    if not getattr(self, "_window_capture_read_error", None):
+                        self._window_capture_read_error = repr(exc)
+                        _err_record(
+                            "H-WINCAP",
+                            "character_model_mediapipe_puppeteer_load_preview.py:_window_capture_worker",
+                            exc,
+                            data={"hwnd": hwnd})
+                elapsed = time.perf_counter() - start
+                if elapsed >= MainFrame.WINDOW_CAPTURE_STALL_SEC:
+                    window_capture.invalidate_capture_method_cache(hwnd)
+                if frame is not None:
+                    limited = MainFrame.limit_bgr_frame_for_mocap(frame)
+                    if limited is not None:
+                        frame = limited
+                    with self._window_capture_lock:
+                        self._window_capture_latest_frame = frame
+                        self._window_capture_frame_serial += 1
+                sleep_for = interval - (time.perf_counter() - start)
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
+        finally:
+            with self._window_capture_lock:
+                self._window_capture_worker_active = False
+                self._window_capture_latest_frame = None
+                self._window_capture_frame_serial = 0
 
     def _finish_mediapipe_detect(self, detection_result) -> None:
         if self._is_closing or detection_result is None:
@@ -8567,7 +8699,7 @@ class MainFrame(wx.Frame):
         if self._basic_layer_window_visible():
             window = self._get_basic_layer_window()
             if window is not None:
-                window.apply_selection(slot_id)
+                window.set_single_selection(slot_id)
         self.refresh_layer_blend_status()
         self.persist_basic_layers_state()
         if self.last_output_wx_image is not None:
@@ -8602,9 +8734,16 @@ class MainFrame(wx.Frame):
         # motion_time_s), drifting bound/smoothed layers away from the drawn box
         # so clicks miss and the window drags instead of the layer.
         geom = getattr(self, "_last_edit_chrome_geom", None)
-        selected = self.basic_layers_state.selected_slot_id
+        selected = self._output_edit_slot_id()
+        if isinstance(geom, OrbitEditGeometry):
+            if (
+                    selected is not None
+                    and geom.slot_id == int(selected)
+                    and geom.canvas_width == int(canvas_width)
+                    and geom.canvas_height == int(canvas_height)):
+                return hit_test_orbit_edit(geom, x, y)
         if (
-                geom is not None
+                isinstance(geom, tuple)
                 and selected is not None
                 and geom[0] == int(selected)
                 and geom[3] == int(canvas_width)
@@ -8619,7 +8758,7 @@ class MainFrame(wx.Frame):
             canvas_width,
             canvas_height,
             binding_context,
-            selected_slot_id=self.basic_layers_state.selected_slot_id)
+            selected_slot_id=self._output_edit_slot_id())
 
     def _begin_layer_edit(
             self,
@@ -8630,7 +8769,8 @@ class MainFrame(wx.Frame):
             panel: Optional[wx.Window] = None) -> bool:
         if not self.is_layer_blend_enabled():
             return False
-        if self.basic_layers_state.selected_slot_id != slot_id:
+        edit_slot = self._output_edit_slot_id()
+        if edit_slot is None or edit_slot != slot_id:
             return False
         self._layer_drag_active = True
         self._layer_drag_slot_id = slot_id
@@ -8655,7 +8795,7 @@ class MainFrame(wx.Frame):
         the currently selected layer."""
         if not self.is_layer_blend_enabled():
             return False
-        if self.basic_layers_state.selected_slot_id is None:
+        if self._output_edit_slot_id() is None:
             return False
         slot_id, mode = self._hit_test_layer_edit(x, y, canvas_width, canvas_height)
         if slot_id is None or mode == LayerEditMode.NONE:
@@ -8679,14 +8819,19 @@ class MainFrame(wx.Frame):
             return
         canvas_w, canvas_h = self._layer_drag_canvas_size
         layer = self.basic_layers_state.get_slot(self._layer_drag_slot_id)
-        if self._layer_edit_mode == LayerEditMode.SCALE:
+        if self._layer_edit_mode == LayerEditMode.ORBIT_MOVE:
+            dx = pos[0] - self._layer_drag_last_pos[0]
+            dy = pos[1] - self._layer_drag_last_pos[1]
+            apply_orbit_pivot_canvas_delta(layer, float(dx), float(dy), canvas_w, canvas_h)
+        elif self._layer_edit_mode == LayerEditMode.SCALE:
             binding_context = self._make_binding_context(canvas_w, canvas_h)
             resolved = resolve_layer_rects(
                 self.basic_layers_state,
                 self.layer_asset_cache.load_image,
                 canvas_w,
                 canvas_h,
-                binding_context)
+                binding_context,
+                include_motion=False)
             rect = resolved.get(self._layer_drag_slot_id)
             if rect is not None:
                 apply_scale_from_drag(layer, float(pos[0]), float(pos[1]), rect)
@@ -8714,7 +8859,7 @@ class MainFrame(wx.Frame):
     def on_output_panel_left_down(self, event: wx.MouseEvent, panel: wx.Window) -> bool:
         if not self.is_layer_blend_enabled():
             return False
-        if self.basic_layers_state.selected_slot_id is None:
+        if self._output_edit_slot_id() is None:
             return False
         pos = event.GetPosition()
         size = panel.GetClientSize()
@@ -8744,7 +8889,7 @@ class MainFrame(wx.Frame):
         if not self.is_layer_blend_enabled():
             event.Skip()
             return
-        slot_id = self.basic_layers_state.selected_slot_id
+        slot_id = self._output_edit_slot_id()
         if slot_id is None or slot_id < 0:
             event.Skip()
             return
@@ -8770,7 +8915,7 @@ class MainFrame(wx.Frame):
         nothing is selected / layer blend is off."""
         if not self.is_layer_blend_enabled():
             return False
-        slot_id = self.basic_layers_state.selected_slot_id
+        slot_id = self._output_edit_slot_id()
         if slot_id is None or slot_id < 0:
             return False
         layer = self.basic_layers_state.get_slot(slot_id)
@@ -9308,11 +9453,11 @@ class MainFrame(wx.Frame):
     def on_display_timer(self, event: Optional[wx.Event] = None):
         if self.is_model_loaded():
             self.update_display_transform_state()
-        swing_active = (
+        motion_active = (
             self.is_layer_blend_enabled()
             and basic_layers_state_has_active_motion(self.basic_layers_state)
             and self.last_output_wx_image is not None)
-        if swing_active:
+        if motion_active:
             # Single full composite per tick (avoids duplicate draw when affine also changed).
             self.draw_cached_result_image(self.last_banner_text)
             self._maybe_schedule_transparent_capture_update()
