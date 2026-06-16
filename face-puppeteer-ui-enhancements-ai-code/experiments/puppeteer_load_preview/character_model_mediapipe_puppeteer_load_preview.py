@@ -156,6 +156,7 @@ from layer_runtime import (
     BODY_BIND_LEAN_FOLLOW_GAIN,
     contrast_highlight_colour,
     basic_layers_state_has_active_motion,
+    consume_layer_gif_playback_visibility_dirty,
     compute_orbit_edit_geometry,
     layer_uses_orbit_edit_chrome,
     load_basic_layers_state,
@@ -163,7 +164,14 @@ from layer_runtime import (
     resolve_layer_rects,
     resolved_layer_rotation_deg,
     save_basic_layers_state,
+    apply_layer_hotkey_action as apply_layer_hotkey_action_to_state,
+    begin_layer_hotkey_hold,
+    end_layer_hotkey_hold,
+    is_layer_hotkey_hold_action,
+    reload_layer_from_asset_material,
+    LayerHotkeyHoldSnapshot,
 )
+from layer_hotkey_registry import LayerHotkeyRegistry, is_hotkey_still_pressed
 from layer_interaction import (
     LayerEditMode,
     apply_move_delta,
@@ -190,8 +198,43 @@ from tha3_paths import (
 )
 from portable_paths import face_capture_assets_ready, get_portable_root, resolve_mediapipe_task_path
 from ui_dialog_guard import show_rate_limited_message
+from ui_switch_guard import block_events, is_blocked, restore_choice, run_guarded_switch, snapshot_choice
+from ui_alignment_monitor import AlignmentProbe, UiAlignmentMonitor
+from ui_change_history import UserChangeHistory, wire_controls_for_change_log, wire_float_slider_controls
 import window_capture
-import frame_interpolation as output_frame_interp
+from output_enhancement.pose_interpolation import POSE_FRAME_INTERP_OFF as FRAME_INTERP_OFF
+from output_enhancement.config import (
+    INFER_BACKEND_LABELS,
+    INFER_BACKEND_PYTORCH,
+    INFER_BACKEND_VALUES,
+    NN_FRAME_INTERP_LABELS,
+    NN_FRAME_INTERP_OFF,
+    NN_FRAME_INTERP_VALUES,
+    NN_SR_LABELS,
+    NN_SR_OFF,
+    NN_SR_VALUES,
+    THA_INFER_FP16_CHOICES,
+    THA_INFER_FP16_LABELS,
+)
+from output_enhancement.runtime import OutputEnhancementRuntime
+from output_enhancement.antialiasing import get_antialias_factor_from_control
+from output_enhancement.pose_interpolation import (
+    POSE_FRAME_INTERP_LABELS,
+    POSE_FRAME_INTERP_OFF,
+    POSE_FRAME_INTERP_VALUES,
+    get_effective_infer_cap_hz as pose_interp_effective_cap_hz,
+    is_pose_interpolation_active,
+    normalize_multiplier as normalize_pose_frame_multiplier,
+)
+from output_enhancement.config import (
+    normalize_infer_backend,
+    normalize_nn_frame_multiplier,
+    normalize_sr_mode,
+    normalize_tha_infer_fp16,
+)
+from output_enhancement.paths import find_repo_root, is_output_enhancement_installed
+from output_enhancement.slow_task import run_slow_task
+from output_enhancement.tha_infer import apply_poser_precision
 from rgba_capture_compose import (
     compose_character_rgba_from_keyframe,
     scale_rgba,
@@ -284,7 +327,7 @@ def _perf_record(
 
 
 def _startup_record(phase: str, ms: float, **extra) -> None:
-    """Log a startup-phase duration so 界面打开耗时 can be verified per run."""
+    """Log startup-phase duration (f-057: budget = main UI shell ready; excludes model/mocap/layers)."""
     # #region agent log
     try:
         import json
@@ -921,6 +964,16 @@ class WebcamPreviewPopupFrame(wx.Frame):
         self.Destroy()
         event.Skip()
 
+
+@dataclass
+class _LayerHotkeyHoldSession:
+    slot_id: int
+    action: str
+    modifiers: int
+    key_code: int
+    snapshot: "LayerHotkeyHoldSnapshot"
+
+
 class MainFrame(wx.Frame):
     IMAGE_SIZE = 512
     SOURCE_PREVIEW_SIZE = 192
@@ -964,6 +1017,9 @@ class MainFrame(wx.Frame):
     CAPTURE_IDLE_INTERVAL_MS = 400
     DISPLAY_PRESENT_INTERVAL_MS = 30
     DISPLAY_PRESENT_CAP_HZ = 30
+    OUTPUT_FPS_AVG_FRAME_COUNT = 5
+    OUTPUT_FPS_UPDATE_INTERVAL_SEC = 1.0
+    OUTPUT_FPS_STALE_SEC = 1.5
     MIN_OUT_PRESENT_HZ = 12
     HOVER_HELP_DELAY_MS = 1000
     MEDIAPIPE_MIN_INTERVAL_MS = 33
@@ -1033,6 +1089,7 @@ class MainFrame(wx.Frame):
         self._video_enumeration_in_progress = False
         self._startup_auto_connect_attempted = False
         self._startup_full_controls_shown = False
+        self._defer_heavy_ui_refresh = True
         self._window_invalid_autoswitch_attempted = False
         self.rotation_labels = {}
         self.rotation_value_labels = {}
@@ -1044,16 +1101,15 @@ class MainFrame(wx.Frame):
         self._input_fps = 0.0
         self._inference_complete_times: List[float] = []
         self._inference_fps = 0.0
-        self._display_present_times: List[float] = []
+        self._last_actual_output_present_mono: Optional[float] = None
+        self._output_present_times: List[float] = []
+        self._output_fps_last_commit_mono: float = 0.0
         self._display_out_fps = 0.0
+        self._user_change_history = UserChangeHistory(3)
+        self._ui_change_log_wired = False
         self._last_compose_signature: Optional[tuple] = None
         self._last_transform_status_refresh_time = 0.0
         self._last_chrome_background_signature: Optional[str] = None
-        self._render_keyframe_image_id: Optional[int] = None
-        self._render_keyframe_antialias: float = 1.0
-        self._render_keyframe_rgba: Optional[numpy.ndarray] = None
-        self._render_keyframe_bitmap: Optional[wx.Bitmap] = None
-        self._render_keyframe_size: tuple[int, int] = (1, 1)
         self._cached_background_signature: Optional[str] = None
         self._cached_background_rgba: Optional[numpy.ndarray] = None
         self._cached_capture_foreground_rgba: Optional[numpy.ndarray] = None
@@ -1065,8 +1121,6 @@ class MainFrame(wx.Frame):
         self._default_pose_list: Optional[List[float]] = None
         self._load_preview_shown = False
         self.last_output_wx_image: Optional[wx.Image] = None
-        self._interp_keyframe_pose: Optional[List[float]] = None
-        self._interp_substep_index = 0
         self.last_banner_text: Optional[str] = None
         self.last_background_choice = "#000000"
         self.latest_face_screen_motion: Optional[FaceScreenMotion] = None
@@ -1203,6 +1257,9 @@ class MainFrame(wx.Frame):
         self.tha3_model_variant = str(
             self.persistent_ui_state.get("tha3_model_variant", "separable_half"))
         self.active_image_source = create_image_source(self.image_source_mode)
+        self.output_enhancement = OutputEnhancementRuntime(
+            repo_root=find_repo_root() or get_portable_root())
+        self.output_enhancement.update_config(self.persistent_ui_state)
         self.apply_mouth_persistent_state_to_args()
         if self.is_mouse_audio_mocap_mode():
             self.pose_converter.args.set_mouth_input_mode("audio")
@@ -1213,10 +1270,14 @@ class MainFrame(wx.Frame):
 
         self.output_frame = None
         self.create_ui()
+        self._layer_hotkey_hold_sessions: list[_LayerHotkeyHoldSession] = []
+        self.layer_hotkey_registry: Optional[LayerHotkeyRegistry] = None
+        self._layer_hotkey_evt_bound = False
         self.apply_persistent_ui_state()
         self.restore_compact_frame_geometry()
         self.refresh_model_loaded_ui_state()
         self.create_timers()
+        self._init_ui_alignment_monitor()
         if self.is_mouse_audio_mocap_mode():
             self.schedule_active_capture_timer()
         self.active_image_source.start(self)
@@ -1237,9 +1298,6 @@ class MainFrame(wx.Frame):
         self._startup_full_controls_shown = True
         startup_t0 = time.perf_counter()
         self.show_full_controls_window()
-        self.ensure_output_frame()
-        self.initialize_output_bitmap()
-        self.refresh_output_frame_chrome()
         first_present_t0 = time.perf_counter()
         self.update_result_image_bitmap()
         _startup_record(
@@ -1249,8 +1307,10 @@ class MainFrame(wx.Frame):
         self.schedule_refresh_controls_scrolling()
         wx.CallLater(1200, self.autoconnect_video_source_on_startup)
         wx.CallAfter(self._ensure_tha3_assets_on_startup)
+        wx.CallAfter(self.sync_layer_hotkey_registry)
+        self._defer_heavy_ui_refresh = False
         _startup_record(
-            "startup_show_full_controls (total, blocks first paint)",
+            "startup_show_full_controls (UI ready)",
             (time.perf_counter() - startup_t0) * 1000.0)
 
     def _ensure_tha3_assets_on_startup(self):
@@ -1306,13 +1366,26 @@ class MainFrame(wx.Frame):
         self.output_background_image_path_state = ValueState(
             self.resolve_persistent_output_background_image_path(persisted))
         self._layer_blend_enabled_state = ValueState(False)
+        self._layer_hotkeys_enabled_state = ValueState(
+            bool(persisted.get("layer_hotkeys_enabled", False)))
         self._layer_force_full_follow_state = ValueState(False)
         self._invert_tilt_mapping_state = ValueState(True)
         self.antialias_strength_spin = ValueState(1.00)
         self.character_edge_mode_state = ValueState(CHARACTER_EDGE_NONE)
         self.character_edge_width_state = ValueState(float(CHARACTER_EDGE_WIDTH_DEFAULT))
         self.character_edge_color_hex_state = ValueState("#FFFFFF")
-        self.output_frame_interpolation_choice = ValueState(output_frame_interp.FRAME_INTERP_OFF)
+        self.output_frame_interpolation_choice = ValueState(POSE_FRAME_INTERP_OFF)
+        self.nn_super_resolution_choice = ValueState(NN_SR_OFF)
+        self.nn_frame_interpolation_choice = ValueState(NN_FRAME_INTERP_OFF)
+        self.nn_infer_backend_choice = ValueState(
+            normalize_infer_backend(
+                persisted.get("nn_infer_backend", INFER_BACKEND_PYTORCH)))
+        tha_raw = persisted.get("tha_infer_fp16", "full")
+        self.tha_infer_fp16_choice = ValueState(
+            THA_INFER_FP16_CHOICES[1 if normalize_tha_infer_fp16(tha_raw) else 0])
+        self._tha_infer_fp16_fallback = False
+        self._enhancement_warned_once = False
+        self._enhancement_warmup_key = None
 
     @staticmethod
     def _wx_control_alive(control) -> bool:
@@ -1361,6 +1434,14 @@ class MainFrame(wx.Frame):
     def is_layer_blend_enabled(self) -> bool:
         return self._safe_checkbox_value(
             "layer_blend_enabled_checkbox", self._layer_blend_enabled_state, default=False)
+
+    def is_layer_hotkeys_enabled(self) -> bool:
+        if not self.is_layer_blend_enabled():
+            return False
+        return self._safe_checkbox_value(
+            "layer_hotkeys_enabled_checkbox",
+            self._layer_hotkeys_enabled_state,
+            default=False)
 
     def is_layer_force_full_follow_enabled(self) -> bool:
         return self._safe_checkbox_value(
@@ -1480,6 +1561,168 @@ class MainFrame(wx.Frame):
             self.get_ui_state_file_path(),
             self.relativize_path_for_persistence)
 
+    def _ensure_layer_hotkey_registry(self) -> Optional[LayerHotkeyRegistry]:
+        if not self.is_layer_hotkeys_enabled():
+            return None
+        registry = getattr(self, "layer_hotkey_registry", None)
+        if registry is None:
+            registry = LayerHotkeyRegistry(self)
+            self.layer_hotkey_registry = registry
+            if hasattr(wx, "EVT_HOTKEY") and not self._layer_hotkey_evt_bound:
+                self.Bind(wx.EVT_HOTKEY, self.on_layer_global_hotkey)
+                self._layer_hotkey_evt_bound = True
+        return registry
+
+    def _teardown_layer_hotkeys(self) -> None:
+        self._clear_layer_hotkey_holds(restore=True)
+        registry = getattr(self, "layer_hotkey_registry", None)
+        if registry is not None:
+            try:
+                registry.clear()
+            except Exception:
+                pass
+        self.layer_hotkey_registry = None
+
+    def sync_layer_hotkey_registry(self) -> None:
+        if not self.is_layer_hotkeys_enabled():
+            self._teardown_layer_hotkeys()
+            return
+        registry = self._ensure_layer_hotkey_registry()
+        if registry is None:
+            return
+        if wx.Platform == "__WXMSW__" and not self.GetHandle():
+            wx.CallAfter(self.sync_layer_hotkey_registry)
+            return
+        registry.sync_from_state(
+            self.basic_layers_state,
+            enabled=True)
+        failures = registry.failures
+        if failures and hasattr(self, "layer_blend_status_text"):
+            preview = failures[0]
+            if len(failures) > 1:
+                preview = f"{preview} (+{len(failures) - 1} more)"
+            self.layer_blend_status_text.SetLabel(
+                f"图层快捷键注册失败 / Layer hotkey failed: {preview}")
+        elif hasattr(self, "layer_blend_status_text"):
+            self.refresh_layer_blend_status()
+
+    def _clear_layer_hotkey_holds(self, *, restore: bool = True) -> None:
+        sessions = getattr(self, "_layer_hotkey_hold_sessions", None)
+        if not sessions:
+            return
+        if restore:
+            for session in sessions:
+                layer = self.basic_layers_state.get_slot(session.slot_id)
+                end_layer_hotkey_hold(
+                    layer, session.snapshot, action=session.action)
+        sessions.clear()
+
+    def begin_layer_hotkey_hold(
+            self,
+            slot_id: int,
+            action: str,
+            modifiers: int,
+            key_code: int) -> bool:
+        if not self.is_layer_blend_enabled():
+            return False
+        if not self.is_layer_hotkeys_enabled():
+            return False
+        for session in self._layer_hotkey_hold_sessions:
+            if (session.slot_id == slot_id
+                    and session.modifiers == modifiers
+                    and session.key_code == key_code):
+                return True
+        layer = self.basic_layers_state.get_slot(slot_id)
+        snapshot = begin_layer_hotkey_hold(layer, action)
+        if snapshot is None:
+            return False
+        self._layer_hotkey_hold_sessions.append(
+            _LayerHotkeyHoldSession(
+                slot_id=int(slot_id),
+                action=str(action),
+                modifiers=int(modifiers),
+                key_code=int(key_code),
+                snapshot=snapshot,
+            ))
+        self.notify_layer_composite_dirty(immediate=True)
+        self.refresh_layer_slot_ui(slot_id)
+        return True
+
+    def poll_layer_hotkey_holds(self) -> None:
+        if not self.is_layer_hotkeys_enabled():
+            if self._layer_hotkey_hold_sessions:
+                self._clear_layer_hotkey_holds(restore=True)
+            return
+        sessions = getattr(self, "_layer_hotkey_hold_sessions", None)
+        if not sessions:
+            return
+        ended = False
+        remaining: list[_LayerHotkeyHoldSession] = []
+        ended_slot_ids: list[int] = []
+        for session in sessions:
+            if is_hotkey_still_pressed(session.modifiers, session.key_code):
+                remaining.append(session)
+            else:
+                layer = self.basic_layers_state.get_slot(session.slot_id)
+                end_layer_hotkey_hold(
+                    layer, session.snapshot, action=session.action)
+                ended_slot_ids.append(session.slot_id)
+                ended = True
+        if not ended:
+            return
+        self._layer_hotkey_hold_sessions = remaining
+        self.notify_layer_composite_dirty(immediate=True)
+        for slot_id in ended_slot_ids:
+            self.refresh_layer_slot_ui(slot_id)
+
+    def poll_layer_gif_playback_side_effects(self) -> None:
+        if not self.is_layer_blend_enabled():
+            return
+        dirty_slot_ids = [
+            layer.slot_id
+            for layer in self.basic_layers_state.layers
+            if layer._gif_playback_visibility_dirty]
+        if not dirty_slot_ids:
+            return
+        if not consume_layer_gif_playback_visibility_dirty(self.basic_layers_state):
+            return
+        self.persist_basic_layers_state()
+        self.notify_layer_composite_dirty(immediate=True)
+        for slot_id in dirty_slot_ids:
+            self.refresh_layer_slot_ui(slot_id)
+
+    def apply_layer_hotkey_action(self, slot_id: int, action: str) -> bool:
+        """External + global hotkey entry: toggle visibility or control GIF playback."""
+        if not self.is_layer_blend_enabled():
+            return False
+        if not self.is_layer_hotkeys_enabled():
+            return False
+        if not apply_layer_hotkey_action_to_state(
+                self.basic_layers_state, slot_id, action):
+            return False
+        self.persist_basic_layers_state()
+        self.notify_layer_composite_dirty(immediate=True)
+        self.refresh_layer_slot_ui(slot_id)
+        return True
+
+    def on_layer_global_hotkey(self, event: wx.Event) -> None:
+        registry = getattr(self, "layer_hotkey_registry", None)
+        if registry is None:
+            event.Skip()
+            return
+        dispatch = registry.handle_hotkey(event.GetId())
+        if dispatch is None:
+            event.Skip()
+            return
+        if is_layer_hotkey_hold_action(dispatch.action):
+            self.begin_layer_hotkey_hold(
+                dispatch.slot_id,
+                dispatch.action,
+                dispatch.modifiers,
+                dispatch.key_code)
+        else:
+            self.apply_layer_hotkey_action(dispatch.slot_id, dispatch.action)
+
     def get_spine_neck_anchor_ratio(self) -> float:
         return clamp_neck_anchor_ratio(
             float(self.persistent_ui_state.get(
@@ -1568,13 +1811,43 @@ class MainFrame(wx.Frame):
             window.refresh_all()
 
     def on_layer_state_changed(self) -> None:
-        if self.last_output_wx_image is not None:
-            self.draw_cached_result_image(self.last_banner_text)
-            self._maybe_schedule_transparent_capture_update(immediate=True)
+        self.notify_layer_composite_dirty(immediate=True)
         self.refresh_basic_layer_window_if_visible()
         self.refresh_layer_blend_status()
         self.persist_basic_layers_state()
         self.save_persistent_ui_state()
+
+    def notify_layer_composite_dirty(self, *, immediate_capture: bool = False) -> None:
+        """Redraw output from cache without persisting or rebuilding layer-window chrome."""
+        if self.last_output_wx_image is not None:
+            self.draw_cached_result_image(self.last_banner_text)
+            self._maybe_schedule_transparent_capture_update(immediate=immediate_capture)
+
+    def refresh_layer_slot_ui(self, slot_id: int) -> None:
+        """Refresh one layer list row + detail visibility checkbox (no hotkey row rebuild)."""
+        window = self._get_basic_layer_window()
+        if window is not None and window.IsShown():
+            window.refresh_layer_slot_row(slot_id)
+        self.refresh_layer_blend_status()
+
+    def reload_layer_from_asset(
+            self,
+            slot_id: int,
+            *,
+            hotkey_action: Optional[str] = None) -> None:
+        """Invalidate cached pixels and reset playback for a layer's current asset."""
+        try:
+            layer = self.basic_layers_state.get_slot(slot_id)
+        except KeyError:
+            return
+        asset_path = layer.asset_path
+        if not reload_layer_from_asset_material(
+                layer, idle_for_hotkey_action=hotkey_action):
+            return
+        self.layer_asset_cache.invalidate(asset_path)
+        self.persist_basic_layers_state()
+        self.notify_layer_composite_dirty(immediate=True)
+        self.refresh_layer_slot_ui(slot_id)
 
     def refresh_layer_blend_status(self) -> None:
         if not hasattr(self, "layer_blend_status_text"):
@@ -1584,9 +1857,16 @@ class MainFrame(wx.Frame):
                 "图层混合已关闭 / Layer blending off")
             if hasattr(self, "open_basic_layer_window_button"):
                 self.open_basic_layer_window_button.Enable(False)
+            if hasattr(self, "layer_hotkeys_enabled_checkbox"):
+                self.layer_hotkeys_enabled_checkbox.Enable(False)
             return
         if hasattr(self, "open_basic_layer_window_button"):
             self.open_basic_layer_window_button.Enable(True)
+        if hasattr(self, "layer_hotkeys_enabled_checkbox"):
+            self.layer_hotkeys_enabled_checkbox.Enable(True)
+        hotkey_hint = ""
+        if not self.is_layer_hotkeys_enabled():
+            hotkey_hint = "；图层快捷键未启用 / layer hotkeys off"
         active = sum(
             1 for layer in self.basic_layers_state.layers
             if layer.asset_path and layer.visible and layer.enabled)
@@ -1601,7 +1881,7 @@ class MainFrame(wx.Frame):
         if not self._basic_layer_window_visible():
             hidden_hint = "；图层窗已隐藏，点下方「打开图层窗」/ hidden — use Open Layer Editor"
         self.layer_blend_status_text.SetLabel(
-            f"已启用：{active} 个图层；选中 {selected_text}{hidden_hint} / "
+            f"已启用：{active} 个图层；选中 {selected_text}{hidden_hint}{hotkey_hint} / "
             f"Enabled: {active} layer(s); selected {selected_text}")
 
     def _on_main_frame_activate(self, event: wx.Event) -> None:
@@ -1705,15 +1985,31 @@ class MainFrame(wx.Frame):
             self.persistent_ui_state["basic_layer_window_x"] = int(clamped.x)
             self.persistent_ui_state["basic_layer_window_y"] = int(clamped.y)
 
+    def _should_defer_basic_layer_window(self) -> bool:
+        if getattr(self, "_is_closing", False):
+            return True
+        if getattr(self, "_controls_build_in_progress", False):
+            return True
+        controls = getattr(self, "controls_frame", None)
+        return not self._wx_control_alive(controls)
+
+    def _deferred_show_basic_layer_window(self) -> None:
+        if not self.is_layer_blend_enabled():
+            return
+        if self._should_defer_basic_layer_window():
+            wx.CallAfter(self._deferred_show_basic_layer_window)
+            return
+        self.show_basic_layer_window()
+
     def show_basic_layer_window(self) -> None:
         from basic_layer_window import BasicLayerWindow
         if self._get_basic_layer_window() is None:
             try:
-                parent = self.get_controls_window()
-                self.basic_layer_window = BasicLayerWindow(self, parent=parent)
+                self.basic_layer_window = BasicLayerWindow(self, parent=None)
                 apply_app_icon(self.basic_layer_window)
             except Exception as exc:
                 self.basic_layer_window = None
+                traceback.print_exc()
                 print(
                     f"BasicLayerWindow create failed: {type(exc).__name__}: {exc}",
                     file=sys.stderr)
@@ -1732,6 +2028,7 @@ class MainFrame(wx.Frame):
             window.SetFocus()
             window.refresh_all()
         except Exception as exc:
+            traceback.print_exc()
             print(
                 f"BasicLayerWindow show failed: {type(exc).__name__}: {exc}",
                 file=sys.stderr)
@@ -1797,12 +2094,34 @@ class MainFrame(wx.Frame):
                     f"图层混合切换失败：{exc}\n/ Layer blend toggle failed: {exc}")
         event.Skip()
 
+    def on_layer_hotkeys_changed(self, event: wx.Event) -> None:
+        try:
+            self._safe_checkbox_value(
+                "layer_hotkeys_enabled_checkbox", self._layer_hotkeys_enabled_state)
+            if self.is_layer_hotkeys_enabled():
+                wx.CallAfter(self.sync_layer_hotkey_registry)
+            else:
+                self._teardown_layer_hotkeys()
+            self.refresh_basic_layer_window_if_visible()
+            self.refresh_layer_blend_status()
+            self.save_persistent_ui_state()
+        except Exception as exc:
+            if hasattr(self, "layer_blend_status_text"):
+                self.layer_blend_status_text.SetLabel(
+                    f"图层快捷键切换失败：{exc}\n/ Layer hotkeys toggle failed: {exc}")
+        event.Skip()
+
     def apply_layer_blend_visibility(self) -> None:
         enabled = self.is_layer_blend_enabled()
         if enabled:
-            self.show_basic_layer_window()
+            if self._should_defer_basic_layer_window():
+                wx.CallAfter(self._deferred_show_basic_layer_window)
+            else:
+                self.show_basic_layer_window()
         else:
+            self._teardown_layer_hotkeys()
             self.hide_basic_layer_window()
+        self.sync_layer_hotkey_registry()
         self._invalidate_render_caches()
         self.refresh_layer_blend_status()
         if self.last_output_wx_image is not None:
@@ -1828,6 +2147,8 @@ class MainFrame(wx.Frame):
             self.persist_basic_layers_state()
         except Exception:
             pass
+        if hasattr(self, "layer_hotkey_registry"):
+            self._teardown_layer_hotkeys()
         self.save_persistent_ui_state()
         if hasattr(self, "active_image_source"):
             self.active_image_source.stop(self)
@@ -1837,9 +2158,17 @@ class MainFrame(wx.Frame):
         self.animation_timer.Stop()
         if hasattr(self, "display_timer"):
             self.display_timer.Stop()
+        if hasattr(self, "output_enhancement") and self.output_enhancement is not None:
+            try:
+                self.output_enhancement.shutdown()
+            except Exception:
+                pass
         if hasattr(self, "ui_anim_timer"):
             self.ui_anim_timer.Stop()
         self.capture_timer.Stop()
+        monitor = getattr(self, "_ui_alignment_monitor", None)
+        if monitor is not None:
+            monitor.stop()
         if getattr(self, "webcam_preview_popup_frame", None) is not None and self.webcam_preview_popup_frame:
             self.webcam_preview_popup_frame.Destroy()
             self.webcam_preview_popup_frame = None
@@ -2206,7 +2535,8 @@ class MainFrame(wx.Frame):
         event.Skip()
 
     def refresh_dynamic_output_status_layout(self):
-        for attr_name in ("scale_curve_status_text", "auto_transform_status_text", "fps_text"):
+        for attr_name in ("scale_curve_status_text", "auto_transform_status_text", "fps_text",
+                          "ui_change_history_text"):
             control = getattr(self, attr_name, None)
             if control is not None:
                 self.wrap_static_text_to_parent(control)
@@ -2777,6 +3107,8 @@ class MainFrame(wx.Frame):
         self._render_keyframe_image_id = None
         self._render_keyframe_rgba = None
         self._render_keyframe_bitmap = None
+        if getattr(self, "output_enhancement", None) is not None:
+            self.output_enhancement.keyframe_cache.invalidate_image()
         self._cached_background_signature = None
         self._cached_background_rgba = None
         self._cached_capture_foreground_rgba = None
@@ -2875,17 +3207,16 @@ class MainFrame(wx.Frame):
 
     def get_effective_infer_cap_hz(self) -> int:
         base = self.get_mouth_infer_cap_hz()
-        if self.is_frame_interpolation_active():
-            return output_frame_interp.get_effective_infer_cap_hz(
+        if is_pose_interpolation_active(self.get_output_frame_interpolation_multiplier()):
+            return pose_interp_effective_cap_hz(
                 base, self.get_output_frame_interpolation_multiplier())
         return max(MainFrame.MIN_OUT_PRESENT_HZ, base)
 
     def should_infer_pose(self, last_pose: Optional[List[float]], current_pose: List[float]) -> bool:
         if last_pose is None:
             return True
-        reference_pose = self._interp_keyframe_pose if (
-            self.is_frame_interpolation_active() and self._interp_keyframe_pose is not None
-        ) else last_pose
+        reference_pose = self.output_enhancement.pose_interpolation.reference_pose_for_change_detection(
+            last_pose, self.get_output_frame_interpolation_multiplier())
         if self.is_smooth_display_priority():
             if not self._pose_any_changed(reference_pose, current_pose):
                 return False
@@ -2950,7 +3281,7 @@ class MainFrame(wx.Frame):
         self.last_pose = pose_list
         self.last_output_wx_image = wx_image
         self.last_background_choice = self.get_output_background_signature()
-        self._render_keyframe_image_id = None
+        self.output_enhancement.keyframe_cache.invalidate_image()
         self._advance_pose_interpolation_after_infer(pose_list)
         self._note_inference_fps_tick()
         # Presenting is left to on_display_timer (throttled to the display present
@@ -2974,29 +3305,12 @@ class MainFrame(wx.Frame):
         self._last_capture_present_time_ns = time.time_ns()
 
     def _advance_pose_interpolation_after_infer(self, inferred_pose: List[float]) -> None:
-        multiplier = self.get_output_frame_interpolation_multiplier()
-        if multiplier <= output_frame_interp.FRAME_INTERP_OFF:
-            self._interp_keyframe_pose = list(inferred_pose)
-            self._interp_substep_index = 0
-            return
-        if self._interp_substep_index >= multiplier - 1:
-            self._interp_keyframe_pose = list(inferred_pose)
-            self._interp_substep_index = 0
-        else:
-            self._interp_substep_index += 1
+        self.output_enhancement.pose_interpolation.advance_after_infer(
+            inferred_pose, self.get_output_frame_interpolation_multiplier())
 
     def resolve_scheduled_infer_pose(self, current_pose: List[float]) -> List[float]:
-        multiplier = self.get_output_frame_interpolation_multiplier()
-        if multiplier <= output_frame_interp.FRAME_INTERP_OFF:
-            return list(current_pose)
-        keyframe_pose = self._interp_keyframe_pose
-        if keyframe_pose is None:
-            return list(current_pose)
-        return output_frame_interp.resolve_interp_infer_pose(
-            keyframe_pose,
-            current_pose,
-            multiplier,
-            self._interp_substep_index)
+        return self.output_enhancement.pose_interpolation.resolve_infer_pose(
+            current_pose, self.get_output_frame_interpolation_multiplier())
 
     def should_refresh_cached_affine(self) -> bool:
         now_ns = time.time_ns()
@@ -3033,21 +3347,99 @@ class MainFrame(wx.Frame):
         self._inference_complete_times, self._inference_fps = self._record_rate_in_rolling_window(
             self._inference_complete_times)
 
-    def _note_display_fps_tick(self) -> None:
-        self._display_present_times, self._display_out_fps = self._record_rate_in_rolling_window(
-            self._display_present_times)
+    @staticmethod
+    def averaged_output_fps_from_present_times(
+            present_times: List[float],
+            *,
+            avg_frame_count: int = 5,
+            max_gap_sec: float = 2.0) -> Optional[float]:
+        """FPS from mean frame interval over the last *avg_frame_count* presents."""
+        if not present_times or len(present_times) < 2:
+            return None
+        window = present_times[-max(2, int(avg_frame_count)) :]
+        span = window[-1] - window[0]
+        intervals = len(window) - 1
+        if intervals <= 0 or span <= 1e-6:
+            return None
+        if span / intervals >= max_gap_sec:
+            return None
+        return intervals / span
+
+    def _note_actual_output_present(self) -> None:
+        """Append a real output present timestamp (display value commits separately)."""
+        now = time.monotonic()
+        self._last_actual_output_present_mono = now
+        self._output_present_times.append(now)
+        keep = max(2, MainFrame.OUTPUT_FPS_AVG_FRAME_COUNT)
+        if len(self._output_present_times) > keep:
+            self._output_present_times = self._output_present_times[-keep:]
+
+    def _update_output_fps_estimate_if_due(self) -> None:
+        """Refresh cached Out FPS at most once per second from the last five frames."""
+        now = time.monotonic()
+        last_commit = getattr(self, "_output_fps_last_commit_mono", 0.0)
+        if now - last_commit < MainFrame.OUTPUT_FPS_UPDATE_INTERVAL_SEC:
+            return
+        self._output_fps_last_commit_mono = now
+        last_present = self._last_actual_output_present_mono
+        if last_present is None or now - last_present > MainFrame.OUTPUT_FPS_STALE_SEC:
+            self._display_out_fps = 0.0
+            return
+        measured = self.averaged_output_fps_from_present_times(
+            getattr(self, "_output_present_times", []),
+            avg_frame_count=MainFrame.OUTPUT_FPS_AVG_FRAME_COUNT)
+        if measured is not None:
+            self._display_out_fps = measured
+
+    def _get_display_out_fps_for_label(self) -> float:
+        self._update_output_fps_estimate_if_due()
+        return float(getattr(self, "_display_out_fps", 0.0))
+
+    def _on_ulw_frame_delivered(self) -> None:
+        """Single hook after each ULW frame reaches the output surface."""
+        self._note_capture_present_time()
+        self._note_actual_output_present()
 
     def _refresh_fps_display(self) -> None:
         if not hasattr(self, "fps_text"):
             return
         input_fps = getattr(self, "_input_fps", 0.0)
         inference_fps = getattr(self, "_inference_fps", 0.0)
-        display_fps = getattr(self, "_display_out_fps", 0.0)
+        display_fps = self._get_display_out_fps_for_label()
         label = (
             f"输入 In {input_fps:.1f}\n"
             f"推理 Inf {inference_fps:.1f}\n"
             f"显示 Out {display_fps:.1f}")
         self.set_wrapped_static_text_if_changed(self.fps_text, label)
+
+    def _record_ui_change(self, message: str) -> None:
+        if is_blocked(self):
+            return
+        history = getattr(self, "_user_change_history", None)
+        if history is None:
+            return
+        history.add(message)
+        self._refresh_ui_change_history_display()
+
+    def _refresh_ui_change_history_display(self) -> None:
+        control = getattr(self, "ui_change_history_text", None)
+        history = getattr(self, "_user_change_history", None)
+        if control is None or history is None:
+            return
+        lines = history.lines(3)
+        label = "最近改动 / Recent UI\n" + "\n".join(lines)
+        self.set_wrapped_static_text_if_changed(control, label)
+
+    def _wire_ui_change_logging(self) -> None:
+        if getattr(self, "_ui_change_log_wired", False):
+            return
+        root = getattr(self, "controls_frame", None)
+        if root is None:
+            return
+        record = self._record_ui_change
+        wire_controls_for_change_log(root, record)
+        wire_float_slider_controls(self, record)
+        self._ui_change_log_wired = True
 
     @staticmethod
     def scale_image_cover(image: wx.Image, width: int, height: int) -> wx.Image:
@@ -3094,25 +3486,24 @@ class MainFrame(wx.Frame):
             index = control.GetSelection()
             if index < 0:
                 index = 0
-            if index >= len(output_frame_interp.FRAME_INTERP_VALUES):
-                index = len(output_frame_interp.FRAME_INTERP_VALUES) - 1
-            return output_frame_interp.FRAME_INTERP_VALUES[index]
+            if index >= len(POSE_FRAME_INTERP_VALUES):
+                index = len(POSE_FRAME_INTERP_VALUES) - 1
+            return POSE_FRAME_INTERP_VALUES[index]
         try:
-            return output_frame_interp.normalize_multiplier(control.GetValue())
+            return normalize_pose_frame_multiplier(control.GetValue())
         except Exception:
-            return output_frame_interp.FRAME_INTERP_OFF
+            return POSE_FRAME_INTERP_OFF
 
     def reset_frame_interpolation_buffers(self):
-        self._interp_keyframe_pose = None
-        self._interp_substep_index = 0
+        seed = list(self.last_pose) if self.last_pose is not None else None
+        self.output_enhancement.pose_interpolation.reset(seed_pose=seed)
 
     def is_frame_interpolation_active(self) -> bool:
-        return self.get_output_frame_interpolation_multiplier() > output_frame_interp.FRAME_INTERP_OFF
+        return is_pose_interpolation_active(self.get_output_frame_interpolation_multiplier())
 
     def on_output_frame_interpolation_changed(self, event: wx.Event):
         self.reset_frame_interpolation_buffers()
-        if self.last_pose is not None:
-            self._interp_keyframe_pose = list(self.last_pose)
+        self._sync_output_enhancement_config()
         self.save_persistent_ui_state()
         event.Skip()
 
@@ -3125,6 +3516,336 @@ class MainFrame(wx.Frame):
         self._last_cached_affine_present_time_ns = None
         self.save_persistent_ui_state()
         event.Skip()
+
+    def _choice_index_value(self, control, values, fallback):
+        if isinstance(control, wx.Choice):
+            index = control.GetSelection()
+            if 0 <= index < len(values):
+                return values[index]
+        try:
+            return control.GetValue()
+        except Exception:
+            return fallback
+
+    def get_nn_super_resolution_mode(self) -> str:
+        control = getattr(self, "nn_super_resolution_choice", None)
+        return normalize_sr_mode(self._choice_index_value(control, NN_SR_VALUES, NN_SR_OFF))
+
+    def get_nn_frame_interpolation_multiplier(self) -> int:
+        control = getattr(self, "nn_frame_interpolation_choice", None)
+        return normalize_nn_frame_multiplier(
+            self._choice_index_value(control, NN_FRAME_INTERP_VALUES, NN_FRAME_INTERP_OFF))
+
+    def get_nn_infer_backend(self) -> str:
+        control = getattr(self, "nn_infer_backend_choice", None)
+        return normalize_infer_backend(
+            self._choice_index_value(control, INFER_BACKEND_VALUES, INFER_BACKEND_PYTORCH))
+
+    def get_tha_infer_fp16_enabled(self) -> bool:
+        if self.get_image_source_mode() == IMAGE_SOURCE_THA3:
+            return False
+        control = getattr(self, "tha_infer_fp16_choice", None)
+        raw = self._choice_index_value(control, THA_INFER_FP16_CHOICES, THA_INFER_FP16_CHOICES[0])
+        return normalize_tha_infer_fp16(raw) and not self._tha_infer_fp16_fallback
+
+    def get_tha_infer_fp16_persisted_value(self) -> str:
+        """User preference for persistence (ignores THA3 override and FP16 runtime fallback)."""
+        fallback_raw = self.persistent_ui_state.get("tha_infer_fp16", "full")
+        fallback_choice = (
+            THA_INFER_FP16_CHOICES[1]
+            if normalize_tha_infer_fp16(fallback_raw)
+            else THA_INFER_FP16_CHOICES[0])
+        control = getattr(self, "tha_infer_fp16_choice", None)
+        raw = self._choice_index_value(control, THA_INFER_FP16_CHOICES, fallback_choice)
+        return "half" if normalize_tha_infer_fp16(raw) else "full"
+
+    def _apply_persisted_tha_infer_fp16_choice(self) -> None:
+        half = normalize_tha_infer_fp16(
+            self.persistent_ui_state.get("tha_infer_fp16", "full"))
+        control = getattr(self, "tha_infer_fp16_choice", None)
+        if control is None:
+            return
+        with block_events(self):
+            if isinstance(control, wx.Choice):
+                control.SetSelection(1 if half else 0)
+            else:
+                control.SetValue(THA_INFER_FP16_CHOICES[1 if half else 0])
+        self._sync_tha_infer_fp16_ui()
+
+    def _snapshot_enhancement_ui(self) -> dict:
+        return {
+            "nn_sr": snapshot_choice(getattr(self, "nn_super_resolution_choice", None)),
+            "nn_rife": snapshot_choice(getattr(self, "nn_frame_interpolation_choice", None)),
+            "nn_backend": snapshot_choice(getattr(self, "nn_infer_backend_choice", None)),
+            "tha_fp16": snapshot_choice(getattr(self, "tha_infer_fp16_choice", None)),
+            "pose_interp": snapshot_choice(getattr(self, "output_frame_interpolation_choice", None)),
+        }
+
+    def _restore_enhancement_ui(self, snap: dict) -> None:
+        with block_events(self):
+            restore_choice(getattr(self, "nn_super_resolution_choice", None), snap.get("nn_sr"))
+            restore_choice(getattr(self, "nn_frame_interpolation_choice", None), snap.get("nn_rife"))
+            restore_choice(getattr(self, "nn_infer_backend_choice", None), snap.get("nn_backend"))
+            restore_choice(getattr(self, "tha_infer_fp16_choice", None), snap.get("tha_fp16"))
+            restore_choice(getattr(self, "output_frame_interpolation_choice", None), snap.get("pose_interp"))
+
+    def _validate_output_enhancement_switch(self) -> tuple[bool, str]:
+        pipe = getattr(self, "output_enhancement", None)
+        if pipe is None:
+            return True, ""
+        if not pipe.nn_modes_requested():
+            return True, ""
+        if not is_output_enhancement_installed():
+            return False, "Install DEPLOY tier [5] output_enhancement for NN SR/RIFE."
+        if not pipe.weights_available:
+            return False, "NN weights missing under data/ezvtb_nn or addons/output_enhancement."
+        backend = self.get_nn_infer_backend()
+        if backend == INFER_BACKEND_PYTORCH:
+            return False, (
+                "NN super-resolution / RIFE need backend ONNX Runtime or TensorRT "
+                "(PyTorch applies to THA Student FP16 only).")
+        return True, ""
+
+    def _apply_enhancement_ui_from_config(self, cfg: dict) -> None:
+        with block_events(self):
+            sr_control = getattr(self, "nn_super_resolution_choice", None)
+            if isinstance(sr_control, wx.Choice):
+                try:
+                    sr_control.SetSelection(
+                        NN_SR_VALUES.index(normalize_sr_mode(cfg.get("nn_super_resolution_mode"))))
+                except ValueError:
+                    sr_control.SetSelection(0)
+            rife_control = getattr(self, "nn_frame_interpolation_choice", None)
+            if isinstance(rife_control, wx.Choice):
+                try:
+                    rife_control.SetSelection(
+                        NN_FRAME_INTERP_VALUES.index(
+                            normalize_nn_frame_multiplier(
+                                cfg.get("nn_frame_interpolation_multiplier"))))
+                except ValueError:
+                    rife_control.SetSelection(0)
+            backend_control = getattr(self, "nn_infer_backend_choice", None)
+            if isinstance(backend_control, wx.Choice):
+                try:
+                    backend_control.SetSelection(
+                        INFER_BACKEND_VALUES.index(
+                            normalize_infer_backend(cfg.get("nn_infer_backend"))))
+                except ValueError:
+                    backend_control.SetSelection(0)
+        self._sync_output_enhancement_config()
+
+    def _ui_alignment_toast(self, message: str) -> None:
+        monitor = getattr(self, "_ui_alignment_monitor", None)
+        if monitor is not None:
+            monitor._show_toast(message)
+
+    def _init_ui_alignment_monitor(self) -> None:
+        self._ui_alignment_monitor = UiAlignmentMonitor(self)
+
+        def _check_mocap():
+            choice = getattr(self, "mocap_input_mode_choice", None)
+            if choice is None or not isinstance(choice, wx.Choice):
+                return None
+            idx = choice.GetSelection()
+            if idx < 0 or idx >= len(MOCAP_INPUT_MODE_VALUES):
+                return None
+            ui_mode = MOCAP_INPUT_MODE_VALUES[idx]
+            runtime_mode = normalize_mocap_input_mode(getattr(self, "mocap_input_mode", ui_mode))
+            if ui_mode == runtime_mode:
+                return None
+            return ("Face input mode", ui_mode, runtime_mode)
+
+        def _revert_mocap():
+            self.refresh_mocap_input_mode_ui()
+
+        def _check_image_source():
+            runtime = self.get_image_source_mode()
+            choice = getattr(self, "image_source_mode_choice", None)
+            if choice is not None and isinstance(choice, wx.Choice):
+                idx = choice.GetSelection()
+                ui_mode = IMAGE_SOURCE_THA3 if idx == 1 else IMAGE_SOURCE_THA4
+                if ui_mode != runtime:
+                    return ("Image source", ui_mode, runtime)
+            persisted = normalize_image_source_mode(
+                self.persistent_ui_state.get("image_source_mode", runtime))
+            if persisted != runtime:
+                return ("Image source (persisted)", persisted, runtime)
+            return None
+
+        def _revert_image_source():
+            switch_image_source(self, self.get_image_source_mode(), autoload_asset=False)
+
+        def _check_output_enhancement():
+            pipe = getattr(self, "output_enhancement", None)
+            if pipe is None:
+                return None
+            ui = (
+                self.get_nn_super_resolution_mode(),
+                self.get_nn_frame_interpolation_multiplier(),
+                self.get_nn_infer_backend(),
+            )
+            cfg = pipe.get_config_snapshot()
+            runtime = (
+                normalize_sr_mode(cfg.get("nn_super_resolution_mode")),
+                normalize_nn_frame_multiplier(cfg.get("nn_frame_interpolation_multiplier")),
+                normalize_infer_backend(cfg.get("nn_infer_backend")),
+            )
+            if ui != runtime:
+                return ("Output enhancement", str(ui), str(runtime))
+            if pipe.nn_modes_requested() and not pipe.nn_runtime_ready():
+                return ("Output enhancement ready", "on", "not ready")
+            return None
+
+        def _revert_output_enhancement():
+            pipe = getattr(self, "output_enhancement", None)
+            if pipe is None:
+                return
+            self._apply_enhancement_ui_from_config(pipe.get_config_snapshot())
+
+        self._ui_alignment_monitor.register(AlignmentProbe(
+            "mocap_input", "Face input mode", _check_mocap, _revert_mocap, load_budget_sec=30.0))
+        self._ui_alignment_monitor.register(AlignmentProbe(
+            "image_source", "Image source", _check_image_source, _revert_image_source,
+            load_budget_sec=120.0))
+        self._ui_alignment_monitor.register(AlignmentProbe(
+            "output_enhancement", "Output enhancement", _check_output_enhancement,
+            _revert_output_enhancement, load_budget_sec=600.0))
+        self._ui_alignment_monitor.start()
+
+    def _refresh_enhancement_controls(self) -> None:
+        installed = is_output_enhancement_installed()
+        for control in (
+                getattr(self, "nn_super_resolution_choice", None),
+                getattr(self, "nn_frame_interpolation_choice", None),
+                getattr(self, "nn_infer_backend_choice", None)):
+            if control is not None and isinstance(control, wx.Choice):
+                control.Enable(installed)
+        self._sync_tha_infer_fp16_ui()
+
+    def _sync_tha_infer_fp16_ui(self) -> None:
+        control = getattr(self, "tha_infer_fp16_choice", None)
+        if control is None or not isinstance(control, wx.Choice):
+            return
+        tha3_mode = self.get_image_source_mode() == IMAGE_SOURCE_THA3
+        control.Enable(not tha3_mode)
+
+    def _maybe_warmup_output_enhancement(self) -> None:
+        pipe = getattr(self, "output_enhancement", None)
+        if pipe is None or not pipe.nn_modes_requested():
+            return
+        backend = self.get_nn_infer_backend()
+        if backend == INFER_BACKEND_PYTORCH:
+            self._warn_enhancement_once(
+                "NN super-resolution / RIFE need backend ONNX Runtime or TensorRT "
+                "(PyTorch applies to THA Student FP16 only).")
+            return
+        if not is_output_enhancement_installed():
+            return
+        warmup_key = (
+            self.get_nn_super_resolution_mode(),
+            self.get_nn_frame_interpolation_multiplier(),
+            backend,
+        )
+        if warmup_key == self._enhancement_warmup_key:
+            return
+        self._enhancement_warmup_key = warmup_key
+        self._sync_output_enhancement_config()
+
+        def _task(progress):
+            pipe.warmup(progress)
+
+        def _on_complete():
+            pass
+
+        def _on_error(exc: Exception):
+            self._enhancement_warmup_key = None
+            snap = getattr(self, "_enhancement_switch_snapshot", None)
+            if snap is not None:
+                self._restore_enhancement_ui(snap)
+                self._sync_output_enhancement_config()
+            show_rate_limited_message(
+                self.get_dialog_parent(),
+                f"Output enhancement load failed: {exc}",
+                "Output Enhancement",
+                style=wx.OK | wx.ICON_WARNING,
+                dialog_key="output_enhancement_load_failed",
+                min_interval_sec=30.0)
+            self._ui_alignment_toast(f"Output enhancement load failed: {exc}")
+
+        run_slow_task(
+            self.get_dialog_parent(),
+            "Loading output enhancement…",
+            _task,
+            on_complete=_on_complete,
+            on_error=_on_error)
+
+    def _sync_output_enhancement_config(self) -> None:
+        pipe = getattr(self, "output_enhancement", None)
+        if pipe is None:
+            return
+        pipe.update_config({
+            "antialias_strength": self._get_antialias_factor(),
+            "output_frame_interpolation": self.get_output_frame_interpolation_multiplier(),
+            "nn_super_resolution_mode": self.get_nn_super_resolution_mode(),
+            "nn_frame_interpolation_multiplier": self.get_nn_frame_interpolation_multiplier(),
+            "nn_infer_backend": self.get_nn_infer_backend(),
+            "tha_infer_fp16": self.get_tha_infer_fp16_enabled(),
+        })
+
+    def _warn_enhancement_once(self, message: str) -> None:
+        if self._enhancement_warned_once:
+            return
+        self._enhancement_warned_once = True
+        show_rate_limited_message(
+            self.get_dialog_parent(),
+            message,
+            "Output Enhancement",
+            style=wx.OK | wx.ICON_INFORMATION,
+            dialog_key="output_enhancement_missing",
+            min_interval_sec=30.0)
+
+    def on_output_enhancement_changed(self, event: wx.Event):
+        if is_blocked(self):
+            event.Skip()
+            return
+
+        def _apply():
+            self._tha_infer_fp16_fallback = False
+            if self.poser is not None and self.get_image_source_mode() == IMAGE_SOURCE_THA4:
+                apply_poser_precision(self.poser, self.get_tha_infer_fp16_enabled())
+            self._sync_output_enhancement_config()
+
+        snap = self._snapshot_enhancement_ui()
+        ok = run_guarded_switch(
+            self,
+            snapshot=lambda: snap,
+            apply_fn=_apply,
+            revert_fn=self._restore_enhancement_ui,
+            validate=self._validate_output_enhancement_switch,
+            on_fail=self._ui_alignment_toast)
+        if not ok:
+            event.Skip()
+            return
+        self._enhancement_switch_snapshot = snap
+        self._maybe_warmup_output_enhancement()
+        monitor = getattr(self, "_ui_alignment_monitor", None)
+        if monitor is not None:
+            monitor.notify_switch(["output_enhancement"])
+        self.save_persistent_ui_state()
+        event.Skip()
+
+    def on_tha_infer_fp16_changed(self, event: wx.Event):
+        self.on_output_enhancement_changed(event)
+
+    def _apply_present_enhancement(self, present_rgba: numpy.ndarray) -> numpy.ndarray:
+        pipe = getattr(self, "output_enhancement", None)
+        if pipe is None or present_rgba is None:
+            return present_rgba
+        pending = pipe.pop_rife_frame()
+        if pending is not None:
+            return pending
+        self._sync_output_enhancement_config()
+        return pipe.apply(present_rgba, is_new_real_frame=True)
 
     def get_output_background_hex(self) -> str:
         picker = getattr(self, "output_background_choice", None)
@@ -3743,7 +4464,7 @@ class MainFrame(wx.Frame):
                     and cached.shape[0] == canvas_height
                     and cached.shape[1] == canvas_width):
                 capture_window.update_frame_rgba(cached, frame_signature=signature)
-                self._note_capture_present_time()
+                self._on_ulw_frame_delivered()
                 _perf_record(capture_ms=(time.perf_counter() - capture_t0) * 1000.0)
                 return
             # Single-composite source of truth: reuse the exact RGBA the present
@@ -3805,12 +4526,7 @@ class MainFrame(wx.Frame):
                 rgba,
                 frame_signature=signature,
                 premultiplied_bgra=premultiplied_bgra)
-            self._note_capture_present_time()
-            # ULW is the actual on-screen output in transparent mode; count each
-            # delivered frame (including interpolated 补帧 frames) as the true
-            # output framerate. OutputFrame's panel-refresh tick only fires in
-            # non-transparent modes, so there is no double counting.
-            self._note_display_fps_tick()
+            self._on_ulw_frame_delivered()
             _perf_record(capture_ms=(time.perf_counter() - capture_t0) * 1000.0)
         except Exception as exc:
             _err_record(
@@ -3934,7 +4650,7 @@ class MainFrame(wx.Frame):
         ctypes layered output window) consume so enhancement and multi-layer
         compositing share one numpy geometry/blend source of truth.
         """
-        if self._render_keyframe_rgba is None:
+        if self.output_enhancement.keyframe_cache.rgba is None:
             return None
         canvas_width = max(1, int(canvas_width))
         canvas_height = max(1, int(canvas_height))
@@ -4059,7 +4775,7 @@ class MainFrame(wx.Frame):
         except Exception:
             pass
 
-    def ensure_application_windows_visible(self):
+    def ensure_application_windows_visible(self, *, defer_ulw_sync: bool = False):
         ensure_start = time.perf_counter()
         if self.full_controls_expanded:
             self.create_controls_frame()
@@ -4091,7 +4807,10 @@ class MainFrame(wx.Frame):
                 beside_rect = self.default_output_frame_rect_beside_controls()
                 self.apply_client_rect_to_window(self.output_frame, beside_rect, min_output_size)
             if self.is_ulw_output_enabled():
-                self._sync_transparent_capture_output_window_impl()
+                if defer_ulw_sync:
+                    wx.CallAfter(self._sync_transparent_capture_output_window_impl)
+                else:
+                    self._sync_transparent_capture_output_window_impl()
             else:
                 self.output_frame.Show(True)
                 self.uniconize_window(self.output_frame)
@@ -4608,11 +5327,19 @@ class MainFrame(wx.Frame):
                 self.get_character_edge_colour().Green(),
                 self.get_character_edge_colour().Blue()),
             "layer_blend_enabled": layer_blend_enabled,
+            "layer_hotkeys_enabled": self._safe_checkbox_value(
+                "layer_hotkeys_enabled_checkbox",
+                self._layer_hotkeys_enabled_state,
+                default=False),
             "layer_force_full_follow": layer_force_full_follow,
             "spine_neck_anchor_ratio": self.get_spine_neck_anchor_ratio(),
             "spine_body_bind_ray_percent": self.get_spine_body_bind_ray_percent(),
             "spine_head_bind_ray_percent": self.get_spine_head_bind_ray_percent(),
             "output_frame_interpolation": output_frame_interpolation,
+            "nn_super_resolution_mode": self.get_nn_super_resolution_mode(),
+            "nn_frame_interpolation_multiplier": self.get_nn_frame_interpolation_multiplier(),
+            "nn_infer_backend": self.get_nn_infer_backend(),
+            "tha_infer_fp16": self.get_tha_infer_fp16_persisted_value(),
             "mouth_infer_cap_hz": mouth_infer_cap_hz,
             "smooth_affine_30hz": smooth_affine_30hz,
             "image_source_mode": self.get_image_source_mode(),
@@ -4760,6 +5487,14 @@ class MainFrame(wx.Frame):
                     self.layer_blend_enabled_checkbox.SetValue(value)
                 except RuntimeError:
                     pass
+        if "layer_hotkeys_enabled" in data:
+            value = bool(data["layer_hotkeys_enabled"])
+            self._layer_hotkeys_enabled_state.SetValue(value)
+            if self._wx_control_alive(getattr(self, "layer_hotkeys_enabled_checkbox", None)):
+                try:
+                    self.layer_hotkeys_enabled_checkbox.SetValue(value)
+                except RuntimeError:
+                    pass
         if "layer_force_full_follow" in data:
             value = bool(data["layer_force_full_follow"])
             self._layer_force_full_follow_state.SetValue(value)
@@ -4769,15 +5504,56 @@ class MainFrame(wx.Frame):
                 except RuntimeError:
                     pass
         if "output_frame_interpolation" in data:
-            multiplier = output_frame_interp.normalize_multiplier(data["output_frame_interpolation"])
+            multiplier = normalize_pose_frame_multiplier(data["output_frame_interpolation"])
             control = getattr(self, "output_frame_interpolation_choice", None)
             if isinstance(control, wx.Choice):
                 try:
-                    control.SetSelection(output_frame_interp.FRAME_INTERP_VALUES.index(multiplier))
+                    control.SetSelection(POSE_FRAME_INTERP_VALUES.index(multiplier))
                 except ValueError:
                     control.SetSelection(0)
             else:
                 self.output_frame_interpolation_choice.SetValue(multiplier)
+        if "nn_super_resolution_mode" in data:
+            mode = normalize_sr_mode(data["nn_super_resolution_mode"])
+            control = getattr(self, "nn_super_resolution_choice", None)
+            if isinstance(control, wx.Choice):
+                try:
+                    control.SetSelection(NN_SR_VALUES.index(mode))
+                except ValueError:
+                    control.SetSelection(0)
+            else:
+                self.nn_super_resolution_choice.SetValue(mode)
+        if "nn_frame_interpolation_multiplier" in data:
+            mult = normalize_nn_frame_multiplier(data["nn_frame_interpolation_multiplier"])
+            control = getattr(self, "nn_frame_interpolation_choice", None)
+            if isinstance(control, wx.Choice):
+                try:
+                    control.SetSelection(NN_FRAME_INTERP_VALUES.index(mult))
+                except ValueError:
+                    control.SetSelection(0)
+            else:
+                self.nn_frame_interpolation_choice.SetValue(mult)
+        if "nn_infer_backend" in data:
+            backend = normalize_infer_backend(data["nn_infer_backend"])
+            control = getattr(self, "nn_infer_backend_choice", None)
+            if isinstance(control, wx.Choice):
+                try:
+                    control.SetSelection(INFER_BACKEND_VALUES.index(backend))
+                except ValueError:
+                    control.SetSelection(1)
+            else:
+                self.nn_infer_backend_choice.SetValue(backend)
+        if "tha_infer_fp16" in data:
+            half = normalize_tha_infer_fp16(data["tha_infer_fp16"])
+            control = getattr(self, "tha_infer_fp16_choice", None)
+            with block_events(self):
+                if isinstance(control, wx.Choice):
+                    control.SetSelection(1 if half else 0)
+                else:
+                    self.tha_infer_fp16_choice.SetValue(
+                        THA_INFER_FP16_CHOICES[1 if half else 0])
+            self._sync_tha_infer_fp16_ui()
+        self._sync_output_enhancement_config()
         if "mouth_infer_cap_hz" in data:
             try:
                 cap_hz = int(data["mouth_infer_cap_hz"])
@@ -4817,10 +5593,12 @@ class MainFrame(wx.Frame):
         self._window_capture_hwnd = int(data.get("window_capture_hwnd") or 0) or None
         self._window_capture_title = str(data.get("window_capture_title") or "").strip() or None
         self.update_load_model_buttons()
-        self.on_display_transform_control_changed()
+        if not getattr(self, "_defer_heavy_ui_refresh", False):
+            self.on_display_transform_control_changed()
         wx.CallAfter(self.apply_layer_blend_visibility)
         wx.CallAfter(self.update_character_edge_controls_visibility)
-        wx.CallAfter(self.sync_transparent_capture_output_window)
+        if not getattr(self, "_defer_heavy_ui_refresh", False):
+            wx.CallAfter(self.sync_transparent_capture_output_window)
         if self.get_controls_window() is not None:
             wx.CallAfter(self._apply_persisted_controls_layout)
 
@@ -5224,6 +6002,15 @@ class MainFrame(wx.Frame):
             on_zone_changed=self.on_mouse_center_zone_changed)
         mouse_only_sizer.Add(self.mouse_zone_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
 
+        mouse_zone_hint_text = wx.StaticText(
+            self.mouse_only_controls_panel,
+            label=(
+                "提示：输出动态增强校准后，左右运动幅度可能看起来不一致（属正常现象）。\n"
+                "Note: After output dynamic enhancement calibration, left/right motion may feel uneven (expected)."),
+            style=wx.ALIGN_LEFT)
+        mouse_zone_hint_text.SetForegroundColour(wx.Colour(100, 100, 100))
+        mouse_only_sizer.Add(mouse_zone_hint_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+
         horizontal_mix_panel = wx.Panel(self.mouse_only_controls_panel)
         horizontal_mix_sizer = wx.FlexGridSizer(cols=1, hgap=0, vgap=0)
         horizontal_mix_sizer.AddGrowableCol(0)
@@ -5329,10 +6116,21 @@ class MainFrame(wx.Frame):
     def on_mocap_input_mode_changed(self, event: wx.Event):
         if not hasattr(self, "mocap_input_mode_choice"):
             return
+        if is_blocked(self):
+            event.Skip()
+            return
         selection = self.mocap_input_mode_choice.GetSelection()
         if selection < 0 or selection >= len(MOCAP_INPUT_MODE_VALUES):
             return
-        self.set_mocap_input_mode(MOCAP_INPUT_MODE_VALUES[selection], from_user=True)
+        new_mode = MOCAP_INPUT_MODE_VALUES[selection]
+        if not self.set_mocap_input_mode(new_mode, from_user=True):
+            self.refresh_mocap_input_mode_ui()
+            self._ui_alignment_toast("Face input mode switch failed; reverted.")
+        else:
+            monitor = getattr(self, "_ui_alignment_monitor", None)
+            if monitor is not None:
+                monitor.notify_switch(["mocap_input"])
+        event.Skip()
 
     def _fallback_to_mouse_mocap_once(self, *, reason: str = "") -> None:
         if self._mouse_mocap_fallback_done:
@@ -5390,12 +6188,12 @@ class MainFrame(wx.Frame):
             mode: str,
             *,
             persist: bool = True,
-            from_user: bool = False) -> None:
+            from_user: bool = False) -> bool:
         mode = normalize_mocap_input_mode(mode)
         previous_mode = self.mocap_input_mode
         if mode == previous_mode:
             self.refresh_mocap_input_mode_ui()
-            return
+            return True
 
         if mode == MOCAP_INPUT_MODE_MEDIAPIPE:
             if not face_capture_assets_ready(get_portable_root()):
@@ -5409,9 +6207,9 @@ class MainFrame(wx.Frame):
                         "Face capture add-on required",
                         style=wx.OK | wx.ICON_INFORMATION,
                         dialog_key="face_capture_addon_required")
-                return
+                return False
             if not self.ensure_face_landmarker(show_dialog=from_user):
-                return
+                return False
 
         if mode == MOCAP_INPUT_MODE_MOUSE_AUDIO:
             if from_user or self._mouth_input_mode_before_mouse_audio is None:
@@ -5434,6 +6232,7 @@ class MainFrame(wx.Frame):
         self.refresh_mocap_input_mode_ui()
         if persist:
             self.save_persistent_ui_state()
+        return True
 
     def get_mouse_mocap_status_message(self) -> str:
         if not self.is_mouse_audio_mocap_mode():
@@ -5919,6 +6718,8 @@ class MainFrame(wx.Frame):
             _startup_record(
                 "create_controls_frame (build full controls UI)",
                 (time.perf_counter() - controls_build_t0) * 1000.0)
+            self._wire_ui_change_logging()
+            self._refresh_ui_change_history_display()
 
     def create_capture_panel(self, parent):
         self.capture_panel = wx.Panel(parent, style=wx.RAISED_BORDER)
@@ -5974,7 +6775,7 @@ class MainFrame(wx.Frame):
 
         self.webcam_container = wx.Panel(
             self.capture_panel,
-            size=(MainFrame.WEBCAM_PREVIEW_SIZE, MainFrame.WEBCAM_PREVIEW_SIZE + 48))
+            size=(MainFrame.WEBCAM_PREVIEW_SIZE, MainFrame.WEBCAM_PREVIEW_SIZE + 128))
         webcam_container_sizer = wx.BoxSizer(wx.VERTICAL)
         self.webcam_container.SetSizer(webcam_container_sizer)
         self.webcam_container.SetAutoLayout(1)
@@ -6002,6 +6803,12 @@ class MainFrame(wx.Frame):
         webcam_container_sizer.Add(
             self.webcam_preview_caption_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
         webcam_container_sizer.Add(self.webcam_capture_panel, wx.SizerFlags(0).FixedMinSize().Border(wx.ALL, 5))
+        self.ui_change_history_text = wx.StaticText(
+            self.webcam_container,
+            label="最近改动 / Recent UI\n—\n—\n—")
+        webcam_container_sizer.Add(
+            self.ui_change_history_text,
+            wx.SizerFlags(0).Expand().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 5))
         previews_row.Add(
             self.webcam_container,
             wx.SizerFlags(0).FixedMinSize().Border(wx.ALL, 5))
@@ -7269,6 +8076,7 @@ class MainFrame(wx.Frame):
             self.set_output_background_image_path(self.get_bundled_transparent_background_path())
         output_background_image_path = self.get_output_background_image_path()
         layer_blend_enabled = self.is_layer_blend_enabled()
+        layer_hotkeys_enabled = bool(self._layer_hotkeys_enabled_state.GetValue())
         character_edge_mode = normalize_character_edge_mode(
             str(self.persistent_ui_state.get("character_edge_mode", CHARACTER_EDGE_NONE)))
         try:
@@ -7292,6 +8100,14 @@ class MainFrame(wx.Frame):
         if mouth_infer_cap_hz not in MOUTH_INFER_CAP_HZ_VALUES:
             mouth_infer_cap_hz = MOUTH_INFER_CAP_HZ_DEFAULT
         smooth_affine_30hz = bool(self.persistent_ui_state.get("smooth_affine_30hz", True))
+        nn_super_resolution_mode = normalize_sr_mode(
+            self.persistent_ui_state.get("nn_super_resolution_mode", NN_SR_OFF))
+        nn_frame_interpolation = normalize_nn_frame_multiplier(
+            self.persistent_ui_state.get("nn_frame_interpolation_multiplier", NN_FRAME_INTERP_OFF))
+        nn_infer_backend = normalize_infer_backend(
+            self.persistent_ui_state.get("nn_infer_backend", INFER_BACKEND_PYTORCH))
+        tha_infer_fp16_raw = self.persistent_ui_state.get("tha_infer_fp16", "full")
+        tha_infer_fp16_index = 1 if normalize_tha_infer_fp16(tha_infer_fp16_raw) else 0
 
         postprocess_text = wx.StaticText(
             self.postprocess_panel, label="--- 后处理和其他 / Postprocess & Other (D 下) ---", style=wx.ALIGN_CENTER)
@@ -7484,6 +8300,20 @@ class MainFrame(wx.Frame):
             self.layer_blend_enabled_checkbox,
             wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
 
+        self.layer_hotkeys_enabled_checkbox = wx.CheckBox(
+            self.postprocess_panel,
+            label="启用图层快捷键 / Enable Layer Hotkeys")
+        self.layer_hotkeys_enabled_checkbox.SetValue(layer_hotkeys_enabled)
+        self.layer_hotkeys_enabled_checkbox.SetToolTip(
+            "默认关闭。勾选后才注册全局热键（显隐/GIF/按住显隐）；需先启用图层混合。"
+            " / Off by default. Registers global hotkeys when enabled; requires layer blending.")
+        self.layer_hotkeys_enabled_checkbox.Enable(layer_blend_enabled)
+        self.layer_hotkeys_enabled_checkbox.Bind(
+            wx.EVT_CHECKBOX, self.on_layer_hotkeys_changed)
+        self.postprocess_panel_sizer.Add(
+            self.layer_hotkeys_enabled_checkbox,
+            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT, 4))
+
         self.layer_blend_status_text = wx.StaticText(
             self.postprocess_panel,
             label="",
@@ -7601,12 +8431,12 @@ class MainFrame(wx.Frame):
             wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
 
         try:
-            frame_interp_index = output_frame_interp.FRAME_INTERP_VALUES.index(output_frame_interpolation)
+            frame_interp_index = POSE_FRAME_INTERP_VALUES.index(output_frame_interpolation)
         except ValueError:
             frame_interp_index = 0
         self.output_frame_interpolation_choice = wx.Choice(
             self.postprocess_panel,
-            choices=list(output_frame_interp.FRAME_INTERP_LABELS))
+            choices=list(POSE_FRAME_INTERP_LABELS))
         self.output_frame_interpolation_choice.SetSelection(frame_interp_index)
         self.output_frame_interpolation_choice.Bind(
             wx.EVT_CHOICE, self.on_output_frame_interpolation_changed)
@@ -7621,9 +8451,92 @@ class MainFrame(wx.Frame):
             frame_interp_hint,
             wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
 
+        nn_sr_label = wx.StaticText(
+            self.postprocess_panel,
+            label="超分 (NN) / SuperResolution (NN)")
+        self.postprocess_panel_sizer.Add(
+            nn_sr_label,
+            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
+        try:
+            nn_sr_index = NN_SR_VALUES.index(nn_super_resolution_mode)
+        except ValueError:
+            nn_sr_index = 0
+        self.nn_super_resolution_choice = wx.Choice(
+            self.postprocess_panel, choices=list(NN_SR_LABELS))
+        self.nn_super_resolution_choice.SetSelection(nn_sr_index)
+        self.nn_super_resolution_choice.Bind(wx.EVT_CHOICE, self.on_output_enhancement_changed)
+        self.postprocess_panel_sizer.Add(
+            self.nn_super_resolution_choice,
+            wx.SizerFlags().Expand().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
+
+        nn_rife_label = wx.StaticText(
+            self.postprocess_panel,
+            label="图像域补帧 (NN) / Frame Interpolation (NN, RIFE)")
+        self.postprocess_panel_sizer.Add(
+            nn_rife_label,
+            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
+        try:
+            nn_rife_index = NN_FRAME_INTERP_VALUES.index(nn_frame_interpolation)
+        except ValueError:
+            nn_rife_index = 0
+        self.nn_frame_interpolation_choice = wx.Choice(
+            self.postprocess_panel, choices=list(NN_FRAME_INTERP_LABELS))
+        self.nn_frame_interpolation_choice.SetSelection(nn_rife_index)
+        self.nn_frame_interpolation_choice.Bind(wx.EVT_CHOICE, self.on_output_enhancement_changed)
+        self.postprocess_panel_sizer.Add(
+            self.nn_frame_interpolation_choice,
+            wx.SizerFlags().Expand().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
+
+        nn_rife_hint = wx.StaticText(
+            self.postprocess_panel,
+            label="RIFE 约 +1 帧延迟；与上方 pose 插帧倍率相乘 / ~1 frame latency; multiplies with pose interp")
+        self.postprocess_panel_sizer.Add(
+            nn_rife_hint,
+            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
+
+        infer_backend_label = wx.StaticText(
+            self.postprocess_panel,
+            label="NN 推理后端 / NN Infer Backend")
+        self.postprocess_panel_sizer.Add(
+            infer_backend_label,
+            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
+        try:
+            backend_index = INFER_BACKEND_VALUES.index(nn_infer_backend)
+        except ValueError:
+            backend_index = 0
+        self.nn_infer_backend_choice = wx.Choice(
+            self.postprocess_panel, choices=list(INFER_BACKEND_LABELS))
+        self.nn_infer_backend_choice.SetSelection(backend_index)
+        self.nn_infer_backend_choice.Bind(wx.EVT_CHOICE, self.on_output_enhancement_changed)
+        self.postprocess_panel_sizer.Add(
+            self.nn_infer_backend_choice,
+            wx.SizerFlags().Expand().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
+
+        tha_fp16_label = wx.StaticText(
+            self.postprocess_panel,
+            label="THA 推理精度 / THA Infer Precision (Student)")
+        self.postprocess_panel_sizer.Add(
+            tha_fp16_label,
+            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
+        self.tha_infer_fp16_choice = wx.Choice(
+            self.postprocess_panel, choices=list(THA_INFER_FP16_LABELS))
+        self.tha_infer_fp16_choice.SetSelection(tha_infer_fp16_index)
+        self.tha_infer_fp16_choice.Bind(wx.EVT_CHOICE, self.on_tha_infer_fp16_changed)
+        self.postprocess_panel_sizer.Add(
+            self.tha_infer_fp16_choice,
+            wx.SizerFlags().Expand().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
+
+        enhancement_hint = wx.StaticText(
+            self.postprocess_panel,
+            label="NN 超分/RIFE 需 DEPLOY [5] output_enhancement；默认全关 / requires tier [5], default off")
+        self.postprocess_panel_sizer.Add(
+            enhancement_hint,
+            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
+
         self.postprocess_panel_sizer.Layout()
-        self.apply_layer_blend_visibility()
+        wx.CallAfter(self.apply_layer_blend_visibility)
         self.update_character_edge_controls_visibility()
+        wx.CallAfter(self._refresh_enhancement_controls)
         wx.CallAfter(self.refresh_image_source_ui_visibility)
         wx.CallAfter(self.schedule_postprocess_layout_refresh)
 
@@ -7722,15 +8635,17 @@ class MainFrame(wx.Frame):
         if hasattr(self, "load_last_tha3_png_button"):
             self.load_last_tha3_png_button.Enable(tha3_last_ready)
 
-    def show_full_controls_window(self):
+    def show_full_controls_window(self, *, defer_ulw_sync: bool = False, skip_state_reload: bool = False):
         show_start_time = time.perf_counter()
-        self.reload_persistent_ui_state_from_disk()
+        if not skip_state_reload:
+            self.reload_persistent_ui_state_from_disk()
         self.apply_mouth_persistent_state_to_args()
         self.apply_persistent_slider_value_states()
         self.create_controls_frame()
+        self._apply_persisted_tha_infer_fp16_choice()
         self.full_controls_expanded = True
         self.refresh_model_loaded_ui_state()
-        self.ensure_application_windows_visible()
+        self.ensure_application_windows_visible(defer_ulw_sync=defer_ulw_sync)
         self.ensure_output_frame()
         self.initialize_output_bitmap()
         self.refresh_output_frame_chrome()
@@ -7739,7 +8654,8 @@ class MainFrame(wx.Frame):
         wx.CallAfter(self._post_show_controls_setup)
         _startup_record(
             "show_full_controls_window (build + show all windows)",
-            (time.perf_counter() - show_start_time) * 1000.0)
+            (time.perf_counter() - show_start_time) * 1000.0,
+            defer_ulw_sync=defer_ulw_sync)
 
     def show_compact_launcher(self):
         if not self._restoring_window_geometry:
@@ -7824,6 +8740,7 @@ class MainFrame(wx.Frame):
             return
         self.tha3_model_variant = THA3_VARIANT_CHOICES[self.tha3_model_variant_choice.GetSelection()][0]
         self.save_persistent_ui_state()
+        self._sync_tha_infer_fp16_ui()
         if self.get_image_source_mode() == IMAGE_SOURCE_THA3 and self.last_tha3_character_png:
             switch_image_source(self, IMAGE_SOURCE_THA3)
             if os.path.isfile(self.last_tha3_character_png):
@@ -9086,8 +10003,27 @@ class MainFrame(wx.Frame):
 
         pose = torch.tensor(pose_list, device=self.device, dtype=self.poser.get_dtype())
 
+        use_half = self.get_tha_infer_fp16_enabled()
+        try:
+            with torch.no_grad():
+                if use_half and torch.cuda.is_available():
+                    with torch.cuda.amp.autocast(dtype=torch.float16):
+                        output_image = self.poser.pose(self.torch_source_image, pose)[0].float()
+                else:
+                    output_image = self.poser.pose(self.torch_source_image, pose)[0].float()
+                if torch.isnan(output_image).any() or torch.isinf(output_image).any():
+                    raise ValueError("FP16 NaN/Inf")
+        except Exception:
+            if use_half:
+                self._tha_infer_fp16_fallback = True
+                self._warn_enhancement_once(
+                    "FP16 inference unstable; falling back to FP32 for this session.")
+                with torch.no_grad():
+                    output_image = self.poser.pose(self.torch_source_image, pose)[0].float()
+            else:
+                raise
+
         with torch.no_grad():
-            output_image = self.poser.pose(self.torch_source_image, pose)[0].float()
             output_image = torch.clip((output_image + 1.0) / 2.0, 0.0, 1.0)
             output_image = convert_linear_to_srgb(output_image)
 
@@ -9117,44 +10053,30 @@ class MainFrame(wx.Frame):
             self._maybe_schedule_transparent_capture_update(immediate=True)
 
     def _get_antialias_factor(self) -> float:
-        if hasattr(self, "antialias_strength_spin"):
-            return max(1.0, self.antialias_strength_spin.GetValue())
-        return 1.0
+        return get_antialias_factor_from_control(getattr(self, "antialias_strength_spin", None))
 
     def _keyframe_cache_valid(self, wx_image: wx.Image, antialias_factor: float) -> bool:
-        return (
-            self._render_keyframe_rgba is not None
-            and self._render_keyframe_bitmap is not None
-            and self._render_keyframe_bitmap.IsOk()
-            and self._render_keyframe_image_id == id(wx_image)
-            and abs(self._render_keyframe_antialias - antialias_factor) < 1e-4)
+        return self.output_enhancement.keyframe_cache.is_valid(wx_image, antialias_factor)
 
     def _update_keyframe_cache(self, wx_image: wx.Image, antialias_factor: float) -> None:
-        keyframe_width = max(1, int(round(wx_image.GetWidth() * antialias_factor)))
-        keyframe_height = max(1, int(round(wx_image.GetHeight() * antialias_factor)))
-        source_rgba = capture_wx_image_to_rgba_array(wx_image)
-        if keyframe_width != wx_image.GetWidth() or keyframe_height != wx_image.GetHeight():
-            keyframe_rgba = scale_rgba(source_rgba, keyframe_width, keyframe_height)
-        else:
-            keyframe_rgba = source_rgba
-        self._render_keyframe_rgba = keyframe_rgba
-        self._render_keyframe_bitmap = self.create_rgba_bitmap_from_array(
-            keyframe_width, keyframe_height, keyframe_rgba)
-        self._render_keyframe_size = (keyframe_width, keyframe_height)
-        self._render_keyframe_image_id = id(wx_image)
-        self._render_keyframe_antialias = antialias_factor
+        self.output_enhancement.keyframe_cache.update(
+            wx_image,
+            antialias_factor,
+            wx_to_rgba=capture_wx_image_to_rgba_array,
+            create_bitmap=self.create_rgba_bitmap_from_array)
 
     def _compose_character_rgba_from_keyframe(
             self,
             canvas_width: int,
             canvas_height: int,
             antialias_factor: float) -> numpy.ndarray:
-        if self._render_keyframe_rgba is None:
+        keyframe_rgba = self.output_enhancement.keyframe_cache.rgba
+        if keyframe_rgba is None:
             raise RuntimeError("keyframe rgba cache missing")
         canvas_width = max(1, int(canvas_width))
         canvas_height = max(1, int(canvas_height))
         return compose_character_rgba_from_keyframe(
-            self._render_keyframe_rgba,
+            keyframe_rgba,
             canvas_width,
             canvas_height,
             anchor_x=(canvas_width / 2.0 + self.display_offset_x),
@@ -9272,6 +10194,7 @@ class MainFrame(wx.Frame):
             else:
                 present_rgba = numpy.zeros(
                     (canvas_height, canvas_width, 4), dtype=numpy.uint8)
+        present_rgba = self._apply_present_enhancement(present_rgba)
         self._cached_present_rgba = present_rgba
         self.last_banner_text = banner_text
         self.last_background_choice = self.get_output_background_signature()
@@ -9348,8 +10271,7 @@ class MainFrame(wx.Frame):
             wx_image,
             banner_text,
             fast_affine_only=not self.is_layer_blend_enabled())
-        self._interp_keyframe_pose = list(pose_list)
-        self._interp_substep_index = 0
+        self.output_enhancement.pose_interpolation.seed_after_real_infer(pose_list)
         self._note_inference_fps_tick()
 
     def render_default_pose_load_preview(self):
@@ -9437,7 +10359,6 @@ class MainFrame(wx.Frame):
         output_frame = getattr(self, "output_frame", None)
         if output_frame is not None and output_frame.IsShown():
             output_frame.result_image_panel.Refresh(False)
-        self._note_display_fps_tick()
 
 
     def _present_smooth_output_frame(self) -> None:
@@ -9451,6 +10372,8 @@ class MainFrame(wx.Frame):
         self._maybe_schedule_transparent_capture_update()
 
     def on_display_timer(self, event: Optional[wx.Event] = None):
+        self.poll_layer_hotkey_holds()
+        self.poll_layer_gif_playback_side_effects()
         if self.is_model_loaded():
             self.update_display_transform_state()
         motion_active = (
@@ -9463,6 +10386,10 @@ class MainFrame(wx.Frame):
             self._maybe_schedule_transparent_capture_update()
         else:
             self._present_smooth_output_frame()
+        pipe = getattr(self, "output_enhancement", None)
+        if pipe is not None and pipe.has_pending_rife() and self.last_output_wx_image is not None:
+            self.draw_cached_result_image(self.last_banner_text)
+            self._maybe_schedule_transparent_capture_update(immediate=True)
 
     def on_ui_anim_timer(self, event: Optional[wx.Event] = None):
         """Drive continuously-refreshing animated UI (controls + layer window) at a
@@ -9529,6 +10456,7 @@ class MainFrame(wx.Frame):
             self._invalidate_source_preview_cache()
             self.update_source_image_bitmap(force=True)
             self.poser = self.character_model.get_poser(self.device)
+            apply_poser_precision(self.poser, self.get_tha_infer_fp16_enabled())
             self.refresh_model_loaded_ui_state()
             self.last_loaded_model_path = resolved_path
             self.update_load_model_buttons()
@@ -9544,7 +10472,9 @@ class MainFrame(wx.Frame):
             self._input_fps = 0.0
             self._inference_complete_times = []
             self._inference_fps = 0.0
-            self._display_present_times = []
+            self._last_actual_output_present_mono = None
+            self._output_present_times = []
+            self._output_fps_last_commit_mono = 0.0
             self._display_out_fps = 0.0
             self._load_preview_shown = False
             self.last_output_wx_image = None
@@ -9689,6 +10619,7 @@ def create_face_landmarker():
 
 if __name__ == "__main__":
     try:
+        _main_t0 = time.perf_counter()
         _install_debug_excepthook()
         set_windows_app_user_model_id()
         os.environ.setdefault("GLOG_minloglevel", "3")
@@ -9696,6 +10627,9 @@ if __name__ == "__main__":
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         print("THA4 Load Preview script:", os.path.abspath(__file__), file=sys.stderr)
         print("Using device:", device, file=sys.stderr)
+        _startup_record(
+            "main (imports done, before MainFrame)",
+            (time.perf_counter() - _main_t0) * 1000.0)
 
         pose_converter = MediaPoseFacePoseConverter00()
 

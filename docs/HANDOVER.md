@@ -77,6 +77,7 @@ scripts\launch\run_load_preview_puppeteer.bat
 | [DEPLOY.md](DEPLOY.md) | **首次部署**：GitHub ZIP → 第一次正常启动 |
 | [ADDONS_LAYOUT.md](ADDONS_LAYOUT.md) | 可选包 `addons/` 与 junction |
 | [PREP_PUSH.md](PREP_PUSH.md) | **fork push 前检查清单** |
+| [HF_BUCKET_MIRROR.md](HF_BUCKET_MIRROR.md) | **HF Bucket 完整发行与瘦包补充（维护者）** |
 | [BUG_HOTSPOT_CHECKLIST.md](BUG_HOTSPOT_CHECKLIST.md) | **新功能必查**：历史 bug 热点 Top10（push / sync 后自动刷新） |
 | [TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md) | **排障（最全）** |
 | [UI_DIALOG_SAFETY.md](UI_DIALOG_SAFETY.md) | **高危**：定时器弹窗频率限制 |

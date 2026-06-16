@@ -70,6 +70,18 @@ from layer_runtime import (
     visible_layer_slot_ids_top_to_bottom,
     normalize_bind_ray_percent,
     normalize_binding_target,
+    classify_layer_asset_kind,
+    LayerHotkeyBinding,
+    LAYER_HOTKEY_ACTIONS,
+    LAYER_HOTKEY_ACTION_LABELS,
+    LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE,
+    LAYER_HOTKEY_ACTION_HOLD_TO_HIDE,
+    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW,
+    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE,
+    LAYER_HOTKEY_GIF_ACTIONS,
+    MAX_LAYER_HOTKEY_BINDINGS,
+    GIF_PLAYBACK_LOOP,
+    set_gif_playback_mode,
     apply_orbit_requisition_visibility,
     orbit_aux_carriers,
     orbit_aux_owner,
@@ -80,6 +92,7 @@ from layer_runtime import (
     stack_position_can_move_up,
     truncate_display_filename,
 )
+from layer_hotkey_registry import capture_hotkey_from_event, format_key_spec
 from layer_swing_pivot_dialog import show_pivot_edit_dialog, show_swing_pivot_edit_dialog
 
 if TYPE_CHECKING:
@@ -89,7 +102,7 @@ THUMB_SIZE = 52
 ROW_MIN_HEIGHT = 56
 SELECTED_BORDER = wx.Colour(255, 210, 0)
 THUMB_HIGHLIGHT = wx.Colour(255, 200, 0)
-DETAIL_DOCK_MIN_HEIGHT = 284
+DETAIL_DOCK_MIN_HEIGHT = 360
 PLACEHOLDER_HEIGHT = 72
 REMOVE_LAYER_BTN_BG = wx.Colour(210, 45, 45)
 REMOVE_LAYER_BTN_FG = wx.WHITE
@@ -105,10 +118,10 @@ def _style_remove_layer_button(button: wx.Button) -> None:
 
 PLACEHOLDER_TEXT = "点击上方图层行以编辑 / Click a layer row above to edit"
 
-SPINE_DIAGRAM_HEIGHT = 168
-DIAGRAM_PAD_LEFT = 52
-DIAGRAM_PAD_RIGHT = 52
-DIAGRAM_CONTROLS_WIDTH = 148
+SPINE_SIDEBAR_WIDTH = 176
+SPINE_DIAGRAM_MIN_HEIGHT = 100
+DIAGRAM_PAD_LEFT = 28
+DIAGRAM_PAD_RIGHT = 10
 SEGMENT_BODY_COLOUR = wx.Colour(70, 130, 220)
 SEGMENT_HEAD_COLOUR = wx.Colour(230, 140, 50)
 SPINE_JOINT_COLOUR = wx.Colour(40, 40, 40)
@@ -119,7 +132,7 @@ LAYER_MARKER_SELECTED = wx.Colour(255, 210, 0)
 
 
 class SpineRayReferencePanel(wx.Panel):
-    """Schematic of two-segment spine ray with controls on the right."""
+    """Spine ray map docked as a vertical sidebar beside the layer list."""
 
     def __init__(self, parent: wx.Window, main_frame: "MainFrame"):
         super().__init__(parent, style=wx.BORDER_THEME)
@@ -130,24 +143,23 @@ class SpineRayReferencePanel(wx.Panel):
         self._binding_markers: list = []
         self._spine_points: dict[str, tuple[float, float]] = {}
         self._live_tilt_deg = 0.0
+        self.SetMinSize((SPINE_SIDEBAR_WIDTH, 200))
         root = wx.BoxSizer(wx.VERTICAL)
         self.SetSizer(root)
 
         title = wx.StaticText(
             self,
-            label="射线映射 / Spine ray map")
+            label="射线映射\nSpine ray map")
         title_font = title.GetFont()
         title_font.SetWeight(wx.FONTWEIGHT_BOLD)
         title.SetFont(title_font)
-        root.Add(title, 0, wx.ALL, 6)
+        root.Add(title, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.ALL, 4)
 
-        body_row = wx.BoxSizer(wx.HORIZONTAL)
-
-        self.diagram = wx.Panel(self, size=(-1, SPINE_DIAGRAM_HEIGHT))
-        self.diagram.SetMinSize((220, SPINE_DIAGRAM_HEIGHT))
+        self.diagram = wx.Panel(self, size=(-1, SPINE_DIAGRAM_MIN_HEIGHT))
+        self.diagram.SetMinSize((SPINE_SIDEBAR_WIDTH - 12, SPINE_DIAGRAM_MIN_HEIGHT))
         self.diagram.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.diagram.Bind(wx.EVT_PAINT, self._on_diagram_paint)
-        body_row.Add(self.diagram, 1, wx.EXPAND | wx.RIGHT, 6)
+        root.Add(self.diagram, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
 
         self.controls_panel = wx.Panel(self)
         controls_outer = wx.BoxSizer(wx.HORIZONTAL)
@@ -155,10 +167,11 @@ class SpineRayReferencePanel(wx.Panel):
         min_pct = 0
         max_pct = 100
         default_pct = int(round(NECK_ANCHOR_RATIO_DEFAULT * 100))
+        control_slider_h = 96
 
         neck_col = wx.BoxSizer(wx.VERTICAL)
         neck_col.Add(
-            wx.StaticText(self.controls_panel, label="底→脖\nBottom→Neck"),
+            wx.StaticText(self.controls_panel, label="底→脖"),
             0,
             wx.ALIGN_CENTER_HORIZONTAL)
         self.neck_ratio_slider = wx.Slider(
@@ -167,24 +180,24 @@ class SpineRayReferencePanel(wx.Panel):
             minValue=min_pct,
             maxValue=max_pct,
             style=wx.SL_VERTICAL | wx.SL_INVERSE)
-        self.neck_ratio_slider.SetMinSize((28, SPINE_DIAGRAM_HEIGHT - 24))
+        self.neck_ratio_slider.SetMinSize((24, control_slider_h))
         self.neck_ratio_slider.SetToolTip(
             "底→脖参考分段比例（0%=底，100%=头，仅示意；不移动已绑图层）/ "
             "Reference bottom-to-neck split (0%=bottom, 100%=head; layers unchanged)")
         neck_col.Add(self.neck_ratio_slider, 1, wx.EXPAND)
         self.neck_ratio_label = wx.StaticText(self.controls_panel, label=f"{default_pct}%")
         neck_col.Add(self.neck_ratio_label, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.TOP, 2)
-        controls_outer.Add(neck_col, 0, wx.EXPAND | wx.RIGHT, 8)
+        controls_outer.Add(neck_col, 0, wx.EXPAND | wx.RIGHT, 6)
 
         bind_col = wx.BoxSizer(wx.VERTICAL)
         bind_default = int(round(BIND_RAY_PERCENT_DEFAULT))
 
         body_bind_row = wx.BoxSizer(wx.HORIZONTAL)
         body_bind_row.Add(
-            wx.StaticText(self.controls_panel, label="身绑①"),
+            wx.StaticText(self.controls_panel, label="身①"),
             0,
             wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
-            4)
+            2)
         self.body_bind_spin = wx.SpinCtrl(
             self.controls_panel,
             value=str(bind_default),
@@ -200,14 +213,14 @@ class SpineRayReferencePanel(wx.Panel):
             0,
             wx.ALIGN_CENTER_VERTICAL | wx.LEFT,
             2)
-        bind_col.Add(body_bind_row, 0, wx.EXPAND | wx.BOTTOM, 8)
+        bind_col.Add(body_bind_row, 0, wx.EXPAND | wx.BOTTOM, 6)
 
         head_bind_row = wx.BoxSizer(wx.HORIZONTAL)
         head_bind_row.Add(
-            wx.StaticText(self.controls_panel, label="头绑②"),
+            wx.StaticText(self.controls_panel, label="头②"),
             0,
             wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
-            4)
+            2)
         self.head_bind_spin = wx.SpinCtrl(
             self.controls_panel,
             value=str(bind_default),
@@ -226,56 +239,57 @@ class SpineRayReferencePanel(wx.Panel):
         bind_col.Add(head_bind_row, 0, wx.EXPAND)
         controls_outer.Add(bind_col, 1, wx.EXPAND)
 
-        body_row.Add(self.controls_panel, 0, wx.EXPAND)
-        root.Add(body_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 6)
+        root.Add(self.controls_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
 
         self.ratio_caption = wx.StaticText(self, label="")
         self.ratio_caption.SetForegroundColour(wx.Colour(90, 90, 90))
-        self.ratio_caption.Wrap(440)
-        root.Add(self.ratio_caption, 0, wx.ALL, 6)
+        self.ratio_caption.Wrap(SPINE_SIDEBAR_WIDTH - 12)
+        root.Add(self.ratio_caption, 0, wx.ALL, 4)
 
         gain_min = int(round(BODY_BIND_LEAN_FOLLOW_GAIN_MIN * 100))
         gain_max = int(round(BODY_BIND_LEAN_FOLLOW_GAIN_MAX * 100))
         gain_default = int(round(BODY_BIND_LEAN_FOLLOW_GAIN * 100))
 
-        lean_pos_row = wx.BoxSizer(wx.HORIZONTAL)
-        lean_pos_row.Add(
-            wx.StaticText(self, label="随倾位移 / Lean shift"),
+        lean_row = wx.BoxSizer(wx.HORIZONTAL)
+        lean_pos_col = wx.BoxSizer(wx.VERTICAL)
+        lean_pos_col.Add(
+            wx.StaticText(self, label="随倾位移"),
             0,
-            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
-            6)
+            wx.ALIGN_CENTER_HORIZONTAL)
         self.lean_pos_slider = wx.Slider(
             self, value=gain_default, minValue=gain_min, maxValue=gain_max,
-            style=wx.SL_HORIZONTAL)
+            style=wx.SL_VERTICAL | wx.SL_INVERSE)
+        self.lean_pos_slider.SetMinSize((24, control_slider_h))
         self.lean_pos_slider.SetToolTip(
             "身绑锚点随角色左右倾斜的位移增益：越小越稳（轻微动作不再大幅甩动），"
             "0%=锚点不随倾，100%=默认。只管位置，不改精灵转动。/ "
             "Body-bind anchor lean-shift gain: lower = steadier position "
             "(small leans no longer fling the layer), 0% = pinned, 100% = default. "
             "Position only; does not rotate the sprite.")
-        lean_pos_row.Add(self.lean_pos_slider, 1, wx.EXPAND)
+        lean_pos_col.Add(self.lean_pos_slider, 1, wx.EXPAND)
         self.lean_pos_label = wx.StaticText(self, label=f"{gain_default}%")
-        lean_pos_row.Add(self.lean_pos_label, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 8)
-        root.Add(lean_pos_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+        lean_pos_col.Add(self.lean_pos_label, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.TOP, 2)
+        lean_row.Add(lean_pos_col, 1, wx.EXPAND | wx.RIGHT, 4)
 
-        lean_roll_row = wx.BoxSizer(wx.HORIZONTAL)
-        lean_roll_row.Add(
-            wx.StaticText(self, label="随倾转动 / Lean rotate"),
+        lean_roll_col = wx.BoxSizer(wx.VERTICAL)
+        lean_roll_col.Add(
+            wx.StaticText(self, label="随倾转动"),
             0,
-            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
-            6)
+            wx.ALIGN_CENTER_HORIZONTAL)
         self.lean_roll_slider = wx.Slider(
             self, value=gain_default, minValue=gain_min, maxValue=gain_max,
-            style=wx.SL_HORIZONTAL)
+            style=wx.SL_VERTICAL | wx.SL_INVERSE)
+        self.lean_roll_slider.SetMinSize((24, control_slider_h))
         self.lean_roll_slider.SetToolTip(
             "身绑精灵随角色左右倾斜的转动增益：只管精灵自身旋转，不改锚点位置，"
             "0%=精灵不随倾转动，100%=默认。/ "
             "Body-bind sprite lean-rotate gain: rotates the sprite only, "
             "does not move the anchor. 0% = no roll follow, 100% = default.")
-        lean_roll_row.Add(self.lean_roll_slider, 1, wx.EXPAND)
+        lean_roll_col.Add(self.lean_roll_slider, 1, wx.EXPAND)
         self.lean_roll_label = wx.StaticText(self, label=f"{gain_default}%")
-        lean_roll_row.Add(self.lean_roll_label, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 8)
-        root.Add(lean_roll_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+        lean_roll_col.Add(self.lean_roll_label, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.TOP, 2)
+        lean_row.Add(lean_roll_col, 1, wx.EXPAND)
+        root.Add(lean_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
 
         self.neck_ratio_slider.Bind(wx.EVT_SLIDER, self._on_neck_ratio_changed)
         self.body_bind_spin.Bind(wx.EVT_SPINCTRL, self._on_body_bind_changed)
@@ -330,6 +344,7 @@ class SpineRayReferencePanel(wx.Panel):
             f"  |  ②段 {upper_pct}% · 参考头绑 {int(round(head_pct))}% · 已绑 {head_layers} 层"
             f"  |  头中心 {int(round(HEAD_ANCHOR_RATIO * 100))}%{tilt_text}"
             f"  |  参考分段/绑点调整不移动图层 · 射线示意")
+        self.ratio_caption.Wrap(SPINE_SIDEBAR_WIDTH - 12)
         self.diagram.Refresh(False)
 
     def _diagram_geometry(self, width: int, height: int) -> dict:
@@ -734,6 +749,30 @@ class LayerDetailDock(wx.Panel):
         self.visible_cb = wx.CheckBox(self.layer_block, label="显示 / Visible")
         layer_sizer.Add(self.visible_cb, 0, wx.ALL, 4)
 
+        self.hotkey_title = wx.StaticText(
+            self.layer_block,
+            label="快捷键 / Hotkeys (global)")
+        layer_sizer.Add(self.hotkey_title, 0, wx.LEFT | wx.RIGHT | wx.TOP, 4)
+
+        self.hotkey_rows_panel = wx.Panel(self.layer_block)
+        self.hotkey_rows_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.hotkey_rows_panel.SetSizer(self.hotkey_rows_sizer)
+        layer_sizer.Add(self.hotkey_rows_panel, 0, wx.EXPAND | wx.ALL, 4)
+
+        self.hotkey_add_btn = wx.Button(
+            self.layer_block,
+            label="+ 添加快捷键 / Add hotkey")
+        layer_sizer.Add(self.hotkey_add_btn, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+
+        self.hotkey_disabled_hint = wx.StaticText(
+            self.layer_block,
+            label=(
+                "图层快捷键未启用。请在后处理栏勾选「启用图层快捷键」。"
+                " / Layer hotkeys off — enable in postprocess panel."))
+        self.hotkey_disabled_hint.SetForegroundColour(wx.Colour(100, 100, 100))
+        self.hotkey_disabled_hint.Wrap(440)
+        layer_sizer.Add(self.hotkey_disabled_hint, 0, wx.ALL, 4)
+
         scale_row = wx.BoxSizer(wx.HORIZONTAL)
         scale_row.Add(
             wx.StaticText(self.layer_block, label="缩放 / Scale"),
@@ -1081,33 +1120,43 @@ class BasicLayerWindow(wx.Frame):
         self._detail_slot_id: Optional[int] = None
         self._selected_slot_ids: set[int] = set()
         self._selection_anchor_slot_id: Optional[int] = None
+        self._hotkey_row_widgets: list[dict] = []
+        self._hotkey_capture_row: Optional[int] = None
+        self._hotkey_ui_syncing = False
+        self._hotkey_ui_syncing = False
         primary = main_frame.basic_layers_state.selected_slot_id
         if primary is not None:
             self._selected_slot_ids = {primary}
             self._selection_anchor_slot_id = primary
 
         panel = wx.Panel(self)
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        panel.SetSizer(sizer)
+        content_row = wx.BoxSizer(wx.HORIZONTAL)
+        panel.SetSizer(content_row)
+
+        main_col = wx.BoxSizer(wx.VERTICAL)
 
         self.scroll = wx.ScrolledWindow(panel, style=wx.VSCROLL)
         self.scroll.SetScrollRate(0, 16)
         self.scroll_sizer = wx.BoxSizer(wx.VERTICAL)
         self.scroll.SetSizer(self.scroll_sizer)
-        sizer.Add(self.scroll, 1, wx.EXPAND | wx.ALL, 4)
+        main_col.Add(self.scroll, 1, wx.EXPAND | wx.ALL, 4)
 
         self.add_layer_button = wx.Button(panel, label="+ 新增图层 / Add layer")
         self.add_layer_button.SetToolTip(
             "在最上层(角色前)新增一个空图层；可不上传素材作为绑定/运动锚点。"
             " / Add an empty layer on top (in front of character)")
         self.add_layer_button.Bind(wx.EVT_BUTTON, self._on_add_layer)
-        sizer.Add(self.add_layer_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+        main_col.Add(self.add_layer_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
 
         self.detail_dock = LayerDetailDock(panel)
-        sizer.Add(self.detail_dock, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+        main_col.Add(self.detail_dock, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+
+        content_row.Add(main_col, 1, wx.EXPAND)
 
         self.spine_reference = SpineRayReferencePanel(panel, main_frame)
-        sizer.Add(self.spine_reference, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+        content_row.Add(
+            self.spine_reference, 0,
+            wx.EXPAND | wx.TOP | wx.RIGHT | wx.BOTTOM, 4)
 
         frame_sizer = wx.BoxSizer(wx.VERTICAL)
         self.SetSizer(frame_sizer)
@@ -1117,11 +1166,12 @@ class BasicLayerWindow(wx.Frame):
         self.Bind(wx.EVT_MOVE, self.on_geometry_changed)
         self.Bind(wx.EVT_SIZE, self.on_geometry_changed)
         self.Bind(wx.EVT_ACTIVATE, self._on_activate)
+        self.Bind(wx.EVT_CHAR_HOOK, self._on_hotkey_char_hook)
 
         self.rebuild_rows()
         self._wire_detail_dock()
         self._refresh_detail_dock()
-        self.SetMinSize((480, 680))
+        self.SetMinSize((480 + SPINE_SIDEBAR_WIDTH, 560))
         self.restore_geometry()
         self.Layout()
 
@@ -1142,7 +1192,7 @@ class BasicLayerWindow(wx.Frame):
         data = self.main_frame.persistent_ui_state
         x = int(data.get("basic_layer_window_x", 80))
         y = int(data.get("basic_layer_window_y", 80))
-        width = max(480, int(data.get("basic_layer_window_width", 640)))
+        width = max(480 + SPINE_SIDEBAR_WIDTH, int(data.get("basic_layer_window_width", 640)))
         height = max(560, int(data.get("basic_layer_window_height", 720)))
         clamped = self.main_frame.clamp_client_rect_to_visible_screen(
             wx.Rect(x, y, width, height))
@@ -1163,6 +1213,7 @@ class BasicLayerWindow(wx.Frame):
             self.detail_dock.editor_scroll.FitInside()
         self.detail_dock.remove_layer_panel.Layout()
         self.detail_dock.Layout()
+        self.spine_reference.Layout()
         self.Layout()
 
     def _wire_detail_dock(self) -> None:
@@ -1192,6 +1243,232 @@ class BasicLayerWindow(wx.Frame):
         dock.orbit_far_scale_slider.Bind(wx.EVT_SLIDER, self._on_orbit_changed)
         dock.orbit_aux_choice.Bind(wx.EVT_CHOICE, self._on_orbit_aux_changed)
         dock.edit_orbit_pivot_btn.Bind(wx.EVT_BUTTON, self._on_edit_orbit_pivot)
+        dock.hotkey_add_btn.Bind(wx.EVT_BUTTON, self._on_add_hotkey_binding)
+
+    def _hotkey_action_choices(self, layer: BasicLayerSlot) -> list[str]:
+        actions = [
+            LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE,
+            LAYER_HOTKEY_ACTION_HOLD_TO_HIDE,
+            LAYER_HOTKEY_ACTION_HOLD_TO_SHOW,
+        ]
+        if classify_layer_asset_kind(layer.asset_path or "") == "gif":
+            actions.append(LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE)
+            actions.extend(LAYER_HOTKEY_GIF_ACTIONS)
+        return actions
+
+    def _clear_hotkey_rows_ui(self) -> None:
+        dock = self.detail_dock
+        dock.hotkey_rows_sizer.Clear(True)
+        self._hotkey_row_widgets = []
+        self._hotkey_capture_row = None
+
+    def refresh_hotkey_section_visibility(self) -> None:
+        enabled = self.main_frame.is_layer_hotkeys_enabled()
+        dock = self.detail_dock
+        dock.hotkey_title.Show(enabled)
+        dock.hotkey_rows_panel.Show(enabled)
+        dock.hotkey_add_btn.Show(enabled)
+        dock.hotkey_disabled_hint.Show(not enabled)
+        if not enabled:
+            self._hotkey_capture_row = None
+            self._clear_hotkey_rows_ui()
+        dock.layer_block.Layout()
+
+    def _sync_hotkey_ui(self, layer: BasicLayerSlot) -> None:
+        self.refresh_hotkey_section_visibility()
+        if not self.main_frame.is_layer_hotkeys_enabled():
+            return
+        self._hotkey_ui_syncing = True
+        try:
+            self._clear_hotkey_rows_ui()
+            dock = self.detail_dock
+            actions = self._hotkey_action_choices(layer)
+            labels = [LAYER_HOTKEY_ACTION_LABELS[action] for action in actions]
+            for binding in layer.hotkey_bindings[:MAX_LAYER_HOTKEY_BINDINGS]:
+                self._append_hotkey_row_ui(layer, binding, actions, labels)
+        finally:
+            self._hotkey_ui_syncing = False
+
+    def _append_hotkey_row_ui(
+            self,
+            layer: BasicLayerSlot,
+            binding: LayerHotkeyBinding,
+            actions: Optional[list[str]] = None,
+            labels: Optional[list[str]] = None) -> None:
+        if actions is None or labels is None:
+            actions = self._hotkey_action_choices(layer)
+            labels = [LAYER_HOTKEY_ACTION_LABELS[action] for action in actions]
+        dock = self.detail_dock
+        row_panel = wx.Panel(dock.hotkey_rows_panel)
+        row_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        row_panel.SetSizer(row_sizer)
+        action_choice = wx.Choice(row_panel, choices=labels)
+        try:
+            action_choice.SetSelection(actions.index(binding.action))
+        except ValueError:
+            action_choice.SetSelection(0)
+        key_label = wx.StaticText(
+            row_panel,
+            label=format_key_spec(binding.modifiers, binding.key_code)
+            if binding.key_code > 0 else "（未设置 / unset）")
+        capture_btn = wx.Button(row_panel, label="录制 / Capture", size=(100, -1))
+        remove_btn = wx.Button(row_panel, label="删除 / Remove", size=(90, -1))
+        row_sizer.Add(action_choice, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 4)
+        row_sizer.Add(key_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 4)
+        row_sizer.Add(capture_btn, 0, wx.RIGHT, 4)
+        row_sizer.Add(remove_btn, 0)
+        dock.hotkey_rows_sizer.Add(row_panel, 0, wx.EXPAND | wx.BOTTOM, 4)
+        row_index = len(self._hotkey_row_widgets)
+        row_info = {
+            "panel": row_panel,
+            "action_choice": action_choice,
+            "key_label": key_label,
+            "capture_btn": capture_btn,
+            "remove_btn": remove_btn,
+            "actions": actions,
+            "binding": binding,
+        }
+        self._hotkey_row_widgets.append(row_info)
+        action_choice.Bind(
+            wx.EVT_CHOICE,
+            lambda event, idx=row_index: self._on_hotkey_action_changed(idx, event))
+        capture_btn.Bind(
+            wx.EVT_BUTTON,
+            lambda event, idx=row_index: self._on_capture_hotkey(idx, event))
+        remove_btn.Bind(
+            wx.EVT_BUTTON,
+            lambda event, idx=row_index: self._on_remove_hotkey_row(idx, event))
+
+    def _collect_hotkey_bindings_from_ui(self) -> list[LayerHotkeyBinding]:
+        bindings: list[LayerHotkeyBinding] = []
+        for row in self._hotkey_row_widgets:
+            binding: LayerHotkeyBinding = row["binding"]
+            actions: list[str] = row["actions"]
+            choice = row["action_choice"]
+            selection = choice.GetSelection()
+            if selection < 0 or selection >= len(actions):
+                action = LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE
+            else:
+                action = actions[selection]
+            bindings.append(LayerHotkeyBinding(
+                action=action,
+                modifiers=binding.modifiers,
+                key_code=binding.key_code,
+            ))
+        return bindings[:MAX_LAYER_HOTKEY_BINDINGS]
+
+    def _persist_layer_hotkeys(self, slot_id: int) -> None:
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        layer.hotkey_bindings = self._collect_hotkey_bindings_from_ui()
+        self.main_frame.persist_basic_layers_state()
+        if self.main_frame.is_layer_hotkeys_enabled():
+            self.main_frame.sync_layer_hotkey_registry()
+
+    def _on_add_hotkey_binding(self, event: wx.Event) -> None:
+        if not self.main_frame.is_layer_hotkeys_enabled():
+            event.Skip()
+            return
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            event.Skip()
+            return
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        if len(self._hotkey_row_widgets) >= MAX_LAYER_HOTKEY_BINDINGS:
+            event.Skip()
+            return
+        actions = self._hotkey_action_choices(layer)
+        labels = [LAYER_HOTKEY_ACTION_LABELS[action] for action in actions]
+        binding = LayerHotkeyBinding(action=actions[0], modifiers=0, key_code=0)
+        self._append_hotkey_row_ui(layer, binding, actions, labels)
+        slot_id = self._current_detail_slot()
+        if slot_id is not None:
+            self._persist_layer_hotkeys(slot_id)
+        self._refresh_layout()
+        event.Skip()
+
+    def _on_capture_hotkey(self, row_index: int, event: wx.Event) -> None:
+        if row_index < 0 or row_index >= len(self._hotkey_row_widgets):
+            event.Skip()
+            return
+        self._hotkey_capture_row = row_index
+        row = self._hotkey_row_widgets[row_index]
+        row["key_label"].SetLabel("按下快捷键… / Press key…")
+        self.SetFocus()
+        event.Skip()
+
+    def _on_hotkey_char_hook(self, event: wx.KeyEvent) -> None:
+        if self._hotkey_capture_row is None:
+            event.Skip()
+            return
+        row_index = self._hotkey_capture_row
+        if row_index < 0 or row_index >= len(self._hotkey_row_widgets):
+            self._hotkey_capture_row = None
+            event.Skip()
+            return
+        captured = capture_hotkey_from_event(event)
+        if captured is None:
+            event.Skip()
+            return
+        row = self._hotkey_row_widgets[row_index]
+        binding: LayerHotkeyBinding = row["binding"]
+        binding.modifiers = captured.modifiers
+        binding.key_code = captured.key_code
+        row["key_label"].SetLabel(format_key_spec(binding.modifiers, binding.key_code))
+        self._hotkey_capture_row = None
+        slot_id = self._current_detail_slot()
+        if slot_id is not None:
+            self._persist_layer_hotkeys(slot_id)
+        event.Skip(False)
+
+    def _on_hotkey_action_changed(self, row_index: int, event: wx.Event) -> None:
+        if self._hotkey_ui_syncing:
+            event.Skip()
+            return
+        slot_id = self._current_detail_slot()
+        deferred_action: Optional[str] = None
+        if slot_id is not None and 0 <= row_index < len(self._hotkey_row_widgets):
+            row = self._hotkey_row_widgets[row_index]
+            binding: LayerHotkeyBinding = row["binding"]
+            actions: list[str] = row["actions"]
+            selection = row["action_choice"].GetSelection()
+            if 0 <= selection < len(actions):
+                new_action = actions[selection]
+                if new_action != binding.action:
+                    binding.action = new_action
+                    deferred_action = new_action
+        if slot_id is not None:
+            self._persist_layer_hotkeys(slot_id)
+            if deferred_action is not None:
+                wx.CallAfter(
+                    self._deferred_reload_layer_for_hotkey_action,
+                    slot_id,
+                    deferred_action)
+        event.Skip()
+
+    def _deferred_reload_layer_for_hotkey_action(
+            self, slot_id: int, action: str) -> None:
+        if getattr(self.main_frame, "_is_closing", False):
+            return
+        self.main_frame.reload_layer_from_asset(slot_id, hotkey_action=action)
+
+    def _on_remove_hotkey_row(self, row_index: int, event: wx.Event) -> None:
+        if row_index < 0 or row_index >= len(self._hotkey_row_widgets):
+            event.Skip()
+            return
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            event.Skip()
+            return
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        self._clear_hotkey_rows_ui()
+        bindings = list(layer.hotkey_bindings)
+        if row_index < len(bindings):
+            bindings.pop(row_index)
+        layer.hotkey_bindings = bindings
+        self._sync_hotkey_ui(layer)
+        self._persist_layer_hotkeys(slot_id)
+        self._refresh_layout()
+        event.Skip()
 
     def get_selected_slot_ids(self) -> set[int]:
         return set(self._selected_slot_ids)
@@ -1359,6 +1636,22 @@ class BasicLayerWindow(wx.Frame):
             self.spine_reference.sync_from_main_frame()
         self._refresh_layout()
 
+    def refresh_layer_slot_row(self, slot_id: int) -> None:
+        """Update one list row and the detail visibility checkbox without rebuilding hotkeys."""
+        state = self.main_frame.basic_layers_state
+        try:
+            layer = state.get_slot(slot_id)
+        except KeyError:
+            return
+        row = self._row_panels.get(slot_id)
+        if row is not None:
+            self._populate_row(row, layer, self.main_frame.layer_asset_cache)
+        if (
+                self._detail_slot_id == slot_id
+                and len(self._selected_slot_ids) == 1
+                and self.detail_dock.layer_block.IsEnabled()):
+            self.detail_dock.visible_cb.SetValue(layer.visible)
+
     def refresh_spine_diagram(self) -> None:
         if hasattr(self, "spine_reference"):
             self.spine_reference.refresh_diagram_live()
@@ -1490,6 +1783,7 @@ class BasicLayerWindow(wx.Frame):
         dock.layer_block.Enable()
         dock.motion_choice.Enable()
         dock.visible_cb.SetValue(layer.visible)
+        self._sync_hotkey_ui(layer)
         scale_pct = int(round(max(0.05, layer.transform.scale) * 100))
         dock.scale_slider.SetValue(max(5, min(300, scale_pct)))
         dock.scale_label.SetLabel(f"{layer.transform.scale:.2f}")
@@ -1616,6 +1910,8 @@ class BasicLayerWindow(wx.Frame):
         layer.asset_path = rel
         layer.enabled = True
         layer.visible = True
+        if classify_layer_asset_kind(rel) == "gif":
+            set_gif_playback_mode(layer, GIF_PLAYBACK_LOOP)
         center_layer_transform(layer.transform)
         self.main_frame.persist_basic_layers_state()
         self._select_slot(slot_id)

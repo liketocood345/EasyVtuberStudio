@@ -2,20 +2,21 @@
 
 ## Overview
 
-The GitHub **CORE** ZIP is slim: application code, `EasyVtuberStudio.exe`, and the bundled **THA4 Student (bai)** character. Heavy optional assets install into `addons/` and are linked into legacy paths so existing scripts keep working.
+The GitHub **CORE** ZIP is slim: application code, `EasyVtuberStudio.exe`, and the bundled **THA4 Student (bai)** character. **`data/ezvtb_nn/*.onnx` is not in GitHub ZIP** (HF Bucket full release or DEPLOY tier [5]). Heavy optional assets install into `addons/` and are linked into legacy paths so existing scripts keep working.
 
 ```text
 EasyVtuberStudio/
 ├── EasyVtuberStudio.exe
-├── DEPLOY.bat              # four Y/N tiers: basic / face / THA3 / THA4 train
+├── DEPLOY.bat              # five Y/N tiers: basic / face / THA3 / THA4 train / output_enhancement
 ├── RESET_ADDON.bat         # remove one add-on + reconcile
 ├── data/character_models/  # CORE (bai student)
 ├── deps/tha3/              # THA3 code only in ZIP
 ├── addons/                 # optional packs (physical files)
 │   ├── face_puppeteer/venv + mediapipe/
 │   ├── tha3_models/
-│   └── tha4_training/tha4 + pose_dataset.pt
-└── workspace/              # user state (gitignored)
+│   ├── tha4_training/tha4 + pose_dataset.pt
+│   └── output_enhancement/ezvtb_data/  # DEPLOY [5]: from HF Bucket data/ezvtb_nn (fallback: import script)
+└── workspace/              # user state + ezvtb_engines TRT cache (gitignored)
 ```
 
 ## Junction strategy
@@ -38,8 +39,11 @@ Run `packaging/reconcile_portable_layout.ps1` after manual deletes or migration.
 | face_puppeteer | N | `addons/face_puppeteer` + MediaPipe | ~3–4 GB |
 | tha3_models | N | THA3 portrait weights | ~2 GB |
 | tha4_training | N | teacher + pose dataset | ~1.5–3 GB |
+| **output_enhancement** | N | onnxruntime + NN SR/RIFE data layout | ~0.8 GB+ |
 
 `EasyVtuberStudio.exe` starts when **basic_run** (or face runtime / system Python with torch+wx) is already satisfied; otherwise it directs the user to **DEPLOY.bat** (no silent auto-install).
+
+**output_enhancement [5]:** Installs pip packages; **downloads** RIFE / waifu2x / Real-ESRGAN ONNX from HF Bucket `data/ezvtb_nn/` (primary) into `addons/output_enhancement/ezvtb_data/` (fallback: `import_ezvtb_nn_weights.ps1`). TensorRT engines cache under `workspace/ezvtb_engines/`. Post-process NN controls stay **Off** until user enables them; tier [5] not installed → controls disabled + one-time hint (f-023). See [HF_BUCKET_MIRROR.md](HF_BUCKET_MIRROR.md).
 
 ## Reset
 

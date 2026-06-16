@@ -1,6 +1,6 @@
 [首次部署（GitHub ZIP 下载后） / First-time Deploy](docs/DEPLOY.md)
 
-**便携版（推荐最终用户）：** GitHub Download ZIP（CORE）→ 解压 → **`DEPLOY.bat`**（四档 Y/N）或环境已就绪时直接 **`EasyVtuberStudio.exe`**。详见 [docs/DEPLOY.md](docs/DEPLOY.md)。
+**便携版（推荐最终用户）：** [GitHub Download ZIP](https://github.com/liketocood345/EasyVtuberStudio)（瘦包）或 [HF Bucket 完整目录](https://huggingface.co/buckets/liketocode789/EasyVtuberStudio) → **`DEPLOY.bat`**（**五档** Y/N）→ **`EasyVtuberStudio.exe`**。详见 [docs/DEPLOY.md](docs/DEPLOY.md)。
 
 **本仓库 = GitHub 发布总库（CORE 刚解压态）**；本地全装研发在 `E:\easyvtuberstudio-develop`（三模块 `addons/*` 实体文件，不入本 ZIP）。见 [docs/HANDOVER.md](docs/HANDOVER.md) §0.1 · [docs/ADDONS_LAYOUT.md](docs/ADDONS_LAYOUT.md) · 推送前 [docs/PREP_PUSH.md](docs/PREP_PUSH.md)。
 
@@ -32,13 +32,14 @@ https://github.com/user-attachments/assets/dfa16395-3dfc-4861-b727-53e208856555
 | 项 | 说明 |
 |----|------|
 | **GitHub 仓库** | **[liketocood345/EasyVtuberStudio](https://github.com/liketocood345/EasyVtuberStudio)** |
-| **本仓库（GitHub CORE）** | 当前解压目录；本地示例 `E:\easyvtuberstudio-main`（`addons/` 初始为空） |
+| **HF Bucket（完整发行）** | **[liketocode789/EasyVtuberStudio](https://huggingface.co/buckets/liketocode789/EasyVtuberStudio)** — 含 `data/ezvtb_nn/` ONNX |
+| **本仓库（GitHub CORE）** | 当前解压目录；本地示例 `E:\easyvtuberstudio-main`（`addons/` 初始为空；**不含** NN ONNX） |
 | **研发主仓（非 GitHub 仓库）** | `E:\easyvtuberstudio-develop` — **三模块全装**，日常改代码后 `scripts\maint\sync_develop_to_fork.ps1` 再 push 到上表 GitHub |
 | 曾用 GitHub 仓库名 | ~~EasyVtuber-with-THA3-THA4~~（2026-05 更名为 **EasyVtuberStudio**） |
 | 曾用本地目录 | `E:\tha4fork` / `E:\tha4fork-develop` |
 | 定制代码包 | `face-puppeteer-ui-enhancements-ai-code/` |
 | **新 Agent 入口** | **[docs/HANDOVER.md](docs/HANDOVER.md)** |
-| **首次部署（ZIP 下载）** | **[docs/DEPLOY.md](docs/DEPLOY.md)** |
+| **首次部署** | **[docs/DEPLOY.md](docs/DEPLOY.md)** · HF Bucket 见上表 |
 | 计划与对接 | [plans/](plans/) |
 
 ### 官方上游与参考项目（3）
@@ -102,6 +103,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 ### 7. 内置图层系统
 
 - **启用图层混合**：弹出五层独立编辑窗，在内置 OutputFrame 合成（透明 PNG）
+- **图层快捷键（f-062 子集）**：🟠 **半损坏·待修** — 每层可录全局热键（显隐 / 按住 / GIF 播放）；须同时勾选「启用图层快捷键」（默认关）。设置与注册仍不稳定，见 `docs/TROUBLESHOOTING_QA.md` Q16b–Q16d
 - **启动无限图层系统**：占位开关（L2 尚未实现）
 - ~~向外挂图层系统输出 / bridge~~ 已移除（2026-05-30）
 
@@ -114,7 +116,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 
 - `data/character_models/baiten_from_project_forlon9/bai_450k/`：示例白腾（代号：九星独行角色） student 模型（yaml + 图）
 - 文档：`docs/HANDOVER.md`、`docs/HARDWARE_REQUIREMENTS.md`、`docs/TROUBLESHOOTING_QA.md`、`docs/DOC_INDEX.md` 等
-
+- `his/`：按时间归档的历史快照；`archive_to_his.ps1` 留档
 
 更细的条目见 `face-puppeteer-ui-enhancements-ai-code/CHANGELOG.md`。
 
@@ -127,7 +129,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 ```
 <REPO_ROOT>\
 ├── README.md                 ← 本文件（GitHub 首页）
-├── DEPLOY.bat                ← 四档安装（basic / face / THA3 / THA4）
+├── DEPLOY.bat                ← 五档安装（basic / face / THA3 / THA4 训练 / NN 后处理）
 ├── RESET_ADDON.bat           ← 卸载单个可选包
 ├── EasyVtuberStudio.exe      ← 主入口（双击启动）
 ├── addons/                   ← 可选包（初始仅 README）
@@ -170,8 +172,9 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 
 | 提交 / 日期 | 说明 |
 |-------------|------|
-| `2026-06-15` | **图层圆周运动**（给你角色加个围着角色飞的卫星哪肯定是香的咧）；**鼠标三区校准**与 ix-025 三条校准界限（周期 = 自动点对应按钮）；**窗口捕获**长时卡顿优化；`CODEBASE_MAP` / BUG 热点清单与 git hooks；DEPLOY 增补 THA3 **AI 生成立绘**中英混合提示词 |
-| `3a32f04` · 2026-06-13 | **透明 ULW 真 alpha 输出**、wx-free，合成与显示帧率修复；图层**绑定随躯干倾斜**（Lean shift / rotate 双增益）；任务栏统一 exe 图标、三窗同启；背景下拉四档重构 |
+| `2026-06-16` | **图层快捷键（f-062）** 初版合入（显隐/按住/GIF）；标 **🟠 半损坏·待修**（设置/注册/性能已知问题，见 Q16b–Q16d） |
+| `2026-06-15` | **图层圆周运动**（轨道编辑、辅助槽 z 序、L2 槽位增删）；**鼠标三区校准**与 ix-025 三条校准界限（周期 = 自动点对应按钮）；**窗口捕获**长时卡顿优化；`CODEBASE_MAP` / BUG 热点清单与 git hooks；DEPLOY 增补 THA3 **AI 生成立绘**中英混合提示词 |
+| `3a32f04` · 2026-06-13 | **透明 ULW 真 alpha 输出**、wx-free 合成与显示帧率修复；图层**绑定随躯干倾斜**（Lean shift / rotate 双增益）；任务栏统一 exe 图标、三窗同启；背景下拉四档重构 |
 | `3213b0e` · PR #8 | DEPLOY：**THA3 立绘 PNG** 规格表与构图示意 |
 | `952b32b` · PR #6 | 图层**简单摇摆**运动；图层窗立绘行刷新修复 |
 | `f81363b` · 2026-06-04 | **Mouse + Audio** 布局补全；三栏分割持久化；校准控件迁至预览行右侧 |

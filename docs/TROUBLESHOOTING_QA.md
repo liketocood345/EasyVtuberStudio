@@ -61,6 +61,20 @@
 
 ---
 
+### Q3c：`f-057` 说的「启动 ≤10 秒」到底量什么？
+
+**A：** 只量 **主 UI 界面壳就绪**（控制窗 + 输出窗可见、控件可点），**不含**：
+
+| 不计入 10s | 说明 |
+|------------|------|
+| THA4/THA3 **模型加载** | Load Last、启动后自动加载、首帧 pose 渲染 |
+| **面捕子系统** | MediaPipe 创建、摄像头/窗口捕获连接、`face_puppeteer` 初始化 |
+| **图层系统** | 图层状态还原、资源读盘、首次 compose |
+
+以上可在 UI 就绪后继续，但须 **异步/按需**，不得卡住首屏。验收看 `E:\debug-3353ed.log` 中 `runId=startup`、阶段 **`startup_show_full_controls (UI ready…)`** 的 `ms` ≤ 10000。TRT 编译、NN 权重首次加载等属 **慢任务（≤10min + 进度 ETA）**，与主 UI 10s 为两条独立预算。详见 `e:\record\easyvtuberstudio条目设计手册.md` **`f-057`**。
+
+---
+
 ### Q4：提示找不到 CUDA 或 `cuda:0` 报错？
 
 **A：** 脚本默认 **`torch.device("cuda:0")`**，需要 NVIDIA 显卡与 CUDA 版 PyTorch。无独显时需改代码改 CPU，**通常无法实时面捕**，属环境限制而非 UI bug。
@@ -129,7 +143,7 @@
 
 ---
 
-### Q5a：DEPLOY 四档分别装什么？
+### Q5a：DEPLOY 五档分别装什么？
 
 **A：**
 
@@ -139,8 +153,39 @@
 | **[2] face_puppeteer** | `addons\face_puppeteer\venv` + MediaPipe `.task`，摄像头面捕 |
 | **[3] tha3_models** | THA3 立绘 `.pt` |
 | **[4] tha4_training** | Teacher 权重 + pose 数据集 |
+| **[5] output_enhancement** | onnxruntime + pyanime4k；从 HF Bucket 拉取 `data/ezvtb_nn/` ONNX，复制到 `addons\output_enhancement\ezvtb_data\` |
 
 详见 [DEPLOY.md](DEPLOY.md)、[ADDONS_LAYOUT.md](ADDONS_LAYOUT.md)。
+
+---
+
+### Q5g：后处理 NN 超分 / RIFE 灰色或提示缺 [5]？
+
+**A：** 后处理 **SuperResolution (NN)** / **Frame Interpolation (NN)** 需 **DEPLOY [5] output_enhancement**。
+
+- **从 GitHub 瘦包安装：** CORE **不含** `data\ezvtb_nn\` ONNX；档位 [5] 装 pip 并从 HF Bucket（`liketocode789/EasyVtuberStudio`）拉取到 `addons\output_enhancement\ezvtb_data\`（失败回退 Google Drive 导入脚本）。  
+- **从 HF Bucket 整目录同步：** 桶内已含 `data\ezvtb_nn\`，装 [5] 时主要补 pip 包。
+
+启用 NN 后请将 **NN 推理后端** 设为 **ONNX Runtime** 或 **TensorRT**。详见 [HF_BUCKET_MIRROR.md](HF_BUCKET_MIRROR.md)、[DEPLOY.md](DEPLOY.md)。
+
+---
+
+### Q5i：不想用 GitHub ZIP，能直接从 HF 下载完整项目吗？
+
+**A：** 可以。公开 Bucket：https://huggingface.co/buckets/liketocode789/EasyVtuberStudio  
+
+```powershell
+pip install -U huggingface_hub
+python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtuberStudio D:\EasyVtuberStudio
+```
+
+进入目录后运行 **`DEPLOY.bat`** 与 **`EasyVtuberStudio.exe`**，流程与 GitHub 版相同；桶内已带 NN ONNX。桶首页 README 有完整说明。
+
+---
+
+### Q5h：TensorRT 编译很慢？
+
+**A：** 首次选 **TensorRT** 后端时会编译 SR/RIFE 引擎，缓存于 `workspace\ezvtb_engines\`；进度条会提示「一次性，下次秒开」。编译失败会回退 ONNX Runtime 并写入 `workspace\deploy.log`。无 NVIDIA / 无 tensorrt wheel 时请用 **ONNX Runtime** 后端。
 
 ---
 
@@ -279,9 +324,44 @@
 
 ---
 
+### Q15b：为什么耳朵不会动？
+
+**A：** 原作者 **没有设计 AI 绘画动耳** 功能（THA 管线里没有对应的耳朵 blendshape / 姿态通道）。若需要会动的耳朵，可考虑使用 **图层系统**（例如单独准备耳朵/耳饰贴图图层，随头转或自行编排动画）。
+
+---
+
+### Q15c：为什么转头时嘴容易变形？
+
+**A：** THA 原作者的模型是 **按人类面部比例** 训练的，对 **长嘴筒子**（兽设吻部、鸟喙等）兼容很差；头转时 morpher 按「人嘴」做网格变形，吻部越长越容易拉花、抿嘴或穿模。这不是面捕滑块能彻底修好的问题。建议换用 **自己角色的 Q 版立绘** 等 **吻部较短、更接近人脸** 的形象；或接受写实全身立绘在转头时嘴部略假，用图层/后期遮挡弱化。
+
+---
+
 ### Q16：输出窗有角色，主窗预览很小或布局挤在一起？
 
 **A：** 增强版曾调整 **三栏/视频源独立列**；过窄时拖动分割条或放大「完整调参窗」。右侧控件过多时用窗口滚动条。
+
+---
+
+### Q16b：图层快捷键按了没反应？
+
+> **🟠 半损坏·待修（2026-06-16）**：图层快捷键子系统（f-062）已上线但**不稳定**——设置 UI 曾误清空绑定、切换动作可能闪退、按热键可能掉帧。下列步骤可缓解，**不保证**全部场景；修复验收前请勿用于直播关键道具。
+
+**A：** 须先勾选后处理 **「启用图层混合 / Enable Layer Blending」**，并勾选 **「启用图层快捷键 / Enable Layer Hotkeys」**（默认关；未勾选时详情区快捷键区会隐藏且不会注册全局热键）。在图层系统窗口选中图层 → 详情区快捷键 → **+ 添加快捷键** → 选动作 → **录制 / Capture** 键位（须先录制键位才会注册；仅选动作未录键不会生效）。GIF 动作含：**按住显示播一次**、播一次、**显示播一次后隐藏**、循环、停止。非 GIF 图层可用显隐/按住类动作。若状态栏提示注册失败，换 `Ctrl+Alt+数字键` 等组合。**改动作后请重启应用再试一次注册。**
+
+---
+
+### Q16c：启用图层混合后图层窗/程序打不开？
+
+**A：** 若曾加入图层热键后出现 **启动即崩** 或 **图层窗无法创建**，常见根因是 wxPython 4.2 **没有** `wx.HotKeyEvent` 类型名（`EVT_HOTKEY` 仍可用）；主脚本若用 `wx.HotKeyEvent` 作类型注解会导致 **整模块 import 失败**。已改为 `wx.Event`；图层窗也会在完整控件面板建完后再 `CallAfter` 打开。若仍失败，看 stderr 是否 `BasicLayerWindow create failed:` 并贴完整 Traceback。
+
+---
+
+### Q16d：切换快捷键动作（尤其「按住显示」）闪退，或按热键后帧率骤降？
+
+**A：**
+
+1. **闪退**：若在图层窗 **快捷键动作下拉** 切换时崩溃，多为在 `EVT_CHOICE` 回调里 **同步重建** 了快捷键行（销毁当前下拉控件）。已改为 `CallAfter` 延迟重载素材，且重载时 **不再重建** 快捷键 UI。
+2. **帧率约降至 1/4**：按住/松开类热键若每次触发 `on_layer_state_changed`（全量合成 + 写盘 + 刷新整个图层窗），会明显拖慢输出。按住类现仅 **轻量重绘输出**；GIF `play_once` 仅在图层 **可见** 时才计入持续动画刷新，避免隐藏后仍满帧合成。
 
 ---
 

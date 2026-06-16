@@ -41,3 +41,56 @@ function Write-DeployFailure {
         Write-DeployLog $ErrorRecord.ScriptStackTrace
     }
 }
+
+function Sync-BundledEzvtbNnWeights {
+    param(
+        [Parameter(Mandatory = $true)][string]$PortableRoot,
+        [Parameter(Mandatory = $true)][string]$AddonDataRoot
+    )
+    $bundled = Join-Path $PortableRoot "data\ezvtb_nn"
+    if (-not (Test-Path $bundled)) { return $false }
+    $copied = $false
+    foreach ($sub in @("rife", "waifu2x", "Real-ESRGAN")) {
+        $src = Join-Path $bundled $sub
+        if (-not (Test-Path $src)) { continue }
+        $dst = Join-Path $AddonDataRoot $sub
+        New-Item -ItemType Directory -Force -Path $dst | Out-Null
+        Get-ChildItem -Path $src -Filter "*.onnx" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $target = Join-Path $dst $_.Name
+            if (-not (Test-Path $target) -or $_.LastWriteTimeUtc -gt (Get-Item $target).LastWriteTimeUtc) {
+                Copy-Item -Force $_.FullName $target
+                $copied = $true
+            }
+        }
+    }
+    return $copied
+}
+
+function Invoke-PipUpgradePackages {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonExe,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Packages,
+        [string]$Label = "pip install"
+    )
+    if (-not (Test-Path -LiteralPath $PythonExe)) {
+        throw "Python not found: $PythonExe"
+    }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    Write-Host "${Label}: $($Packages -join ', ')"
+    $pipOutput = & $PythonExe -m pip install --upgrade @Packages 2>&1
+    foreach ($line in @($pipOutput)) {
+        if ($line -is [System.Management.Automation.ErrorRecord]) {
+            Write-Host $line.ToString()
+        } else {
+            Write-Host $line
+        }
+    }
+    $exitCode = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
+    if ($exitCode -ne 0) {
+        throw "pip install failed (exit=$exitCode): $($Packages -join ' ')"
+    }
+}

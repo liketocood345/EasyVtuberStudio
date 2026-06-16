@@ -1,6 +1,11 @@
 {
-  "schema_version": 5,
-  "notes": "Install targets live under addons/<pack>/; reconcile_portable_layout.ps1 links CORE paths (runtime/venv, deps/tha3/models, demo/data/*).",
+  "schema_version": 6,
+  "notes": "Install targets live under addons/<pack>/; reconcile_portable_layout.ps1 links CORE paths. Large NN ONNX (tier [5]) primary source: HF Bucket liketocode789/EasyVtuberStudio.",
+  "primary_bucket": {
+    "id": "liketocode789/EasyVtuberStudio",
+    "label": "EasyVtuberStudio HF mirror",
+    "url": "https://huggingface.co/buckets/liketocode789/EasyVtuberStudio"
+  },
   "packages": [
     {
       "id": "mediapipe_task",
@@ -87,6 +92,29 @@
         "addons/tha4_training/tha4/face_morpher.pt",
         "addons/tha4_training/tha4/body_morpher.pt",
         "addons/tha4_training/pose_dataset.pt"
+      ]
+    },
+    {
+      "id": "ezvtb_nn_weights",
+      "label": "EZVTB NN ONNX (RIFE / waifu2x / Real-ESRGAN; HF Bucket primary)",
+      "attribution": "https://huggingface.co/buckets/liketocode789/EasyVtuberStudio",
+      "addon_id": "output_enhancement",
+      "files": [
+        {
+          "kind": "huggingface_bucket",
+          "label": "EasyVtuberStudio HF mirror (primary)",
+          "install": {
+            "handler": "bucket_copy_tree",
+            "bucket_id": "liketocode789/EasyVtuberStudio",
+            "bucket_path": "data/ezvtb_nn",
+            "dest": "data/ezvtb_nn"
+          }
+        }
+      ],
+      "verify": [
+        "data/ezvtb_nn/rife/rife_x2_fp32.onnx",
+        "data/ezvtb_nn/waifu2x/noise0_scale2x_fp32.onnx",
+        "data/ezvtb_nn/Real-ESRGAN/exported_256_fp32.onnx"
       ]
     }
   ]

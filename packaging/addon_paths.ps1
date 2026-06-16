@@ -232,6 +232,44 @@ function Test-MouseStudentRuntime {
     return [bool](Get-MouseStudentPythonExe $PortableRoot)
 }
 
+function Test-OutputEnhancementInstalled {
+    param(
+        [Parameter(Mandatory = $true)][string]$PortableRoot,
+        [Parameter(Mandatory = $true)][string]$ScriptRoot
+    )
+    $manifest = Get-AddonsManifest -ScriptRoot $ScriptRoot
+    $record = Get-AddonRecord -Manifest $manifest -AddonId "output_enhancement"
+    return Test-AddonInstalled -PortableRoot $PortableRoot -AddonRecord $record
+}
+
+function Test-OutputEnhancementPipImports {
+    param([Parameter(Mandatory = $true)][string]$PythonExe)
+    if (-not (Test-Path -LiteralPath $PythonExe)) { return $false }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    & $PythonExe -c "import onnxruntime; import pyanime4k" 2>$null | Out-Null
+    $ok = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $prevEap
+    return $ok
+}
+
+function Test-FacePuppeteerRuntimeReady {
+    param(
+        [Parameter(Mandatory = $true)][string]$PortableRoot,
+        [Parameter(Mandatory = $true)][string]$ScriptRoot
+    )
+    if (-not (Test-FacePuppeteerVenv -PortableRoot $PortableRoot)) {
+        return $false
+    }
+    $python = Join-Path (Get-FacePuppeteerVenvAbsolute -PortableRoot $PortableRoot) "Scripts\python.exe"
+    if (-not (Test-PythonImports -PythonExe $python -RequireMediapipe)) {
+        return $false
+    }
+    $manifest = Get-AddonsManifest -ScriptRoot $ScriptRoot
+    $record = Get-AddonRecord -Manifest $manifest -AddonId "face_puppeteer"
+    return Test-AddonInstalled -PortableRoot $PortableRoot -AddonRecord $record
+}
+
 function Get-FacePuppeteerVenvAbsolute {
     param([Parameter(Mandatory = $true)][string]$PortableRoot)
     $primary = Resolve-PortableRootPath $PortableRoot (Get-FacePuppeteerVenvRelative)

@@ -10,6 +10,7 @@
     "RESET_ADDON.bat",
     "addons/README.md",
     "data/character_models (incl. bai student + parts)",
+    "data/ezvtb_nn/README.md (ONNX via HF Bucket on DEPLOY [5])",
     "data/distill_examples",
     "data/images",
     "deps/tha3 code (tha3_src, ezvtuber_rt) without model weights",

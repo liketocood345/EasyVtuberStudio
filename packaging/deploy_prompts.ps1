@@ -33,6 +33,7 @@ function Show-DeployWarning {
     Write-Host "   [2] face_puppeteer - Camera face capture + MediaPipe (~3-4 GB)"
     Write-Host "   [3] tha3_models    - THA3 portrait weights (~2 GB)"
     Write-Host "   [4] tha4_training  - THA4 teacher + pose dataset (~1.5-3 GB)"
+    Write-Host "   [5] output_enhancement - NN super-resolution + RIFE ONNX (~0.8 GB+)"
     Write-Host ""
     Write-Host " Re-running may overwrite addons\face_puppeteer\venv."
     Write-Host " Already-downloaded model packs are usually skipped."

@@ -170,7 +170,9 @@ MODULE_PURPOSE_OVERRIDES: Dict[str, str] = {
 }
 
 MODULE_INTROS = {
-    "frame_interpolation.py": "Pose-based frame interpolation helpers (no direct wx controls; driven by postprocess Frame Interpolation and GPU Infer Cap).",
+    "frame_interpolation.py": "Re-export shim; see output_enhancement.pose_interpolation.",
+    "output_enhancement/pose_interpolation.py": "Pose-based frame interpolation (no direct wx controls; driven by postprocess Frame Interpolation and GPU Infer Cap).",
+    "output_enhancement/antialiasing.py": "SSAA anti-aliasing for keyframe compose (Anti-Aliasing strength slider).",
     "layer_runtime.py": "Basic layer stack data model, geometry, compositing, and JSON persistence.",
     "basic_layer_window.py": "Unlimited layer editor window (opened when Enable Unlimited Layer System is on).",
     "transparent_capture_window.py": "Win32 layered window for OBS transparent capture output.",

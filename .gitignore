@@ -40,6 +40,8 @@ build/
 !/data/images/**
 !/data/tha4/
 !/data/tha4/**
+!/data/ezvtb_nn/
+!/data/ezvtb_nn/**
 !/data/thirdparty/
 !/data/thirdparty/**
 .idea/*

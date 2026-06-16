@@ -1,4 +1,4 @@
-﻿# EasyVtuberStudio — English Guide
+# EasyVtuberStudio — English Guide
 
 **EasyVtuberStudio** is a virtual avatar face-puppeteering application built on THA3 and THA4 (with UI patterns influenced by EasyVtuber).
 
@@ -6,8 +6,8 @@
 
 ### Recommended (end users)
 
-1. GitHub **Code → Download ZIP** → extract  
-2. Double-click **`DEPLOY.bat`** — four Y/N tiers (Enter = default): **[1] basic_run** (recommended first), **[2] face_puppeteer**, **[3] tha3_models**, **[4] tha4_training**  
+1. **GitHub:** Code → Download ZIP → extract, **or** sync the full project from [HF Bucket](https://huggingface.co/buckets/liketocode789/EasyVtuberStudio) (`pip install huggingface_hub` then `hf buckets sync …`)  
+2. Double-click **`DEPLOY.bat`** — **five** Y/N tiers (Enter = default): **[1] basic_run**, **[2] face_puppeteer**, **[3] tha3_models**, **[4] tha4_training**, **[5] output_enhancement**  
 3. Double-click **`EasyVtuberStudio.exe`**
 
 See [DEPLOY.md](DEPLOY.md) (Chinese, step-by-step).
@@ -31,6 +31,7 @@ Other launchers under `scripts\launch\` (e.g. `THA4Train.exe`, `THA4_DownloadAss
 - Chinese main overview: [../README.md](../README.md)
 - **Full doc index:** [DOC_INDEX.md](DOC_INDEX.md)
 - **First-time deploy:** [DEPLOY.md](DEPLOY.md)
+- **HF Bucket (full release):** https://huggingface.co/buckets/liketocode789/EasyVtuberStudio
 - Troubleshooting: [TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md)
 - Handover: [HANDOVER.md](HANDOVER.md)
 

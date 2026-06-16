@@ -4,7 +4,8 @@ param(
     [switch]$Strict,
     [switch]$IncludeTha4Training,
     [switch]$RequireFacePuppeteer = $true,
-    [switch]$RequireTha3Models = $true
+    [switch]$RequireTha3Models = $true,
+    [switch]$RequireOutputEnhancement = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,6 +76,29 @@ if ($IncludeTha4Training) {
     }
 } else {
     Write-Host "[SKIP] tha4_training add-on"
+}
+
+if ($RequireOutputEnhancement) {
+    $enhRecord = Get-AddonRecord -Manifest $manifest -AddonId "output_enhancement"
+    foreach ($rel in @($enhRecord.verify)) {
+        Test-RequiredFile "output_enhancement: $rel" ([string]$rel) $failedRef | Out-Null
+    }
+    $enhPython = Get-MouseStudentPythonExe -PortableRoot $PortableRoot
+    if ($enhPython -and (Test-Path $enhPython)) {
+        Write-Host ""
+        Write-Host "Checking output_enhancement imports (onnxruntime, pyanime4k) ..."
+        if (Test-OutputEnhancementPipImports -PythonExe $enhPython) {
+            Write-Host "[OK] output_enhancement pip imports"
+        } else {
+            Write-Host "[MISSING] output_enhancement pip imports (re-run DEPLOY [5] after [1] or [2])"
+            $failed++
+        }
+    } else {
+        Write-Host "[MISSING] output_enhancement runtime (install [1] basic_run or [2] face_puppeteer first)"
+        $failed++
+    }
+} else {
+    Write-Host "[SKIP] output_enhancement add-on"
 }
 
 if ($python -and (Test-Path $python)) {

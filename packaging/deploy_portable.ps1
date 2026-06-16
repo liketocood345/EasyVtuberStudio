@@ -71,7 +71,7 @@ try {
     Write-Host ""
     Write-Host "============================================================"
     Write-Host " EasyVtuberStudio - DEPLOY (install tiers)"
-    Write-Host " Tiers: basic_run, face_puppeteer, tha3_models, tha4_training"
+    Write-Host " Tiers: basic_run, face_puppeteer, tha3_models, tha4_training, output_enhancement"
     Write-Host "============================================================"
 
     $selected = @(Resolve-DeployPackageIds | Select-Object -Unique)
@@ -111,6 +111,7 @@ try {
     $installMouseStudent = ($selected -contains "mouse_student") -or $MouseStudentOnly.IsPresent
     $installTha3 = $selected -contains "tha3_models"
     $installTha4 = $selected -contains "tha4_training"
+    $installEnhancement = $selected -contains "output_enhancement"
 
     if ($installMouseStudent) {
         if (Test-MouseStudentRuntime -PortableRoot $PortableRoot) {
@@ -131,12 +132,16 @@ try {
         Assert-ScriptSucceeded "MediaPipe task install"
 
         if (-not $SkipRuntime) {
-            Write-Step "face_puppeteer: Python runtime (addons\face_puppeteer\venv)"
-            if (-not (Test-Path $bootstrapScript)) {
-                throw "Missing packaging\bootstrap_portable.ps1"
+            if (-not $ForceRebuildRuntime -and (Test-FacePuppeteerRuntimeReady -PortableRoot $PortableRoot -ScriptRoot $PSScriptRoot)) {
+                Write-Step "face_puppeteer: already installed; skipping runtime bootstrap"
+            } else {
+                Write-Step "face_puppeteer: Python runtime (addons\face_puppeteer\venv)"
+                if (-not (Test-Path $bootstrapScript)) {
+                    throw "Missing packaging\bootstrap_portable.ps1"
+                }
+                & $bootstrapScript -PortableRoot $PortableRoot -ForceRebuildRuntime:$ForceRebuildRuntime
+                Assert-ScriptSucceeded "Runtime bootstrap"
             }
-            & $bootstrapScript -PortableRoot $PortableRoot -ForceRebuildRuntime:$ForceRebuildRuntime
-            Assert-ScriptSucceeded "Runtime bootstrap"
         } else {
             Write-Step "face_puppeteer: Skipped runtime (-SkipRuntime)"
         }
@@ -158,6 +163,25 @@ try {
         Write-Step "tha4_training: Skipped (-SkipUpstream)"
     }
 
+    if ($installEnhancement) {
+        if ((Test-OutputEnhancementInstalled -PortableRoot $PortableRoot -ScriptRoot $PSScriptRoot)) {
+            $probePy = Get-MouseStudentPythonExe -PortableRoot $PortableRoot
+            if ($probePy -and (Test-OutputEnhancementPipImports -PythonExe $probePy)) {
+                Write-Step "output_enhancement: already installed; refreshing layout marker only"
+            } else {
+                Write-Step "output_enhancement: NN SR/RIFE runtime + data layout"
+            }
+        } else {
+            Write-Step "output_enhancement: NN SR/RIFE runtime + data layout"
+        }
+        $enhanceScript = Join-Path $PSScriptRoot "bootstrap_output_enhancement.ps1"
+        if (-not (Test-Path $enhanceScript)) {
+            throw "Missing packaging\bootstrap_output_enhancement.ps1"
+        }
+        & $enhanceScript -PortableRoot $PortableRoot
+        Assert-ScriptSucceeded "output_enhancement bootstrap"
+    }
+
     Write-Step "Reconcile layout + verification"
     if (Test-Path $reconcileScript) {
         & $reconcileScript -PortableRoot $PortableRoot
@@ -177,11 +201,12 @@ try {
         Assert-ScriptSucceeded "THA4 student verification"
     } else {
         $verifyArgs = @{
-            PortableRoot         = $PortableRoot
-            Strict               = $true
-            RequireFacePuppeteer = $installFace
-            RequireTha3Models    = $installTha3
-            IncludeTha4Training  = $installTha4
+            PortableRoot              = $PortableRoot
+            Strict                    = $true
+            RequireFacePuppeteer      = $installFace
+            RequireTha3Models         = $installTha3
+            IncludeTha4Training       = $installTha4
+            RequireOutputEnhancement  = $installEnhancement
         }
         & $verifyScript @verifyArgs
         Assert-ScriptSucceeded "Deploy verification"
