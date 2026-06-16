@@ -42,6 +42,9 @@ MOUSE_HORIZONTAL_TILT_MIX_DEFAULT = 0.5
 MOUSE_HORIZONTAL_TILT_MIX_MIN = 0.0
 MOUSE_HORIZONTAL_TILT_MIX_MAX = 1.0
 MOUSE_HORIZONTAL_LOCAL_TILT_FULL = 2.0
+MOUSE_FACE_SIZE_MIN = 0.12
+MOUSE_FACE_SIZE_MAX = 1.0
+MOUSE_VERTICAL_FACE_SIZE_DELTA_PER_UNIT = 0.12
 
 
 def normalize_mocap_input_mode(value: object) -> str:
@@ -308,8 +311,8 @@ def build_mouse_dynamic_face_screen_motion(
     """
     Build center_x/center_y/face_size for output dynamic enhancement.
 
-    Vertical exit from center zone keeps legacy ny + face_size behavior.
-    Horizontal exit blends translation (mix=0) vs holding neutral X (mix=1).
+    Vertical exit: center_y follows mouse; up shrinks face_size, down enlarges.
+    Horizontal exit blends translation (mix=0) vs tilt-only X (mix=1).
     """
     mix = clamp_horizontal_tilt_mix(horizontal_tilt_mix)
     local_x, local_y = zone_local_coords(nx, ny, zone)
@@ -325,7 +328,9 @@ def build_mouse_dynamic_face_screen_motion(
 
     if vert_out:
         center_y = ny
-        face_size = face_size_from_zone_distance(nx, ny, zone)
+        face_size = face_size_from_vertical_zone_exit(
+            local_y,
+            neutral_face_size=neutral_face_size)
         if not horiz_out:
             center_x = nx
         else:
@@ -400,13 +405,42 @@ def is_mouse_inside_center_zone(nx: float, ny: float, zone: MouseCenterZone) -> 
     return abs(local_x) <= 1.0 and abs(local_y) <= 1.0
 
 
+def face_size_from_vertical_zone_exit(
+        local_y: float,
+        *,
+        neutral_face_size: float) -> float:
+    """
+    Map vertical exit beyond center zone to face_size for output dynamic enhancement.
+
+    local_y > 1 (up / screen-top side): shrink below neutral.
+    local_y < -1 (down): enlarge above neutral.
+    Strength grows with |local_y| - 1 past the zone edge.
+    """
+    if not is_vertically_outside_center_zone(local_y):
+        return neutral_face_size
+    overshoot = abs(local_y) - 1.0
+    if local_y > 1.0:
+        delta = -MOUSE_VERTICAL_FACE_SIZE_DELTA_PER_UNIT * overshoot
+    else:
+        delta = MOUSE_VERTICAL_FACE_SIZE_DELTA_PER_UNIT * overshoot
+    return clamp(
+        neutral_face_size + delta,
+        MOUSE_FACE_SIZE_MIN,
+        MOUSE_FACE_SIZE_MAX)
+
+
 def face_size_from_zone_distance(nx: float, ny: float, zone: MouseCenterZone) -> float:
-    """Map distance outside zone center to a face_size similar to MediaPipe bbox scale."""
+    """Legacy helper: face_size at zone center (used by ix-023 calibration baseline)."""
     z = resolved_mouse_center_zone(zone)
     local_x = (nx - z.center_nx) / max(z.half_width, 1e-6)
     local_y = (ny - z.center_ny) / max(z.half_height, 1e-6)
+    if abs(local_x) <= 1.0 and abs(local_y) <= 1.0:
+        return MOUSE_DEFAULT_FACE_SIZE
     distance = math.sqrt(local_x * local_x + local_y * local_y)
-    return clamp(MOUSE_DEFAULT_FACE_SIZE + 0.12 * max(0.0, distance - 1.0), 0.12, 1.0)
+    return clamp(
+        MOUSE_DEFAULT_FACE_SIZE + MOUSE_VERTICAL_FACE_SIZE_DELTA_PER_UNIT * max(0.0, distance - 1.0),
+        MOUSE_FACE_SIZE_MIN,
+        MOUSE_FACE_SIZE_MAX)
 
 
 def extract_head_roll_degrees(mediapipe_face_pose: MediaPipeFacePose) -> float:

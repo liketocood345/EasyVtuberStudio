@@ -124,8 +124,7 @@ class Tha3Source:
         main_frame.last_pose = current_pose
         main_frame.last_output_wx_image = wx_image
         main_frame.last_background_choice = main_frame.get_output_background_signature()
-        main_frame._interp_keyframe_pose = list(current_pose)
-        main_frame._interp_substep_index = 0
+        main_frame.output_enhancement.pose_interpolation.seed_after_real_infer(current_pose)
         main_frame.draw_result_wx_image(
             wx_image,
             None,

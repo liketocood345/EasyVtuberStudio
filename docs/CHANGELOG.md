@@ -10,6 +10,33 @@
 
 ---
 
+## 2026-06-16
+
+### HF Bucket 完整发行 · 瘦包 NN 外置
+
+| # | 改动 |
+|---|------|
+| H1 | 公开 Bucket **liketocode789/EasyVtuberStudio**：完整 CORE 目录 + `data/ezvtb_nn/` ONNX（~350 MB） |
+| H2 | GitHub CORE **移除** `data/ezvtb_nn/*.onnx`；`verify_fresh_extract` / `build_github_zip` 同步 |
+| H3 | DEPLOY **[5]**：`ezvtb_nn_weights` 包首选 Bucket 拉取，回退 `import_ezvtb_nn_weights.ps1` |
+| H4 | 文档：`HF_BUCKET_MIRROR.md`、`packaging/hf_bucket_README.md`（桶首页 README） |
+
+---
+
+## 2026-06-15（续）
+
+### 输出增强 f-055 · f-056 · f-058 · f-060
+
+| # | 改动 |
+|---|------|
+| O1 | **`output_enhancement/`** 模块：`EnhancementPipeline` 挂于 `_compose_present_rgba` 之后；默认全关 = 恒等 |
+| O2 | **DEPLOY 档位 [5] output_enhancement**：onnxruntime + pyanime4k；ONNX 至 `addons/output_enhancement/ezvtb_data/`（GitHub 瘦包从 HF Bucket 拉取） |
+| O3 | **后处理 UI**：SuperResolution (NN)、Frame Interpolation (NN/RIFE)、NN 推理后端、THA Student FP16 |
+| O4 | **f-057** 慢任务进度：首次启用 SR/RIFE/TRT 时后台加载 + 非模态进度 |
+| O5 | **`smoke_output_enhancement.py`**：pipeline 关闭时输入输出哈希一致 |
+
+---
+
 ## 2026-06-15
 
 > 详尽设计/排障记录见研发手册 `record/easyvtuberstudio条目设计手册.md`（圆周运动、ix-023/ix-025 校准、窗口捕获）。本节为面向发布的汇总。
@@ -31,6 +58,25 @@
 | C1 | **中心区一致**：示意图/区内外判定/face_size 统一 `clamped_to_surface()`；手拖区同步 `gaze_neutral` |
 | C2 | **三条校准界限（ix-025）**：path A 标定朝向；path B 摄像头动态增强；Mouse ix-023（同按钮 + UI-B07 周期）；周期 = 自动点对应按钮 |
 | C3 | **校准后中性点**：`mouse_center_zone_calibration_point` 与 fitted 区中心对齐，避免贴边错位 |
+| C4 | **ix-022 方向化缩放**：往上出中心区缩小、往下放大（`face_size_from_vertical_zone_exit`）；左右仍为 UI-B08 平移↔倾斜 mix |
+
+### 图层快捷键 · GIF 播放（f-062 子集）
+
+> **状态：🟠 半损坏·待修（2026-06-16）** — 代码已合入 develop/main 同步链，但快捷键**设置、注册与按住类动作**仍有已知回归（见 `TROUBLESHOOTING_QA.md` Q16b–Q16d、`easyvtuberstudio条目设计手册.md` f-062）。**直播关键路径请勿依赖**，待下一轮修复验收。
+
+| # | 改动 |
+|---|------|
+| L1 | **全局热键**：`layer_hotkey_registry.py` + `BasicLayerSlot.hotkey_bindings`；图层窗录制键位 |
+| L2 | **动作**：显隐切换；**按住隐藏 / 按住显示**；GIF **按住显示播一次** / 播一次 / **显示播一次后隐藏** / 循环 / 停止 |
+| L3 | **`apply_layer_hotkey_action`**：主窗与外部触发共用；`smoke_layer_hotkeys.py` |
+| L4 | **启动加固**：`EVT_HOTKEY` 可用性守卫；HWND 就绪后再注册热键；图层窗独立顶层 `parent=None` |
+| L5 | **热键总开关**：后处理栏「启用图层快捷键」，**默认关**；勾选后才懒加载 `LayerHotkeyRegistry` |
+| L6 | **启动崩溃修复**：`wx.HotKeyEvent` 在 wx 4.2 不存在，改 `wx.Event`；图层窗延迟到控件面板建完后再打开 |
+| L7 | **按住显示播一次**：`hold_to_show_play_once`；按住从第 1 帧播 GIF 一次，松手恢复按下前显隐与播放状态 |
+| L8 | **切换快捷键动作**：下拉改热键行为时 `reload_layer_from_asset` 清缓存并重置 GIF 待机态 |
+| L9 | **稳定性/性能**：动作切换 `CallAfter` 防下拉闪退；按住热键轻量重绘；`play_once` 仅可见时持续刷新 |
+| L10 | **快捷键设置修复**：重建快捷键 UI 时屏蔽 `EVT_CHOICE` 误写盘；草稿行（未录键）可持久化；启动后再 `sync` 注册 |
+| L11 | **发布标记**：f-062 子集标为 **半损坏·待修**；双仓同步 + GitHub PR / HF Bucket 发布说明更新 |
 
 ### 窗口捕获 · 长时性能
 

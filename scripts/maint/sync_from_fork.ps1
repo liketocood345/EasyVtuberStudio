@@ -29,7 +29,8 @@ $ExcludeFromMirror = @(
     "workspace",
     "addons\face_puppeteer",
     "addons\tha3_models",
-    "addons\tha4_training"
+    "addons\tha4_training",
+    "addons\output_enhancement"
 )
 
 $stamp = Get-Date -Format "yyyyMMddHHmmss"

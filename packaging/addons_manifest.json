@@ -44,6 +44,22 @@
         "addons/tha4_training/tha4/face_morpher.pt",
         "addons/tha4_training/pose_dataset.pt"
       ]
+    },
+    {
+      "id": "output_enhancement",
+      "folder": "output_enhancement",
+      "label": "Output enhancement (NN SR + RIFE ONNX + onnxruntime)",
+      "size_hint_mb": 800,
+      "required_for": ["nn_super_resolution", "nn_rife"],
+      "delete_safe": true,
+      "included_in_github_zip": false,
+      "install_via": ["bootstrap_output_enhancement.ps1"],
+      "verify": [
+        "addons/output_enhancement/.installed",
+        "addons/output_enhancement/ezvtb_data/rife/rife_x2_fp32.onnx",
+        "addons/output_enhancement/ezvtb_data/waifu2x/noise0_scale2x_fp32.onnx",
+        "addons/output_enhancement/ezvtb_data/Real-ESRGAN/exported_256_fp32.onnx"
+      ]
     }
   ]
 }

@@ -229,6 +229,61 @@ function Install-CopyFile([string]$SourcePath, [string]$DestRelative) {
     Write-Host "Installed file -> $destPath"
 }
 
+function Get-HfBucketHelperPath {
+    return Join-Path $PSScriptRoot "fetch_hf_bucket.py"
+}
+
+function Invoke-HfBucketHelper {
+    param([string[]]$HelperArgs)
+    $helper = Get-HfBucketHelperPath
+    if (-not (Test-Path $helper)) {
+        throw "Missing fetch_hf_bucket.py beside fetch_upstream_assets.ps1"
+    }
+    & python $helper @HelperArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "fetch_hf_bucket.py failed (exit $LASTEXITCODE)"
+    }
+}
+
+function Install-BucketCopyFile($installSpec) {
+    $bucketId = [string]$installSpec.bucket_id
+    $bucketPath = [string]$installSpec.bucket_path
+    $destRelative = [string]$installSpec.dest
+    if ([string]::IsNullOrWhiteSpace($bucketId) -or [string]::IsNullOrWhiteSpace($bucketPath)) {
+        throw "bucket_copy_file requires install.bucket_id and install.bucket_path"
+    }
+    $destPath = Resolve-PortablePath $destRelative
+    Write-Host "Downloading from HF bucket $bucketId : $bucketPath"
+    Invoke-HfBucketHelper @(
+        "download-file",
+        "--bucket", $bucketId,
+        "--remote", $bucketPath,
+        "--local", $destPath
+    )
+    Write-Host "Installed bucket file -> $destPath"
+}
+
+function Install-BucketCopyTree($installSpec) {
+    $bucketId = [string]$installSpec.bucket_id
+    $bucketPath = [string]$installSpec.bucket_path
+    $destRelative = [string]$installSpec.dest
+    if ([string]::IsNullOrWhiteSpace($bucketId) -or [string]::IsNullOrWhiteSpace($bucketPath)) {
+        throw "bucket_copy_tree requires install.bucket_id and install.bucket_path"
+    }
+    $destRoot = Resolve-PortablePath $destRelative
+    if (Test-Path $destRoot) {
+        Remove-Item $destRoot -Recurse -Force
+    }
+    Write-Host "Downloading tree from HF bucket $bucketId : $bucketPath"
+    Invoke-HfBucketHelper @(
+        "download-tree",
+        "--bucket", $bucketId,
+        "--remote", $bucketPath,
+        "--local", $destRoot
+    )
+    Write-Host "Installed bucket tree -> $destRoot"
+}
+
 function Invoke-InstallHandler($fileSpec, [string]$localPath, [string]$stagingDir) {
     $handler = [string]$fileSpec.install.handler
     $dest = [string]$fileSpec.install.dest
@@ -244,6 +299,12 @@ function Invoke-InstallHandler($fileSpec, [string]$localPath, [string]$stagingDi
         }
         "copy_file" {
             Install-CopyFile $localPath $dest
+        }
+        "bucket_copy_file" {
+            Install-BucketCopyFile $fileSpec.install
+        }
+        "bucket_copy_tree" {
+            Install-BucketCopyTree $fileSpec.install
         }
         default {
             throw "Unknown install handler: $handler"
@@ -276,6 +337,10 @@ function Ensure-PortableDemoDataLayout {
 function Install-PackagePrimaryFiles($package, [string]$DownloadRoot) {
     foreach ($fileSpec in @($package.files)) {
         $kind = [string]$fileSpec.kind
+        if ($kind -eq "huggingface_bucket") {
+            Invoke-InstallHandler $fileSpec $null $null
+            continue
+        }
         if ($kind -eq "huggingface_repo") {
             Install-PackageFallbackSource $fileSpec $DownloadRoot
             continue
@@ -305,6 +370,10 @@ function Install-PackagePrimaryFiles($package, [string]$DownloadRoot) {
 
 function Install-PackageFallbackSource($fallbackSpec, [string]$DownloadRoot) {
     $kind = [string]$fallbackSpec.kind
+    if ($kind -eq "huggingface_bucket") {
+        Invoke-InstallHandler $fallbackSpec $null $null
+        return
+    }
     if ($kind -eq "huggingface_repo") {
         Invoke-InstallHandler @{ install = $fallbackSpec.install } $null $null
         return

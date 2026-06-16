@@ -28,6 +28,61 @@ LAYER_ASSET_FILE_WILDCARD = (
     "All files (*.*)|*.*")
 
 LAYER_COORD_SIZE = 512
+GIF_PLAYBACK_LOOP = "loop"
+GIF_PLAYBACK_PLAY_ONCE = "play_once"
+GIF_PLAYBACK_STOPPED = "stopped"
+GIF_PLAYBACK_MODES = (
+    GIF_PLAYBACK_LOOP,
+    GIF_PLAYBACK_PLAY_ONCE,
+    GIF_PLAYBACK_STOPPED,
+)
+
+LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE = "toggle_visible"
+LAYER_HOTKEY_ACTION_HOLD_TO_HIDE = "hold_to_hide"
+LAYER_HOTKEY_ACTION_HOLD_TO_SHOW = "hold_to_show"
+LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE = "hold_to_show_play_once"
+LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE = "gif_play_once"
+LAYER_HOTKEY_ACTION_GIF_SHOW_PLAY_ONCE_HIDE = "gif_show_play_once_hide"
+LAYER_HOTKEY_ACTION_GIF_PLAY = "gif_play"
+LAYER_HOTKEY_ACTION_GIF_STOP = "gif_stop"
+LAYER_HOTKEY_ACTIONS = (
+    LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE,
+    LAYER_HOTKEY_ACTION_HOLD_TO_HIDE,
+    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW,
+    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE,
+    LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE,
+    LAYER_HOTKEY_ACTION_GIF_SHOW_PLAY_ONCE_HIDE,
+    LAYER_HOTKEY_ACTION_GIF_PLAY,
+    LAYER_HOTKEY_ACTION_GIF_STOP,
+)
+LAYER_HOTKEY_HOLD_ACTIONS = (
+    LAYER_HOTKEY_ACTION_HOLD_TO_HIDE,
+    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW,
+    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE,
+)
+LAYER_HOTKEY_GIF_HOLD_ACTIONS = (
+    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE,
+)
+LAYER_HOTKEY_GIF_ACTIONS = (
+    LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE,
+    LAYER_HOTKEY_ACTION_GIF_SHOW_PLAY_ONCE_HIDE,
+    LAYER_HOTKEY_ACTION_GIF_PLAY,
+    LAYER_HOTKEY_ACTION_GIF_STOP,
+)
+MAX_LAYER_HOTKEY_BINDINGS = 8
+
+LAYER_HOTKEY_ACTION_LABELS: dict[str, str] = {
+    LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE: "显隐切换 / Toggle visible",
+    LAYER_HOTKEY_ACTION_HOLD_TO_HIDE: "按住隐藏 / Hold to hide",
+    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW: "按住显示 / Hold to show",
+    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE: (
+        "按住显示播一次 / Hold: show, play once"),
+    LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE: "GIF 播一次 / GIF play once",
+    LAYER_HOTKEY_ACTION_GIF_SHOW_PLAY_ONCE_HIDE: (
+        "显示播一次后隐藏 / Show, play once, hide"),
+    LAYER_HOTKEY_ACTION_GIF_PLAY: "GIF 播放 / GIF play loop",
+    LAYER_HOTKEY_ACTION_GIF_STOP: "GIF 停止 / GIF stop",
+}
 DEFAULT_LAYER_COUNT = 5
 BASIC_LAYERS_DIR_NAME = "basic_layers"
 
@@ -600,6 +655,194 @@ def reset_layer_transform(transform: LayerTransform) -> None:
     transform.rotation_deg = 0.0
 
 
+def normalize_gif_playback_mode(value: object) -> str:
+    if value in GIF_PLAYBACK_MODES:
+        return str(value)
+    return GIF_PLAYBACK_LOOP
+
+
+def normalize_layer_hotkey_action(value: object) -> str:
+    if value in LAYER_HOTKEY_ACTIONS:
+        return str(value)
+    return LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE
+
+
+@dataclass
+class LayerHotkeyBinding:
+    action: str = LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE
+    modifiers: int = 0
+    key_code: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "action": normalize_layer_hotkey_action(self.action),
+            "modifiers": int(self.modifiers),
+            "key_code": int(self.key_code),
+        }
+
+    @classmethod
+    def from_dict(cls, data: object) -> Optional["LayerHotkeyBinding"]:
+        if not isinstance(data, dict):
+            return None
+        try:
+            key_code = int(data.get("key_code", 0))
+        except (TypeError, ValueError):
+            return None
+        if key_code < 0:
+            return None
+        try:
+            modifiers = int(data.get("modifiers", 0))
+        except (TypeError, ValueError):
+            modifiers = 0
+        return cls(
+            action=normalize_layer_hotkey_action(data.get("action")),
+            modifiers=modifiers,
+            key_code=key_code,
+        )
+
+
+def layer_hotkey_bindings_from_list(data: object) -> list[LayerHotkeyBinding]:
+    if not isinstance(data, list):
+        return []
+    bindings: list[LayerHotkeyBinding] = []
+    for item in data[:MAX_LAYER_HOTKEY_BINDINGS]:
+        binding = LayerHotkeyBinding.from_dict(item)
+        if binding is not None:
+            bindings.append(binding)
+    return bindings
+
+
+def ensure_gif_playback_epoch(layer: "BasicLayerSlot", now: float) -> None:
+    if layer.gif_playback_epoch <= 0.0:
+        layer.gif_playback_epoch = now
+
+
+def set_gif_playback_mode(
+        layer: "BasicLayerSlot",
+        mode: str,
+        *,
+        now: Optional[float] = None) -> None:
+    layer.gif_playback_mode = normalize_gif_playback_mode(mode)
+    layer.gif_playback_epoch = time.time() if now is None else now
+
+
+def resolve_gif_frame_index(
+        layer: "BasicLayerSlot",
+        durations_ms: list[int],
+        total_ms: int,
+        frame_count: int,
+        now: float) -> int:
+    """Pick GIF sub-frame index from per-layer playback mode."""
+    mode = normalize_gif_playback_mode(layer.gif_playback_mode)
+    if mode == GIF_PLAYBACK_STOPPED:
+        return 0
+    ensure_gif_playback_epoch(layer, now)
+    elapsed_ms = int(max(0.0, (now - layer.gif_playback_epoch) * 1000.0))
+    if mode == GIF_PLAYBACK_PLAY_ONCE:
+        if elapsed_ms >= total_ms:
+            layer.gif_playback_mode = GIF_PLAYBACK_STOPPED
+            layer.gif_playback_epoch = now
+            if layer.gif_hide_when_playback_stops:
+                layer.gif_hide_when_playback_stops = False
+                layer.visible = False
+                layer._gif_playback_visibility_dirty = True
+            return 0
+    else:
+        elapsed_ms = elapsed_ms % max(1, total_ms)
+    acc = 0
+    for idx, duration in enumerate(durations_ms):
+        acc += duration
+        if elapsed_ms < acc:
+            return idx
+    return max(0, frame_count - 1)
+
+
+def apply_layer_hotkey_action(
+        state: "BasicLayersState",
+        slot_id: int,
+        action: str,
+        *,
+        now: Optional[float] = None) -> bool:
+    """Apply a layer hotkey action (shared by global hotkeys and external triggers)."""
+    try:
+        layer = state.get_slot(slot_id)
+    except KeyError:
+        return False
+    normalized = normalize_layer_hotkey_action(action)
+    time_now = time.time() if now is None else now
+    if normalized == LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE:
+        layer.visible = not layer.visible
+        return True
+    if classify_layer_asset_kind(layer.asset_path or "") != "gif":
+        return False
+    if normalized == LAYER_HOTKEY_ACTION_GIF_PLAY:
+        layer.gif_hide_when_playback_stops = False
+        set_gif_playback_mode(layer, GIF_PLAYBACK_LOOP, now=time_now)
+        layer.visible = True
+        return True
+    if normalized == LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE:
+        layer.gif_hide_when_playback_stops = False
+        set_gif_playback_mode(layer, GIF_PLAYBACK_PLAY_ONCE, now=time_now)
+        layer.visible = True
+        return True
+    if normalized == LAYER_HOTKEY_ACTION_GIF_SHOW_PLAY_ONCE_HIDE:
+        layer.gif_hide_when_playback_stops = True
+        set_gif_playback_mode(layer, GIF_PLAYBACK_PLAY_ONCE, now=time_now)
+        layer.visible = True
+        return True
+    if normalized == LAYER_HOTKEY_ACTION_GIF_STOP:
+        layer.gif_hide_when_playback_stops = False
+        set_gif_playback_mode(layer, GIF_PLAYBACK_STOPPED, now=time_now)
+        return True
+    return False
+
+
+def apply_hotkey_action_idle_layer_state(
+        layer: BasicLayerSlot,
+        action: str,
+        *,
+        now: Optional[float] = None) -> None:
+    """Put layer in a clean idle state after the user changes a hotkey action."""
+    normalized = normalize_layer_hotkey_action(action)
+    layer.gif_hide_when_playback_stops = False
+    layer._gif_playback_visibility_dirty = False
+    is_gif = classify_layer_asset_kind(layer.asset_path or "") == "gif"
+    time_now = time.time() if now is None else now
+    show_on_trigger = normalized in (
+        LAYER_HOTKEY_ACTION_HOLD_TO_SHOW,
+        LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE,
+        LAYER_HOTKEY_ACTION_GIF_SHOW_PLAY_ONCE_HIDE,
+        LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE,
+    )
+    if show_on_trigger:
+        layer.visible = False
+    if not is_gif:
+        return
+    if normalized == LAYER_HOTKEY_ACTION_GIF_PLAY:
+        set_gif_playback_mode(layer, GIF_PLAYBACK_LOOP, now=time_now)
+    else:
+        set_gif_playback_mode(layer, GIF_PLAYBACK_STOPPED, now=time_now)
+
+
+def reload_layer_from_asset_material(
+        layer: BasicLayerSlot,
+        *,
+        idle_for_hotkey_action: Optional[str] = None,
+        now: Optional[float] = None) -> bool:
+    """Reset runtime layer state as if the asset was loaded fresh (cache cleared by caller)."""
+    if not layer.asset_path:
+        return False
+    if idle_for_hotkey_action is not None:
+        apply_hotkey_action_idle_layer_state(
+            layer, idle_for_hotkey_action, now=now)
+    else:
+        layer.gif_hide_when_playback_stops = False
+        layer._gif_playback_visibility_dirty = False
+        if classify_layer_asset_kind(layer.asset_path or "") == "gif":
+            set_gif_playback_mode(layer, GIF_PLAYBACK_STOPPED, now=now)
+    return True
+
+
 @dataclass
 class BasicLayerSlot:
     slot_id: int
@@ -634,6 +877,11 @@ class BasicLayerSlot:
     orbit_near_scale: float = DEFAULT_ORBIT_NEAR_SCALE
     orbit_far_scale: float = DEFAULT_ORBIT_FAR_SCALE
     orbit_aux_slot_id: Optional[int] = None
+    hotkey_bindings: list[LayerHotkeyBinding] = field(default_factory=list)
+    gif_playback_mode: str = GIF_PLAYBACK_LOOP
+    gif_playback_epoch: float = 0.0
+    gif_hide_when_playback_stops: bool = False
+    _gif_playback_visibility_dirty: bool = field(default=False, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -677,6 +925,9 @@ class BasicLayerSlot:
             payload["orbit_far_scale"] = clamp_orbit_scale(self.orbit_far_scale)
             payload["orbit_aux_slot_id"] = (
                 int(self.orbit_aux_slot_id) if self.orbit_aux_slot_id is not None else None)
+        if self.hotkey_bindings:
+            payload["hotkey_bindings"] = [
+                binding.to_dict() for binding in self.hotkey_bindings[:MAX_LAYER_HOTKEY_BINDINGS]]
         return payload
 
     @classmethod
@@ -739,7 +990,70 @@ class BasicLayerSlot:
                 int(data["orbit_aux_slot_id"])
                 if data.get("orbit_aux_slot_id") is not None
                 else None),
+            hotkey_bindings=layer_hotkey_bindings_from_list(data.get("hotkey_bindings")),
         )
+
+
+def is_layer_hotkey_hold_action(action: str) -> bool:
+    return normalize_layer_hotkey_action(action) in LAYER_HOTKEY_HOLD_ACTIONS
+
+
+@dataclass
+class LayerHotkeyHoldSnapshot:
+    """State captured at hold press; restored on release."""
+    restore_visible: bool
+    restore_gif_playback_mode: str = GIF_PLAYBACK_LOOP
+    restore_gif_hide_when_playback_stops: bool = False
+
+
+def begin_layer_hotkey_hold(
+        layer: BasicLayerSlot,
+        action: str,
+        *,
+        now: Optional[float] = None) -> Optional[LayerHotkeyHoldSnapshot]:
+    """Press phase for hold actions. Returns snapshot to restore on release."""
+    normalized = normalize_layer_hotkey_action(action)
+    time_now = time.time() if now is None else now
+    if normalized == LAYER_HOTKEY_ACTION_HOLD_TO_HIDE:
+        snapshot = LayerHotkeyHoldSnapshot(restore_visible=layer.visible)
+        layer.visible = False
+        return snapshot
+    if normalized == LAYER_HOTKEY_ACTION_HOLD_TO_SHOW:
+        snapshot = LayerHotkeyHoldSnapshot(restore_visible=layer.visible)
+        layer.visible = True
+        return snapshot
+    if normalized == LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE:
+        if classify_layer_asset_kind(layer.asset_path or "") != "gif":
+            return None
+        snapshot = LayerHotkeyHoldSnapshot(
+            restore_visible=layer.visible,
+            restore_gif_playback_mode=normalize_gif_playback_mode(
+                layer.gif_playback_mode),
+            restore_gif_hide_when_playback_stops=layer.gif_hide_when_playback_stops,
+        )
+        layer.gif_hide_when_playback_stops = False
+        set_gif_playback_mode(layer, GIF_PLAYBACK_PLAY_ONCE, now=time_now)
+        layer.visible = True
+        return snapshot
+    return None
+
+
+def end_layer_hotkey_hold(
+        layer: BasicLayerSlot,
+        snapshot: LayerHotkeyHoldSnapshot,
+        *,
+        action: str) -> None:
+    normalized = normalize_layer_hotkey_action(action)
+    if normalized == LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE:
+        layer.visible = snapshot.restore_visible
+        layer.gif_hide_when_playback_stops = (
+            snapshot.restore_gif_hide_when_playback_stops)
+        if snapshot.restore_visible:
+            set_gif_playback_mode(layer, snapshot.restore_gif_playback_mode)
+        else:
+            set_gif_playback_mode(layer, GIF_PLAYBACK_STOPPED)
+        return
+    layer.visible = bool(snapshot.restore_visible)
 
 
 @dataclass
@@ -1057,9 +1371,33 @@ def layer_has_active_swing(layer: BasicLayerSlot) -> bool:
         and layer.swing_speed_deg_per_sec > SWING_MIN_AMPLITUDE_EPS)
 
 
+def layer_has_active_gif_playback(layer: BasicLayerSlot) -> bool:
+    if not layer.enabled:
+        return False
+    if classify_layer_asset_kind(layer.asset_path or "") != "gif":
+        return False
+    mode = normalize_gif_playback_mode(layer.gif_playback_mode)
+    if mode == GIF_PLAYBACK_LOOP:
+        return layer.visible
+    if mode == GIF_PLAYBACK_PLAY_ONCE:
+        return layer.visible
+    return False
+
+
+def consume_layer_gif_playback_visibility_dirty(state: BasicLayersState) -> bool:
+    changed = False
+    for layer in state.layers:
+        if layer._gif_playback_visibility_dirty:
+            layer._gif_playback_visibility_dirty = False
+            changed = True
+    return changed
+
+
 def basic_layers_state_has_active_motion(state: BasicLayersState) -> bool:
     return any(
-        layer_has_active_swing(layer) or layer_has_active_orbit(layer)
+        layer_has_active_swing(layer)
+        or layer_has_active_orbit(layer)
+        or layer_has_active_gif_playback(layer)
         for layer in state.layers)
 
 
@@ -1759,14 +2097,17 @@ class _GifAnimationSource:
             total_ms=total_ms,
             preview=wx_frames[0])
 
-    def frame_at_time(self, now: float, start_time: float) -> wx.Image:
-        elapsed_ms = int(max(0.0, (now - start_time) * 1000.0)) % self.total_ms
-        acc = 0
-        for idx, duration in enumerate(self.durations_ms):
-            acc += duration
-            if elapsed_ms < acc:
-                return self.frames[idx]
-        return self.frames[-1]
+    def frame_at_time(
+            self,
+            now: float,
+            layer: BasicLayerSlot) -> wx.Image:
+        frame_idx = resolve_gif_frame_index(
+            layer,
+            self.durations_ms,
+            self.total_ms,
+            len(self.frames),
+            now)
+        return self.frames[frame_idx]
 
 
 def _pil_rgba_to_numpy(rgba_image) -> numpy.ndarray:
@@ -1791,14 +2132,13 @@ class _GifNumpySource:
         total_ms = max(1, sum(durations_ms))
         return cls(frames=frames, durations_ms=durations_ms, total_ms=total_ms)
 
-    def frame_index(self, now: float, start_time: float) -> int:
-        elapsed_ms = int(max(0.0, (now - start_time) * 1000.0)) % self.total_ms
-        acc = 0
-        for idx, duration in enumerate(self.durations_ms):
-            acc += duration
-            if elapsed_ms < acc:
-                return idx
-        return max(0, len(self.frames) - 1)
+    def frame_index(self, now: float, layer: BasicLayerSlot) -> int:
+        return resolve_gif_frame_index(
+            layer,
+            self.durations_ms,
+            self.total_ms,
+            len(self.frames),
+            now)
 
 
 def scale_image_to_bitmap(image: wx.Image, draw_w: int, draw_h: int) -> wx.Bitmap:
@@ -2678,14 +3018,12 @@ class LayerAssetCache:
             self._animated_start_times.setdefault(cache_key, time.time())
         return source
 
-    def _gif_frame_index(self, source: _GifAnimationSource, now: float, start_time: float) -> int:
-        elapsed_ms = int(max(0.0, (now - start_time) * 1000.0)) % source.total_ms
-        acc = 0
-        for idx, duration in enumerate(source.durations_ms):
-            acc += duration
-            if elapsed_ms < acc:
-                return idx
-        return max(0, len(source.frames) - 1)
+    def _gif_frame_index(
+            self,
+            source: _GifAnimationSource,
+            layer: BasicLayerSlot,
+            now: float) -> int:
+        return source.frame_index(now, layer)
 
     def _load_static_rgba(self, resolved: str, cache_key: str) -> Optional[numpy.ndarray]:
         cached = self._static_rgba_cache.get(cache_key)
@@ -2729,9 +3067,8 @@ class LayerAssetCache:
             return self._load_static_rgba(resolved, cache_key)
         if kind == "gif":
             source = self._get_gif_numpy_source(resolved, cache_key)
-            start = self._animated_start_times.setdefault(cache_key, time.time())
-            frame_idx = source.frame_index(
-                time.time() if now is None else now, start)
+            time_now = time.time() if now is None else now
+            frame_idx = source.frame_index(time_now, layer)
             return source.frames[frame_idx]
         return None
 
@@ -2766,8 +3103,8 @@ class LayerAssetCache:
             return self._load_static_image(resolved, cache_key)
         if kind == "gif":
             source = self._get_gif_source(resolved, cache_key)
-            start = self._animated_start_times.setdefault(cache_key, time.time())
-            return source.frame_at_time(time.time() if now is None else now, start)
+            time_now = time.time() if now is None else now
+            return source.frame_at_time(time_now, layer)
         return None
 
     def get_draw_bitmap(
@@ -2785,8 +3122,8 @@ class LayerAssetCache:
         kind = classify_layer_asset_kind(layer.asset_path)
         if kind == "gif":
             source = self._get_gif_source(cache_key, cache_key)
-            start = self._animated_start_times.setdefault(cache_key, time.time())
-            frame_idx = self._gif_frame_index(source, time.time(), start)
+            time_now = time.time()
+            frame_idx = self._gif_frame_index(source, layer, time_now)
             scaled_key = (cache_key, draw_w, draw_h, frame_idx)
             cached = self._gif_scaled_cache.get(scaled_key)
             if cached is not None and cached.IsOk():

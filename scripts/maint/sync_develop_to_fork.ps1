@@ -38,7 +38,7 @@ $copyFiles = @(".gitignore", ".python-version", "EasyVtuberStudio.exe", "DEPLOY.
 
 $excludeDirs = @(
     "__pycache__", ".codegraph", "venv", "runtime", "external_layer_output", "basic_layers",
-    "face_puppeteer", "tha3_models", "tha4_training"
+    "face_puppeteer", "tha3_models", "tha4_training", "output_enhancement"
 )
 
 foreach ($dir in $copyDirs) {
@@ -68,7 +68,7 @@ if (-not (Test-Path $gitkeep)) {
     New-Item -ItemType File -Force -Path $gitkeep | Out-Null
 }
 
-foreach ($pack in @("face_puppeteer", "tha3_models", "tha4_training")) {
+foreach ($pack in @("face_puppeteer", "tha3_models", "tha4_training", "output_enhancement")) {
     $path = Join-Path $ForkRoot "addons\$pack"
     if (Test-Path $path) {
         Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue

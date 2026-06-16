@@ -1,8 +1,6 @@
 """NumPy/PIL RGBA composition for transparent capture (avoids wx greyscale readback)."""
 from __future__ import annotations
 
-import math
-
 import cv2
 import numpy
 
@@ -67,50 +65,16 @@ def compose_character_rgba_from_keyframe(
         scale: float,
         rotation_deg: float,
         antialias_factor: float = 1.0) -> numpy.ndarray:
-    """Match wx GraphicsContext transform: translate, rotate, scale, draw feet anchor."""
-    keyframe_rgba = numpy.ascontiguousarray(keyframe_rgba, dtype=numpy.uint8)
-    keyframe_height, keyframe_width = keyframe_rgba.shape[0], keyframe_rgba.shape[1]
-    render_width = max(1, int(round(canvas_width * antialias_factor)))
-    render_height = max(1, int(round(canvas_height * antialias_factor)))
-    display_scale = max(0.1, float(scale))
-    rotation_rad = math.radians(float(rotation_deg))
-    cos_r = math.cos(rotation_rad)
-    sin_r = math.sin(rotation_rad)
-
-    anchor_x_render = float(anchor_x) * antialias_factor
-    anchor_y_render = float(anchor_y) * antialias_factor
-    tx = (
-        anchor_x_render
-        - display_scale * cos_r * keyframe_width / 2.0
-        + display_scale * sin_r * keyframe_height)
-    ty = (
-        anchor_y_render
-        - display_scale * sin_r * keyframe_width / 2.0
-        - display_scale * cos_r * keyframe_height)
-    # cv2.warpAffine consumes the FORWARD matrix (src -> dst) directly, so no
-    # inverse is needed (PIL.transform wanted the inverse). This is ~10-50x
-    # faster than PIL BICUBIC affine, which is what kept the present hot path
-    # at ~85 ms/frame on the UI thread.
-    forward = numpy.array(
-        [
-            [display_scale * cos_r, -display_scale * sin_r, tx],
-            [display_scale * sin_r, display_scale * cos_r, ty],
-        ],
-        dtype=numpy.float64)
-    out = cv2.warpAffine(
+    from output_enhancement.antialiasing import compose_character_rgba_from_keyframe as _compose
+    return _compose(
         keyframe_rgba,
-        forward,
-        (render_width, render_height),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=(0, 0, 0, 0))
-    out = numpy.ascontiguousarray(out, dtype=numpy.uint8)
-    if antialias_factor > 1.001:
-        out = scale_rgba(
-            out,
-            max(1, int(canvas_width)),
-            max(1, int(canvas_height)))
-    return sanitize_transparent_rgb(out)
+        canvas_width,
+        canvas_height,
+        anchor_x=anchor_x,
+        anchor_y=anchor_y,
+        scale=scale,
+        rotation_deg=rotation_deg,
+        antialias_factor=antialias_factor)
 
 
 def _straight_rgba_to_premultiplied_bgra(rgba: numpy.ndarray) -> numpy.ndarray:

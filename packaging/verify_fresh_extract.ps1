@@ -33,6 +33,12 @@ Write-Host ""
 # CORE must include student model
 Assert-Present "data/character_models/baiten_from_project_forlon9/bai_450k/character_model/face_morpher.pt" "CORE should include THA4 student (bai_450k)"
 
+# Bundled NN ONNX: not in slim CORE; README placeholder only. Fetched on DEPLOY [5] from HF Bucket.
+Assert-Present "data/ezvtb_nn/README.md" "CORE should document ezvtb_nn (HF Bucket on DEPLOY [5])"
+Assert-Missing "data/ezvtb_nn/rife/rife_x2_fp32.onnx" "Slim CORE should not bundle RIFE ONNX"
+Assert-Missing "data/ezvtb_nn/waifu2x/noise0_scale2x_fp32.onnx" "Slim CORE should not bundle waifu2x ONNX"
+Assert-Missing "data/ezvtb_nn/Real-ESRGAN/exported_256_fp32.onnx" "Slim CORE should not bundle Real-ESRGAN ONNX"
+
 # Upstream author lambda students must not ship
 foreach ($legacy in @("lambda_00", "lambda_01")) {
     Assert-Missing "data/character_models/$legacy" "Upstream lambda student removed ($legacy)"

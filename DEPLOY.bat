@@ -27,11 +27,12 @@ echo ============================================================
 echo.
 echo  Repo root: %PORTABLE_ROOT%
 echo.
-echo  Four independent tiers (Y/N each; Enter = default):
-echo    [1] basic_run      - Mouse + THA4 Student (minimal PyTorch + wx)
-echo    [2] face_puppeteer - Camera face capture (MediaPipe)
-echo    [3] tha3_models    - THA3 portrait weights
-echo    [4] tha4_training  - THA4 teacher + pose dataset
+echo  Five independent tiers (Y/N each; Enter = default):
+echo    [1] basic_run           - Mouse + THA4 Student (minimal PyTorch + wx)
+echo    [2] face_puppeteer      - Camera face capture (MediaPipe)
+echo    [3] tha3_models         - THA3 portrait weights
+echo    [4] tha4_training       - THA4 teacher + pose dataset
+echo    [5] output_enhancement  - NN super-res / RIFE / ORT (optional TensorRT)
 echo.
 echo  Press Enter on every question = install [1] only (recommended first time).
 echo  CORE ZIP already includes THA4 Student (bai).

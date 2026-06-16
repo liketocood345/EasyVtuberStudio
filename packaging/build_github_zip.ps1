@@ -123,6 +123,7 @@ New-Item -ItemType File -Force -Path (Join-Path $stageRoot "workspace\.gitkeep")
 $demoData = Join-Path $stageRoot "face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo\data"
 
 # Never ship upstream-only weights in the portable bundle.
+Remove-FilesByPattern (Join-Path $stageRoot "data\ezvtb_nn") @("*.onnx")
 Remove-FilesByPattern (Join-Path $stageRoot "deps\tha3\models") @("*.pt", "*.onnx")
 Remove-FilesByPattern (Join-Path $demoData "tha4") @("*.pt")
 Remove-FilesByPattern $demoData @("pose_dataset.pt")

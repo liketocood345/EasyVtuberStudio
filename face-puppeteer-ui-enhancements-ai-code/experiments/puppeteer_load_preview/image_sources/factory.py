@@ -62,3 +62,7 @@ def switch_image_source(main_frame, new_mode: str, *, autoload_asset: bool = Tru
     else:
         main_frame.update_result_image_bitmap()
     main_frame.save_persistent_ui_state()
+    monitor = getattr(main_frame, "_ui_alignment_monitor", None)
+    if monitor is not None:
+        monitor.notify_switch(["image_source"])
+    return True

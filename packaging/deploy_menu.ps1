@@ -55,18 +55,21 @@ function Read-DeployTierChoices {
     Write-Host "  [2] face_puppeteer - Camera face capture (MediaPipe; includes full runtime)"
     Write-Host "  [3] tha3_models    - THA3 portrait weights"
     Write-Host "  [4] tha4_training  - THA4 teacher + pose dataset (training / distill)"
+    Write-Host "  [5] output_enhancement - NN super-resolution + RIFE (onnxruntime)"
     Write-Host ""
 
     $basic = Read-YesNoPrompt -Prompt "Install [1] basic_run (Mouse + THA4 Student)?" -DefaultYes $true
     $face = Read-YesNoPrompt -Prompt "Install [2] face_puppeteer (camera face capture)?" -DefaultYes $false
     $tha3 = Read-YesNoPrompt -Prompt "Install [3] tha3_models (THA3 portrait)?" -DefaultYes $false
     $tha4 = Read-YesNoPrompt -Prompt "Install [4] tha4_training (THA4 training pack)?" -DefaultYes $false
+    $enhance = Read-YesNoPrompt -Prompt "Install [5] output_enhancement (NN SR + RIFE)?" -DefaultYes $false
 
     $selected = @()
     if ($basic) { $selected += "mouse_student" }
     if ($face) { $selected += "face_puppeteer" }
     if ($tha3) { $selected += "tha3_models" }
     if ($tha4) { $selected += "tha4_training" }
+    if ($enhance) { $selected += "output_enhancement" }
 
     if ($selected.Count -eq 0) {
         Write-Host ""

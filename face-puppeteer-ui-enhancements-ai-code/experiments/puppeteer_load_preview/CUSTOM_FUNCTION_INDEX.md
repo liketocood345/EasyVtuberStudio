@@ -27,15 +27,14 @@ wx control label is not extracted automatically.
 
 ## Quick reference — calibration paths
 
-Two related but **independent** calibrations (see design manual **ix-025**):
+Two related but **independent** calibrations (do not cross-call):
 
-| Path | Function | Effect | Manual UI | Periodic UI (= auto-click same manual) |
-| --- | --- | --- | --- | --- |
-| **A — head orientation** | `_perform_head_orientation_calibration` | `pose_converter.apply_face_orientation_calibration()` only | UI-A01 / UI-A09 / UI-B04 | `enable_direction_calibration` + interval |
-| **B — camera dynamic enhancement** | `_perform_output_dynamic_enhancement_calibration` (MediaPipe) | `update_neutral_output_enhancement(latest_motion)` | UI-A02 / UI-A10 | `enable_scale_calibration` + interval (**skipped in Mouse mode**) |
-| **B — mouse ix-023** | `_perform_output_dynamic_enhancement_calibration` (Mouse) → `_calibrate_mouse_dynamic_enhancement_ix023` | Zone center + gaze neutral + path B neutral + **attached** path A at forward gaze pose | UI-A02 / UI-A10 (same buttons) | `enable_mouse_auto_calibration` (UI-B07) + interval |
+| Path | Function | Effect | UI controls |
+| --- | --- | --- | --- |
+| **A — head orientation** | `_perform_head_orientation_calibration` → `pose_converter.apply_face_orientation_calibration()` | Sets MediaPipe head X/Y/Z offsets in converter only | Compact **Calibrate Head Orientation**; preview column **Calibrate Head Orientation**; model-input **Calibrate Forward Gaze**; periodic **Auto Calibrate Forward Gaze** |
+| **B — output dynamic enhancement** | `update_neutral_output_enhancement` / `apply_neutral_calibration` (auto-init only) | Updates pan/scale neutral (`neutral_face_screen_motion`); manual via scale calibrate | **Output Dynamic Enhancement Calibration**; auto enhancement checkbox + interval |
 
-**Boundary:** path A must **not** call `update_neutral_output_enhancement` or reset display offset/scale. Camera path B must **not** call `apply_face_orientation_calibration`. Mouse ix-023 may call path A **only** inside `_calibrate_mouse_dynamic_enhancement_ix023` (not in camera path B). Periodic hooks must call the same `_perform_*` as the manual buttons (`_refresh_after_output_dynamic_enhancement_calibration` for path B).
+**Boundary:** path A must **not** call `apply_neutral_calibration`, `update_neutral_output_enhancement`, or reset display offset/scale. Path B must **not** call `apply_face_orientation_calibration`.
 
 ## Quick reference — display vs infer timers
 
@@ -51,6 +50,7 @@ Unlimited layer editor window (opened when Enable Unlimited Layer System is on).
 
 | Function | Purpose | UI control(s) |
 | --- | --- | --- |
+| `_style_remove_layer_button` | Destructive-action styling (red); best-effort on native wx buttons. | — |
 | `SpineRayReferencePanel.__init__` | Constructor for `SpineRayReferencePanel`. | — |
 | `SpineRayReferencePanel._rebuild_live_snapshot` | Private helper for rebuild live snapshot. | — |
 | `SpineRayReferencePanel.refresh_diagram_live` | Update diagram from current output binding pose (tilt / mocap). | — |
@@ -84,6 +84,13 @@ Unlimited layer editor window (opened when Enable Unlimited Layer System is on).
 | `BasicLayerWindow.restore_geometry` | — | — |
 | `BasicLayerWindow._refresh_layout` | Private helper for refresh layout. | Basic Layer window (internal) |
 | `BasicLayerWindow._wire_detail_dock` | Private helper for wire detail dock. | Basic Layer window (internal) |
+| `BasicLayerWindow.get_selected_slot_ids` | Returns selected slot ids. | — |
+| `BasicLayerWindow.get_output_edit_slot_id` | Slot id for output-window drag/scale chrome; only when exactly one selected. | — |
+| `BasicLayerWindow.format_selection_status` | — | — |
+| `BasicLayerWindow.clear_all_selection` | — | — |
+| `BasicLayerWindow.set_single_selection` | Updates single selection. | — |
+| `BasicLayerWindow._apply_selection_visuals` | Private helper for apply selection visuals. | Basic Layer window (internal) |
+| `BasicLayerWindow._on_layer_row_click` | Private helper for on layer row click. | Basic Layer window (internal) |
 | `BasicLayerWindow.rebuild_rows` | — | — |
 | `BasicLayerWindow._wire_layer_row` | Private helper for wire layer row. | Basic Layer window (internal) |
 | `BasicLayerWindow.refresh_all` | — | — |
@@ -130,18 +137,6 @@ Unlimited layer editor window (opened when Enable Unlimited Layer System is on).
 | `composite_rgba_arrays` | Source-over composite of two RGBA arrays (same shape). | — |
 | `apply_character_edge_outline` | — | — |
 | `apply_character_edge_postprocess` | — | — |
-
-## `frame_interpolation.py`
-
-Pose-based frame interpolation helpers (no direct wx controls; driven by postprocess Frame Interpolation and GPU Infer Cap).
-
-| Function | Purpose | UI control(s) |
-| --- | --- | --- |
-| `normalize_multiplier` | Clamp frame-interpolation multiplier to supported values. | — |
-| `lerp_pose` | Linearly interpolate two pose vectors for midpoint infer. | — |
-| `get_effective_infer_cap_hz` | Returns effective infer cap hz. | — |
-| `resolve_interp_infer_pose` | Pose to infer for the current sub-step (0 .. multiplier-1). | — |
-| `label_for_multiplier` | Human-readable label for interpolation multiplier choice. | — |
 
 ## `image_sources/base.py`
 
@@ -198,6 +193,10 @@ Pluggable image source backends (THA4 Student vs THA3).
 
 | Function | Purpose | UI control(s) |
 | --- | --- | --- |
+| `_point_distance_to_segment` | Private helper for point distance to segment. | — |
+| `_point_near_polyline` | Private helper for point near polyline. | — |
+| `apply_orbit_pivot_canvas_delta` | — | — |
+| `hit_test_orbit_edit` | — | — |
 | `panel_to_layer_delta` | — | — |
 | `layer_to_panel_delta` | — | — |
 | `_point_in_rotated_rect` | Private helper for point in rotated rect. | — |
@@ -238,9 +237,14 @@ Basic layer stack data model, geometry, compositing, and JSON persistence.
 | `_rate_limit_scalar` | Private helper for rate limit scalar. | — |
 | `_binding_inherited_rotation_deg` | Private helper for binding inherited rotation deg. | — |
 | `effective_layer_rotation_deg` | — | — |
+| `orbit_binding_follow_rotation_deg` | Binding follow-roll addon applied to the orbit plane (not local transform). | — |
+| `rotate_orbit_plane_offsets` | — | — |
 | `parse_layer_binding_slot` | — | — |
 | `find_layer_slot` | Return an existing layer without resurrecting deleted slots. | — |
 | `sanitize_layer_references` | Drop bindings/aux targets that point at layers no longer in the stack. | — |
+| `layer_slot_uses_orbit_motion` | — | — |
+| `orbit_aux_slot_is_allowed` | — | — |
+| `normalize_orbit_aux_slot_id` | — | — |
 | `cleanup_layer_references` | Clear cross-layer pointers after ``remove_layer``. | — |
 | `_parse_follow_rotation_same` | Private helper for parse follow rotation same. | — |
 | `_parse_follow_rotation_reverse` | Private helper for parse follow rotation reverse. | — |
@@ -266,6 +270,10 @@ Basic layer stack data model, geometry, compositing, and JSON persistence.
 | `layer_at_stack_position` | — | — |
 | `normalize_layer_stack_positions` | Pack layers into a contiguous bottom-to-top stack with the character in | — |
 | `iter_ui_list_top_to_bottom` | UI list top-to-bottom (top = drawn last / front). Character row sits at | — |
+| `visible_layer_slot_ids_top_to_bottom` | Layer slot ids in UI list order (top/front first), excluding character. | — |
+| `selection_contiguous_in_ui_list` | True when ``slot_ids`` form one contiguous run in the visible layer list. | — |
+| `move_layers_z_order_block` | Move a contiguous layer block one stack step (+1 = toward front). | — |
+| `remove_layers_batch` | Remove many layers; returns count removed. | — |
 | `stack_position_can_move_up` | — | — |
 | `stack_position_can_move_down` | — | — |
 | `default_swing_phase_rad` | — | — |
@@ -345,6 +353,24 @@ Basic layer stack data model, geometry, compositing, and JSON persistence.
 | `LayerBindingSmoother.reset_slot` | — | — |
 | `LayerBindingSmoother.reset_all` | — | — |
 | `LayerBindingSmoother.apply` | — | — |
+| `orbit_aux_carriers` | Aux stack slots requisitioned for orbit occlusion (aux_id -> owner slot_id). | — |
+| `orbit_aux_owner` | — | — |
+| `orbit_requisitioned_slot_ids` | — | — |
+| `apply_orbit_requisition_visibility` | Lent stack slots hide their own sprite; only the orbit owner draws there. | — |
+| `strip_orbit_requisitioned_native_rects` | Drop independent geometry for lent slots (keep orbit-display rects only). | — |
+| `orbit_upper_lower_slot_ids` | Return (upper, lower) stack slots for front / behind orbit display. | — |
+| `resolve_local_layer_rects` | Unbound layer rects (transform only), keyed by slot_id. | — |
+| `orbit_binding_shift` | How far binding moved the layer center from its local transform anchor. | — |
+| `binding_context_for_layer_geometry` | Strip motion_time_s for edit chrome / hit-tests (static bound box). | — |
+| `layer_uses_orbit_edit_chrome` | — | — |
+| `sample_orbit_path_canvas_points` | — | — |
+| `layer_binding_anchor_canvas_xy` | — | — |
+| `orbit_binding_shift_for_layer` | — | — |
+| `compute_orbit_edit_geometry` | — | — |
+| `resolve_stack_layer_draw` | Map a stack slot to the layer asset + rect actually drawn this frame. | — |
+| `collect_stack_layer_draws` | Return (stack_slot_id, asset_owner_slot_id) drawn this frame. | — |
+| `orbit_frame_plan` | — | — |
+| `orbit_selection_slot_id` | — | — |
 | `compute_orbit_render_plan` | Per-frame plan for circular-orbit objects. | — |
 | `apply_orbit_to_resolved` | — | — |
 | `resolve_layer_rects` | — | — |
@@ -419,6 +445,8 @@ Basic layer stack data model, geometry, compositing, and JSON persistence.
 | `MouseCenterZone.to_dict` | — | — |
 | `MouseCenterZone.from_mapping` | — | — |
 | `MouseMocapConfig.__post_init__` | Constructor for `MouseMocapConfig`. | — |
+| `resolved_mouse_center_zone` | Zone as used at runtime: clamped and fitted inside the normalized screen box. | — |
+| `mouse_center_zone_calibration_point` | Normalized point treated as forward/neutral after zone fit (center of center zone). | — |
 | `zone_local_coords` | — | — |
 | `is_horizontally_outside_center_zone` | — | — |
 | `is_vertically_outside_center_zone` | — | — |
@@ -472,6 +500,7 @@ Basic layer stack data model, geometry, compositing, and JSON persistence.
 | --- | --- | --- |
 | `_rotate_point` | Private helper for rotate point. | — |
 | `render_selection_chrome_rgba` | Return a transparent RGBA canvas with the selection rectangle outline and | — |
+| `render_orbit_edit_chrome_rgba` | Orbit-layer edit chrome: projected path loop, bind anchor, orbit pivot. | — |
 
 ## `numpy_layer_compositor.py`
 
@@ -497,6 +526,161 @@ Basic layer stack data model, geometry, compositing, and JSON persistence.
 | `resolve_output_backend` | Honor an explicit persisted `output_capture_backend` override, otherwise | — |
 | `recommended_backend_for_tool` | — | — |
 | `backend_label` | — | — |
+
+## `output_enhancement/antialiasing.py`
+
+SSAA anti-aliasing for keyframe compose (Anti-Aliasing strength slider).
+
+| Function | Purpose | UI control(s) |
+| --- | --- | --- |
+| `normalize_antialias_strength` | — | — |
+| `get_antialias_factor_from_control` | Returns antialias factor from control. | — |
+| `upscale_keyframe_for_ssaa` | Upscale THA keyframe RGBA when SSAA factor > 1. | — |
+| `compose_character_rgba_from_keyframe` | Match wx GraphicsContext transform: translate, rotate, scale, draw feet anchor. | — |
+| `KeyframeRenderCache.__init__` | Constructor for `KeyframeRenderCache`. | — |
+| `KeyframeRenderCache.clear` | — | — |
+| `KeyframeRenderCache.invalidate_image` | — | — |
+| `KeyframeRenderCache.is_valid` | — | — |
+| `KeyframeRenderCache.update` | — | — |
+
+## `output_enhancement/config.py`
+
+| Function | Purpose | UI control(s) |
+| --- | --- | --- |
+| `normalize_sr_mode` | — | — |
+| `normalize_nn_frame_multiplier` | — | — |
+| `normalize_infer_backend` | — | — |
+| `normalize_tha_infer_fp16` | — | — |
+| `sr_mode_spec` | Return (kind, scale, fp16, use_anime4k). kind in ('off', 'onnx', 'a4k'). | — |
+| `config_from_persistence` | — | — |
+
+## `output_enhancement/ort_backend.py`
+
+| Function | Purpose | UI control(s) |
+| --- | --- | --- |
+| `PostProcessORTBackend.__init__` | Constructor for `PostProcessORTBackend`. | — |
+| `PostProcessORTBackend._ensure_ort` | Private helper for ensure ort. | — |
+| `PostProcessORTBackend._get_rife` | Private helper for get rife. | — |
+| `PostProcessORTBackend._get_sr_onnx` | Private helper for get sr onnx. | — |
+| `PostProcessORTBackend._ensure_a4k` | Private helper for ensure a4k. | — |
+| `PostProcessORTBackend.apply_super_resolution` | — | — |
+| `PostProcessORTBackend.interpolate_rife` | — | — |
+| `PostProcessORTBackend.shutdown` | — | — |
+| `PostProcessORTBackend.preload` | — | — |
+
+## `output_enhancement/paths.py`
+
+| Function | Purpose | UI control(s) |
+| --- | --- | --- |
+| `find_repo_root` | — | — |
+| `get_ezvtb_data_dir` | Returns ezvtb data dir. | — |
+| `is_output_enhancement_installed` | — | — |
+| `rife_onnx_path` | — | — |
+| `sr_onnx_path` | — | — |
+| `get_trt_engine_cache_dir` | Returns trt engine cache dir. | — |
+| `onnx_weights_available` | — | — |
+
+## `output_enhancement/pipeline.py`
+
+| Function | Purpose | UI control(s) |
+| --- | --- | --- |
+| `EnhancementPipeline.__init__` | Constructor for `EnhancementPipeline`. | — |
+| `EnhancementPipeline.frame_source_tag` | — | — |
+| `EnhancementPipeline.addon_installed` | — | — |
+| `EnhancementPipeline.weights_available` | — | — |
+| `EnhancementPipeline._invalidate_backends` | Private helper for invalidate backends. | — |
+| `EnhancementPipeline.update_config` | — | — |
+| `EnhancementPipeline.is_active` | — | — |
+| `EnhancementPipeline.nn_modes_requested` | — | — |
+| `EnhancementPipeline._active_backend` | Private helper for active backend. | — |
+| `EnhancementPipeline._require_backend` | Private helper for require backend. | — |
+| `EnhancementPipeline.reset_rife_buffers` | — | — |
+| `EnhancementPipeline.pop_rife_frame` | — | — |
+| `EnhancementPipeline.has_pending_rife` | — | — |
+| `EnhancementPipeline.warmup` | Preload ORT/TRT sessions (f-057 slow task). | — |
+| `EnhancementPipeline.apply` | Apply SR to real frame; queue RIFE mids when enabled. | — |
+| `EnhancementPipeline.apply_identity_check` | When pipeline inactive, return unchanged (for smoke). | — |
+| `EnhancementPipeline.content_hash` | — | — |
+| `EnhancementPipeline.shutdown` | — | — |
+
+## `output_enhancement/pose_interpolation.py`
+
+Pose-based frame interpolation (no direct wx controls; driven by postprocess Frame Interpolation and GPU Infer Cap).
+
+| Function | Purpose | UI control(s) |
+| --- | --- | --- |
+| `normalize_multiplier` | Clamp frame-interpolation multiplier to supported values. | — |
+| `lerp_pose` | Linearly interpolate two pose vectors for midpoint infer. | — |
+| `get_effective_infer_cap_hz` | Returns effective infer cap hz. | — |
+| `resolve_interp_infer_pose` | Pose to infer for the current sub-step (0 .. multiplier-1). | — |
+| `label_for_multiplier` | Human-readable label for interpolation multiplier choice. | — |
+| `is_pose_interpolation_active` | — | — |
+| `PoseInterpolationController.__init__` | Constructor for `PoseInterpolationController`. | — |
+| `PoseInterpolationController.reset` | — | — |
+| `PoseInterpolationController.seed_after_real_infer` | — | — |
+| `PoseInterpolationController.advance_after_infer` | — | — |
+| `PoseInterpolationController.resolve_infer_pose` | — | — |
+| `PoseInterpolationController.reference_pose_for_change_detection` | — | — |
+
+## `output_enhancement/rgba_ops.py`
+
+| Function | Purpose | UI control(s) |
+| --- | --- | --- |
+| `premultiply_rgba` | — | — |
+| `unpremultiply_rgba` | — | — |
+| `rgba_uint8_to_sr_input` | NHWC float32 batch=1 for ONNX SR (RGB premult, alpha separate). | — |
+| `sr_output_to_rgba_uint8` | Convert SR network output back to HxWx4 uint8. | — |
+| `resize_rgba` | — | — |
+| `downscale_if_max_edge` | Downscale for heavy SR; returns (scaled, inverse_scale). | — |
+| `upscale_rgba` | — | — |
+| `sanitize_transparent_rgb` | — | — |
+| `rife_prepare_pair` | Two HxWx4 uint8 -> batch 1xHxWx4 float for RIFE inputs (NHWC). | — |
+| `rife_mid_frames_to_uint8` | Extract intermediate frames from RIFE output batch. | — |
+
+## `output_enhancement/runtime.py`
+
+| Function | Purpose | UI control(s) |
+| --- | --- | --- |
+| `OutputEnhancementRuntime.__init__` | Constructor for `OutputEnhancementRuntime`. | — |
+| `OutputEnhancementRuntime.frame_source_tag` | — | — |
+| `OutputEnhancementRuntime.update_config` | — | — |
+| `OutputEnhancementRuntime.is_active` | — | — |
+| `OutputEnhancementRuntime.nn_modes_requested` | — | — |
+| `OutputEnhancementRuntime.apply` | — | — |
+| `OutputEnhancementRuntime.pop_rife_frame` | — | — |
+| `OutputEnhancementRuntime.has_pending_rife` | — | — |
+| `OutputEnhancementRuntime.warmup` | — | — |
+| `OutputEnhancementRuntime.shutdown` | — | — |
+
+## `output_enhancement/slow_task.py`
+
+| Function | Purpose | UI control(s) |
+| --- | --- | --- |
+| `SlowTaskProgressDialog.__init__` | Constructor for `SlowTaskProgressDialog`. | — |
+| `SlowTaskProgressDialog.update` | — | — |
+| `SlowTaskProgressDialog.close` | — | — |
+| `run_slow_task` | Run task in background thread; progress updates on UI thread. | — |
+
+## `output_enhancement/tha_infer.py`
+
+| Function | Purpose | UI control(s) |
+| --- | --- | --- |
+| `apply_poser_precision` | — | — |
+| `infer_pose_image` | Run poser.pose with optional FP16; returns wx-compatible path via caller. | — |
+| `tha3_variant_implies_half` | — | — |
+
+## `output_enhancement/trt_backend.py`
+
+| Function | Purpose | UI control(s) |
+| --- | --- | --- |
+| `PostProcessTRTBackend.__init__` | Constructor for `PostProcessTRTBackend`. | — |
+| `PostProcessTRTBackend._engine_cache_path` | Private helper for engine cache path. | — |
+| `PostProcessTRTBackend._load_trt_engine` | Private helper for load trt engine. | — |
+| `PostProcessTRTBackend._get_rife` | Private helper for get rife. | — |
+| `PostProcessTRTBackend.apply_super_resolution` | — | — |
+| `PostProcessTRTBackend.interpolate_rife` | — | — |
+| `PostProcessTRTBackend.shutdown` | — | — |
+| `PostProcessTRTBackend.preload` | — | — |
 
 ## `portable_bootstrap.py`
 
@@ -547,7 +731,7 @@ Basic layer stack data model, geometry, compositing, and JSON persistence.
 | `scale_rgba` | — | — |
 | `sanitize_transparent_rgb` | — | — |
 | `_invert_affine` | Private helper for invert affine. | — |
-| `compose_character_rgba_from_keyframe` | Match wx GraphicsContext transform: translate, rotate, scale, draw feet anchor. | — |
+| `compose_character_rgba_from_keyframe` | — | — |
 | `_straight_rgba_to_premultiplied_bgra` | Private helper for straight rgba to premultiplied bgra. | — |
 | `rgba_has_color` | — | — |
 
@@ -570,6 +754,7 @@ Basic layer stack data model, geometry, compositing, and JSON persistence.
 | `test_chrome_handle_filled_bottom_right` | — | — |
 | `test_chrome_rotation_changes_pixels` | — | — |
 | `test_chrome_empty_when_offscreen` | — | — |
+| `test_orbit_chrome_draws_path_and_bind_point` | — | — |
 | `main` | — | — |
 
 ## `smoke_layer_runtime.py`
@@ -624,8 +809,27 @@ Basic layer stack data model, geometry, compositing, and JSON persistence.
 | `test_add_layer_unique_slot_id` | — | — |
 | `test_remove_layer_clears_references` | — | — |
 | `test_sanitize_layer_references_on_load` | — | — |
+| `test_layer_binding_accepts_dynamic_slot_ids` | — | — |
 | `test_orbit_requires_asset_for_active_motion` | — | — |
-| `test_orbit_render_plan_switches_aux_slot` | — | — |
+| `test_requisitioned_aux_never_draws_native_asset` | — | — |
+| `test_orbit_stack_draws_owner_on_each_side` | — | — |
+| `test_orbit_aux_cannot_target_orbit_motion_layer` | — | — |
+| `test_orbit_aux_cleared_when_target_switches_to_orbit` | — | — |
+| `test_orbit_edit_geometry_and_hit` | — | — |
+| `test_orbit_path_follows_sync_and_reverse_rotation` | — | — |
+| `test_orbit_render_plan_with_aux_hides_one_slot` | — | — |
+| `test_orbit_render_plan_switches_shown_slot_with_aux` | — | — |
+| `test_orbit_upper_lower_respects_occlusion` | — | — |
+| `test_apply_orbit_bootstraps_aux_rect_without_asset` | — | — |
+| `test_resolve_stack_layer_draw_routes_aux_asset` | — | — |
+| `test_format_layer_row_summary_requisition` | — | — |
+| `test_orbit_depth_flips_over_half_turn` | — | — |
+| `test_visible_layer_list_order` | — | — |
+| `test_selection_contiguous_in_ui_list` | — | — |
+| `test_move_layers_z_order_block_preserves_relative_order` | — | — |
+| `test_remove_layers_batch` | — | — |
+| `test_orbit_center_follows_binding` | — | — |
+| `test_orbit_edit_geometry_is_static` | — | — |
 | `test_apply_orbit_offsets_resolved_rect` | — | — |
 | `test_basic_layers_persistence_round_trip` | — | — |
 | `main` | — | — |
@@ -645,6 +849,8 @@ Basic layer stack data model, geometry, compositing, and JSON persistence.
 | `test_horizontal_out_tilt_mix_motion` | — | — |
 | `test_vertical_out_keeps_legacy_y` | — | — |
 | `test_horizontal_roll_blend` | — | — |
+| `test_center_zone_surface_fit_matches_inside_test` | — | — |
+| `test_calibration_point_matches_fitted_zone_center` | — | — |
 | `test_gaze_neutral_yields_forward_pose_at_calib_point` | — | — |
 | `test_eye_look_follows_mouse_horizontal` | — | — |
 | `test_horizontal_tilt_mix_clamp` | — | — |
@@ -679,6 +885,15 @@ Basic layer stack data model, geometry, compositing, and JSON persistence.
 | `test_labels_present` | — | — |
 | `main` | — | — |
 
+## `smoke_output_enhancement.py`
+
+| Function | Purpose | UI control(s) |
+| --- | --- | --- |
+| `test_pipeline_off_identity` | — | — |
+| `test_config_normalization` | — | — |
+| `test_pose_interpolation_controller` | — | — |
+| `main` | — | — |
+
 ## `smoke_transparent_capture.py`
 
 | Function | Purpose | UI control(s) |
@@ -688,6 +903,16 @@ Basic layer stack data model, geometry, compositing, and JSON persistence.
 | `test_premultiplied_bgra_channels` | — | — |
 | `test_capture_window_title` | — | — |
 | `test_sanitize_transparent_rgb` | — | — |
+| `main` | — | — |
+
+## `smoke_window_capture.py`
+
+Win32 window enumeration and client-area BGR capture for external video sources.
+
+| Function | Purpose | UI control(s) |
+| --- | --- | --- |
+| `test_thumb_luma_black_vs_bright` | — | — |
+| `test_invalidate_capture_method_cache` | — | — |
 | `main` | — | — |
 
 ## `tha3_assets_prompt.py`
@@ -872,6 +1097,10 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `_capture_obs_window_dc_bitblt` | Same as OBS dc_capture_capture: BitBlt from GetDC(window), not from screen. | — |
 | `_capture_screen_bitblt` | Private helper for capture screen bitblt. | — |
 | `_frame_mean_luma` | Private helper for frame mean luma. | — |
+| `_frame_thumb_mean_luma` | Private helper for frame thumb mean luma. | — |
+| `_capture_methods` | Private helper for capture methods. | — |
+| `invalidate_capture_method_cache` | Drop cached grab strategy (all windows, or one hwnd after a stall/switch). | — |
+| `_try_capture_method` | Private helper for try capture method. | — |
 | `list_capture_targets` | Visible top-level windows with non-empty titles. | — |
 | `capture_window_client_bgr` | Grab the window client area as BGR. | — |
 
@@ -973,6 +1202,7 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `MainFrame.on_output_background_changed` | wx event handler for output background changed. | Background color picker |
 | `MainFrame.on_output_background_image_browse` | wx event handler for output background image browse. | Browse Background Image |
 | `MainFrame.on_output_background_mode_changed` | wx event handler for output background mode changed. | Background mode (solid / image / transparent capture) |
+| `MainFrame.on_output_enhancement_changed` | wx event handler for output enhancement changed. | nn_super_resolution_choice; nn_frame_interpolation_choice; nn_infer_backend_choice |
 | `MainFrame.on_output_frame_interpolation_changed` | Set pose interpolation multiplier; adjusts effective infer cap. | Frame Interpolation multiplier |
 | `MainFrame.on_pick_window_capture_clicked` | wx event handler for pick window capture clicked. | pick_window_capture_button |
 | `MainFrame.on_postprocess_scroll_size` | wx event handler for postprocess scroll size. | Postprocess scroll area (resize) |
@@ -981,6 +1211,7 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `MainFrame.on_source_image_panel_show` | wx event handler for source image panel show. | Source character image panel |
 | `MainFrame.on_source_image_panel_size` | wx event handler for source image panel size. | Source character image panel |
 | `MainFrame.on_tha3_model_variant_changed` | wx event handler for tha3 model variant changed. | THA3 Model Variant |
+| `MainFrame.on_tha_infer_fp16_changed` | wx event handler for tha infer fp16 changed. | tha_infer_fp16_choice |
 | `MainFrame.on_video_source_choice_changed` | wx event handler for video source choice changed. | Video source dropdown |
 | `MainFrame.on_webcam_capture_panel_show` | wx event handler for webcam capture panel show. | Webcam preview (double-click opens popup) |
 | `MainFrame.on_webcam_capture_panel_size` | wx event handler for webcam capture panel size. | Webcam preview (double-click opens popup) |
@@ -998,7 +1229,7 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `MainFrame._perform_head_orientation_calibration` | Path A only: converter head orientation; never resets output dynamic enhancement. | — |
 | `MainFrame.apply_enabled_auto_calibration_on_load` | — | — |
 | `MainFrame.apply_neutral_calibration` | — | — |
-| `MainFrame.calibrate_mouse_dynamic_enhancement` | Calibrate neutral enhancement; move center-zone center to mouse without resizing the zone. | — |
+| `MainFrame.calibrate_mouse_dynamic_enhancement` | Mouse ix-023: path B (zone/gaze/neutral) + path A at calibrated forward gaze. | — |
 | `MainFrame.refresh_auto_transform_status` | — | — |
 | `MainFrame.refresh_scale_curve_status` | — | — |
 | `MainFrame.update_neutral_face_direction` | — | — |
@@ -1162,6 +1393,7 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `MainFrame._apply_layer_edit_motion` | Private helper for apply layer edit motion. | — |
 | `MainFrame._apply_mouse_only_controls_visibility` | Private helper for apply mouse only controls visibility. | — |
 | `MainFrame._apply_persisted_controls_layout` | Private helper for apply persisted controls layout. | — |
+| `MainFrame._apply_present_enhancement` | Private helper for apply present enhancement. | — |
 | `MainFrame._apply_video_source_choices` | Private helper for apply video source choices. | — |
 | `MainFrame._async_premultiply_and_deliver` | Private helper for async premultiply and deliver. | — |
 | `MainFrame._auxiliary_preview_min_interval_ns` | Private helper for auxiliary preview min interval ns. | — |
@@ -1171,8 +1403,10 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `MainFrame._build_ulw_background_plate` | Private helper for build ulw background plate. | — |
 | `MainFrame._cached_affine_compose_signature` | Private helper for cached affine compose signature. | — |
 | `MainFrame._cached_affine_visual_unchanged` | Private helper for cached affine visual unchanged. | — |
+| `MainFrame._calibrate_mouse_dynamic_enhancement_ix023` | ix-023 body shared by UI-A02/A10 manual click and UI-B07 periodic auto-click. | — |
 | `MainFrame._can_present_character_fast` | Private helper for can present character fast. | — |
 | `MainFrame._capture_splitter_ratios` | Private helper for capture splitter ratios. | — |
+| `MainFrame._choice_index_value` | Private helper for choice index value. | — |
 | `MainFrame._clamp_controls_window_client_size_preserve_origin` | Shrink an oversized controls window without jumping the client top-left corner. | — |
 | `MainFrame._collect_pose_binding_fields` | Private helper for collect pose binding fields. | — |
 | `MainFrame._collect_splitter_layout_fields` | Private helper for collect splitter layout fields. | — |
@@ -1206,6 +1440,7 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `MainFrame._make_binding_context` | Private helper for make binding context. | — |
 | `MainFrame._maybe_clear_layer_selection_after_deactivate` | Private helper for maybe clear layer selection after deactivate. | — |
 | `MainFrame._maybe_schedule_transparent_capture_update` | Private helper for maybe schedule transparent capture update. | — |
+| `MainFrame._maybe_warmup_output_enhancement` | Private helper for maybe warmup output enhancement. | — |
 | `MainFrame._mediapipe_detect_worker` | Private helper for mediapipe detect worker. | — |
 | `MainFrame._needs_obs_alpha_sanitize` | Private helper for needs obs alpha sanitize. | — |
 | `MainFrame._next_mediapipe_video_timestamp_ms` | Private helper for next mediapipe video timestamp ms. | — |
@@ -1216,6 +1451,7 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `MainFrame._note_pose_present_time` | Private helper for note pose present time. | — |
 | `MainFrame._notify_output_panel_refresh` | Private helper for notify output panel refresh. | — |
 | `MainFrame._nudge_animation_splitter_layout` | Private helper for nudge animation splitter layout. | — |
+| `MainFrame._output_edit_slot_id` | Layer slot editable on the output surface; None when none or multi-select. | — |
 | `MainFrame._overlay_canvas_size` | Private helper for overlay canvas size. | — |
 | `MainFrame._overlay_deactivated` | Private helper for overlay deactivated. | — |
 | `MainFrame._overlay_edit_begin` | ULW WNDPROC router: try to start a layer edit at canvas-pixel (x,y). | — |
@@ -1223,12 +1459,15 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `MainFrame._overlay_edit_motion` | Private helper for overlay edit motion. | — |
 | `MainFrame._overlay_key_nudge` | Private helper for overlay key nudge. | — |
 | `MainFrame._panel_to_layer_delta` | Private helper for panel to layer delta. | — |
+| `MainFrame._perform_output_dynamic_enhancement_calibration` | Path B manual body: camera = neutral pan/scale; mouse = ix-023 (includes path A at gaze neutral). | — |
 | `MainFrame._post_show_controls_setup` | Private helper for post show controls setup. | — |
 | `MainFrame._present_character_bitmap` | Private helper for present character bitmap. | — |
 | `MainFrame._push_transparent_capture_foreground` | Private helper for push transparent capture foreground. | — |
 | `MainFrame._push_transparent_capture_from_cache` | Private helper for push transparent capture from cache. | — |
 | `MainFrame._record_rate_in_rolling_window` | Private helper for record rate in rolling window. | — |
 | `MainFrame._rect_intersection_area` | Private helper for rect intersection area. | — |
+| `MainFrame._refresh_after_output_dynamic_enhancement_calibration` | Private helper for refresh after output dynamic enhancement calibration. | — |
+| `MainFrame._refresh_enhancement_controls` | Private helper for refresh enhancement controls. | — |
 | `MainFrame._refresh_fps_display` | Private helper for refresh fps display. | — |
 | `MainFrame._refresh_pose_after_tilt_mapping_changed` | Private helper for refresh pose after tilt mapping changed. | — |
 | `MainFrame._refresh_transparent_capture_frame` | Private helper for refresh transparent capture frame. | — |
@@ -1258,10 +1497,13 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `MainFrame._stop_call_later` | Private helper for stop call later. | — |
 | `MainFrame._sync_controls_splitter_geometry` | Flush wx layout so splitter sash / pane sizes match the shown frame. | — |
 | `MainFrame._sync_layer_blend_state` | Private helper for sync layer blend state. | — |
+| `MainFrame._sync_output_enhancement_config` | Private helper for sync output enhancement config. | — |
 | `MainFrame._sync_splitter_ratio_fields_to_persistent_state` | Private helper for sync splitter ratio fields to persistent state. | — |
+| `MainFrame._sync_tha_infer_fp16_ui` | Private helper for sync tha infer fp16 ui. | — |
 | `MainFrame._sync_transparent_capture_output_window_impl` | Private helper for sync transparent capture output window impl. | — |
 | `MainFrame._update_keyframe_cache` | Private helper for update keyframe cache. | — |
 | `MainFrame._update_mouse_dynamic_enhancement_motion` | Private helper for update mouse dynamic enhancement motion. | — |
+| `MainFrame._warn_enhancement_once` | Private helper for warn enhancement once. | — |
 | `MainFrame._webcam_preview_target_size` | Private helper for webcam preview target size. | — |
 | `MainFrame._window_capture_worker` | Continuously grab the target window off the UI thread (latest-wins). | — |
 | `MainFrame._wrap_static_texts_under_window` | Private helper for wrap static texts under window. | — |
@@ -1354,6 +1596,9 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `MainFrame.get_mouse_mocap_status_message` | Returns mouse mocap status message. | — |
 | `MainFrame.get_mouth_infer_cap_hz` | Returns mouth infer cap hz. | — |
 | `MainFrame.get_mouth_pose_indices` | Returns mouth pose indices. | — |
+| `MainFrame.get_nn_frame_interpolation_multiplier` | Returns nn frame interpolation multiplier. | — |
+| `MainFrame.get_nn_infer_backend` | Returns nn infer backend. | — |
+| `MainFrame.get_nn_super_resolution_mode` | Returns nn super resolution mode. | — |
 | `MainFrame.get_output_canvas_size` | Returns output canvas size. | — |
 | `MainFrame.get_output_capture_backend` | Resolve the active output delivery backend (how the transparent | — |
 | `MainFrame.get_output_frame_interpolation_multiplier` | Returns output frame interpolation multiplier. | — |
@@ -1367,6 +1612,7 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `MainFrame.get_spine_body_bind_ray_percent` | Returns spine body bind ray percent. | — |
 | `MainFrame.get_spine_head_bind_ray_percent` | Returns spine head bind ray percent. | — |
 | `MainFrame.get_spine_neck_anchor_ratio` | Returns spine neck anchor ratio. | — |
+| `MainFrame.get_tha_infer_fp16_enabled` | Returns tha infer fp16 enabled. | — |
 | `MainFrame.get_ui_state_file_path` | Returns ui state file path. | — |
 | `MainFrame.get_windows_camera_device_names` | Returns windows camera device names. | — |
 | `MainFrame.hide_basic_layer_window` | — | — |
@@ -1391,9 +1637,10 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `MainFrame.is_ulw_output_enabled` | The layered ULW (easyvtuberstudio_output) is the single output window | — |
 | `MainFrame.is_webcam_popup_visible` | — | — |
 | `MainFrame.is_window_rect_mostly_visible` | — | — |
+| `MainFrame.limit_bgr_frame_for_mocap` | Downscale large window grabs before face detection to cut CPU/RAM churn. | — |
 | `MainFrame.maybe_apply_periodic_direction_calibration` | — | — |
-| `MainFrame.maybe_apply_periodic_mouse_calibration` | — | — |
-| `MainFrame.maybe_apply_periodic_scale_calibration` | — | — |
+| `MainFrame.maybe_apply_periodic_mouse_calibration` | UI-B07: periodic auto-click of UI-A02/A10 in Mouse+Audio mode. | — |
+| `MainFrame.maybe_apply_periodic_scale_calibration` | Periodic auto-click of UI-A02/A10 (camera path B only; mouse uses UI-B07). | — |
 | `MainFrame.needs_alpha_result_bitmap` | — | — |
 | `MainFrame.normalize_background_hex` | — | — |
 | `MainFrame.normalize_bgr_frame` | — | — |
@@ -1482,7 +1729,7 @@ Win32 window enumeration and client-area BGR capture for external video sources.
 | `MainFrame.sync_output_frame_owner` | Both windows stay independent top-level frames (no owner/parent link). | — |
 | `MainFrame.sync_transparent_capture_output_window` | — | — |
 | `MainFrame.tick_tha4_student_source` | — | — |
-| `MainFrame.try_apply_auto_forward_gaze_calibration` | Periodic or on-load auto run of model-input Calibrate Forward Gaze. | — |
+| `MainFrame.try_apply_auto_forward_gaze_calibration` | Periodic auto-click of UI-A01/A09/B04 (path A only). | — |
 | `MainFrame.try_startup_auto_connect_camera` | — | — |
 | `MainFrame.uniconize_window` | — | — |
 | `MainFrame.update_character_edge_controls_visibility` | — | — |

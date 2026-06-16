@@ -27,6 +27,7 @@ from mouse_mocap_driver import (
     clamp_blink_interval_sec,
     clamp_horizontal_tilt_mix,
     compute_mouse_horizontal_roll_deg,
+    face_size_from_vertical_zone_exit,
     face_size_from_zone_distance,
     get_mouse_tracking_surface,
     is_mouse_inside_center_zone,
@@ -65,9 +66,13 @@ def test_center_zone_inside_outside() -> None:
     zone = MouseCenterZone(center_nx=0.1, center_ny=-0.2, half_width=0.2, half_height=0.2)
     assert is_mouse_inside_center_zone(0.1, -0.2, zone)
     assert not is_mouse_inside_center_zone(0.8, 0.8, zone)
-    outside_size = face_size_from_zone_distance(0.8, 0.8, zone)
+    neutral = 0.35
+    up_local_y = (0.8 - zone.center_ny) / zone.half_height
+    down_local_y = (-0.8 - zone.center_ny) / zone.half_height
+    assert face_size_from_vertical_zone_exit(up_local_y, neutral_face_size=neutral) < neutral
+    assert face_size_from_vertical_zone_exit(down_local_y, neutral_face_size=neutral) > neutral
     inside_size = face_size_from_zone_distance(0.1, -0.2, zone)
-    assert outside_size >= inside_size
+    assert abs(inside_size - 0.35) < 1e-6
 
 
 def test_with_center_at_preserving_size() -> None:
@@ -123,14 +128,21 @@ def test_horizontal_out_tilt_mix_motion() -> None:
     assert abs(only_tilt_x - 0.0) < 1e-6
 
 
-def test_vertical_out_keeps_legacy_y() -> None:
+def test_vertical_out_up_shrinks_down_enlarges() -> None:
     zone = MouseCenterZone(center_nx=0.0, center_ny=0.0, half_width=0.25, half_height=0.25)
-    _, center_y, face_size = build_mouse_dynamic_face_screen_motion(
+    neutral = 0.35
+    _, up_y, up_size = build_mouse_dynamic_face_screen_motion(
         0.0, 0.8, zone,
-        neutral_center_x=0.0, neutral_center_y=0.0, neutral_face_size=0.35,
+        neutral_center_x=0.0, neutral_center_y=0.0, neutral_face_size=neutral,
         horizontal_tilt_mix=1.0)
-    assert abs(center_y - 0.8) < 1e-6
-    assert face_size > 0.35
+    _, down_y, down_size = build_mouse_dynamic_face_screen_motion(
+        0.0, -0.8, zone,
+        neutral_center_x=0.0, neutral_center_y=0.0, neutral_face_size=neutral,
+        horizontal_tilt_mix=1.0)
+    assert abs(up_y - 0.8) < 1e-6
+    assert abs(down_y + 0.8) < 1e-6
+    assert up_size < neutral
+    assert down_size > neutral
 
 
 def test_horizontal_roll_blend() -> None:
@@ -240,7 +252,7 @@ def main() -> None:
     test_from_norm_edges_top_expand()
     test_center_zone_clamped_to_surface()
     test_horizontal_out_tilt_mix_motion()
-    test_vertical_out_keeps_legacy_y()
+    test_vertical_out_up_shrinks_down_enlarges()
     test_horizontal_roll_blend()
     test_center_zone_surface_fit_matches_inside_test()
     test_calibration_point_matches_fitted_zone_center()

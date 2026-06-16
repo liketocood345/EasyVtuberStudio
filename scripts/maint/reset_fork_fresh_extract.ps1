@@ -23,7 +23,7 @@ Write-Host ""
 Write-Host "Resetting fork to fresh CORE extract: $ForkRoot"
 Write-Host ""
 
-foreach ($pack in @("face_puppeteer", "tha3_models", "tha4_training")) {
+foreach ($pack in @("face_puppeteer", "tha3_models", "tha4_training", "output_enhancement")) {
     Remove-TreeIfExists (Join-Path $ForkRoot "addons\$pack")
 }
 
