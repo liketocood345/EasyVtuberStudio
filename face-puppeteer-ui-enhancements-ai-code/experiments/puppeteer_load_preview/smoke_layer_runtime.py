@@ -16,7 +16,9 @@ from layer_runtime import (
     LAYER_MODE_BASIC_LEGACY,
     MOTION_MODE_CIRCULAR,
     MOTION_MODE_NONE,
+    MOTION_MODE_ORBIT_SATELLITE,
     MOTION_MODE_SIMPLE_SWING,
+    ORBIT_HOST_SYNC_INTERVAL_S,
     SWING_SPEED_PROFILE_CONSTANT,
     SWING_SPEED_PROFILE_EASE_ENDS,
     BasicLayerSlot,
@@ -33,6 +35,8 @@ from layer_runtime import (
     layer_uses_orbit_edit_chrome,
     OrbitEditGeometry,
     compute_orbit_state,
+    compute_orbit_motion_state,
+    layer_orbits_with_host,
     compute_swing_angle_deg,
     contrast_highlight_colour,
     OCCLUSION_BEHIND,
@@ -43,7 +47,14 @@ from layer_runtime import (
     NECK_ANCHOR_RATIO_MAX,
     NECK_ANCHOR_RATIO_MIN,
     apply_body_head_tilt_opposite_to_pose,
+    apply_layer_hotkey_action,
+    layer_hotkey_action_target_slot_ids,
+    MAX_ORBIT_SATELLITES_PER_HOST,
+    orbit_host_has_satellite_capacity,
+    orbit_host_satellite_count,
+    orbit_satellite_member_slot_ids,
     apply_orbit_requisition_visibility,
+    apply_orbit_to_resolved,
     bind_ray_percent_to_ratio,
     layer_asset_kind_label,
     layer_binding_ray_percent,
@@ -71,7 +82,9 @@ from layer_runtime import (
     orbit_aux_carriers,
     orbit_aux_owner,
     orbit_aux_slot_is_allowed,
+    orbit_frame_plan,
     orbit_upper_lower_slot_ids,
+    resolve_orbit_track_layer,
     truncate_display_filename,
 )
 
@@ -908,6 +921,31 @@ def test_orbit_stack_draws_owner_on_each_side() -> None:
         assert owner_slot == main.slot_id
 
 
+def _enable_orbit_follow(sat: BasicLayerSlot, host: BasicLayerSlot) -> None:
+    sat.motion_mode = MOTION_MODE_CIRCULAR
+    sat.orbit_host_slot_id = host.slot_id
+
+
+def test_orbit_follow_clears_host_aux_and_stays_visible() -> None:
+    state = BasicLayersState()
+    host = state.layers[1]
+    sat = state.layers[2]
+    host.asset_path = "host.png"
+    sat.asset_path = "sat.png"
+    host.motion_mode = MOTION_MODE_CIRCULAR
+    host.orbit_radius = 80.0
+    host.orbit_aux_slot_id = sat.slot_id
+    apply_orbit_requisition_visibility(state)
+    assert not sat.visible
+    _enable_orbit_follow(sat, host)
+    sanitize_layer_references(state)
+    assert host.orbit_aux_slot_id is None
+    assert sat.visible
+    overrides, hidden = compute_orbit_render_plan(state, 0.0)
+    assert any(p.source_slot_id == host.slot_id for p in overrides.values())
+    assert any(p.source_slot_id == sat.slot_id for p in overrides.values())
+
+
 def test_orbit_aux_cannot_target_orbit_motion_layer() -> None:
     state = BasicLayersState()
     main = state.layers[0]
@@ -955,6 +993,49 @@ def test_orbit_edit_geometry_and_hit() -> None:
     slot, mode = hit_test_orbit_edit(geom, int(mid[0]), int(mid[1]))
     assert slot == layer.slot_id
     assert mode == LayerEditMode.ORBIT_MOVE
+
+
+def test_orbit_follow_edit_geometry_uses_host_track() -> None:
+    state = BasicLayersState()
+    host = state.layers[1]
+    host.asset_path = "host.png"
+    host.motion_mode = MOTION_MODE_CIRCULAR
+    host.orbit_radius = 70.0
+    host.orbit_pivot_u = 0.35
+    host.orbit_pivot_v = 0.65
+    host.orbit_plane_tilt_deg = 30.0
+    sat = state.layers[2]
+    sat.asset_path = "sat.png"
+    sat.orbit_radius = 10.0
+    sat.orbit_pivot_u = 0.8
+    sat.orbit_pivot_v = 0.2
+    _enable_orbit_follow(sat, host)
+    ctx = BindingContext(canvas_width=512, canvas_height=512)
+    host_geom = compute_orbit_edit_geometry(state, host, _asset_loader, 512, 512, ctx)
+    sat_geom = compute_orbit_edit_geometry(state, sat, _asset_loader, 512, 512, ctx)
+    assert host_geom is not None and sat_geom is not None
+    assert sat_geom.slot_id == sat.slot_id
+    assert len(host_geom.path_points) == len(sat_geom.path_points)
+    for hp, sp in zip(host_geom.path_points, sat_geom.path_points):
+        assert abs(hp[0] - sp[0]) < 0.5
+        assert abs(hp[1] - sp[1]) < 0.5
+    assert abs(host_geom.pivot_xy[0] - sat_geom.pivot_xy[0]) < 0.5
+    assert resolve_orbit_track_layer(state, sat) is host
+
+
+def test_orbit_frame_plan_cached_per_binding_context() -> None:
+    state = BasicLayersState()
+    layer = state.layers[0]
+    layer.asset_path = "a.png"
+    layer.motion_mode = MOTION_MODE_CIRCULAR
+    layer.orbit_radius = 50.0
+    ctx = BindingContext(canvas_width=512, canvas_height=512, motion_time_s=1.25)
+    plan_a = orbit_frame_plan(state, ctx)
+    plan_b = orbit_frame_plan(state, ctx)
+    assert plan_a is plan_b
+    ctx.motion_time_s = 2.0
+    plan_c = orbit_frame_plan(state, ctx)
+    assert plan_c is not plan_a
 
 
 def test_orbit_path_follows_sync_and_reverse_rotation() -> None:
@@ -1243,6 +1324,136 @@ def test_basic_layers_persistence_round_trip(tmp_root: Path | None = None) -> No
     assert reloaded.layers[0].binding_neck_anchor_ratio == 0.42
 
 
+def test_orbit_follow_opposite_phase_for_count_two() -> None:
+    state = BasicLayersState()
+    host = state.layers[1]
+    host.motion_mode = MOTION_MODE_CIRCULAR
+    host.orbit_radius = 100.0
+    host.orbit_speed_deg_per_sec = 60.0
+    host.asset_path = "host.png"
+    sat = state.layers[2]
+    sat.asset_path = "sat.png"
+    _enable_orbit_follow(sat, host)
+    sat.orbit_satellite_count = 2
+    sat.orbit_satellite_index = 1
+    host_st = compute_orbit_motion_state(host, state, 0.0)
+    sat_st = compute_orbit_motion_state(sat, state, 0.0)
+    assert abs(host_st.offset_x + sat_st.offset_x) < 1.0
+    assert abs(host_st.offset_y + sat_st.offset_y) < 1.0
+
+
+def test_orbit_follow_uses_own_aux_stack() -> None:
+    state = BasicLayersState()
+    host = state.layers[1]
+    host.motion_mode = MOTION_MODE_CIRCULAR
+    host.orbit_radius = 80.0
+    host.asset_path = "host.png"
+    host_aux = state.layers[3]
+    host_aux.asset_path = "host_aux.png"
+    host.orbit_aux_slot_id = host_aux.slot_id
+    sat = state.layers[2]
+    _enable_orbit_follow(sat, host)
+    sat.orbit_satellite_count = 2
+    sat.orbit_satellite_index = 1
+    sat.asset_path = "sat.png"
+    sat_aux = state.layers[4]
+    sat_aux.asset_path = "sat_aux.png"
+    sat.orbit_aux_slot_id = sat_aux.slot_id
+    apply_orbit_requisition_visibility(state)
+    overrides, _hidden = compute_orbit_render_plan(state, 0.75)
+    assert any(p.source_slot_id == host.slot_id for p in overrides.values())
+    assert any(p.source_slot_id == sat.slot_id for p in overrides.values())
+
+
+def test_hotkey_targets_single_layer_only() -> None:
+    state = BasicLayersState()
+    host = state.layers[1]
+    host.motion_mode = MOTION_MODE_CIRCULAR
+    sat = state.layers[2]
+    _enable_orbit_follow(sat, host)
+    assert layer_hotkey_action_target_slot_ids(state, host.slot_id) == [host.slot_id]
+    assert apply_layer_hotkey_action(state, host.slot_id, "toggle_visible")
+    assert not host.visible
+    assert sat.visible
+
+
+def test_orbit_follow_draw_uses_own_scale_rect() -> None:
+    state = BasicLayersState()
+    host = state.layers[1]
+    host.motion_mode = MOTION_MODE_CIRCULAR
+    host.asset_path = "host.png"
+    host.orbit_radius = 80.0
+    sat = state.layers[2]
+    _enable_orbit_follow(sat, host)
+    sat.orbit_satellite_count = 2
+    sat.orbit_satellite_index = 1
+    sat.asset_path = "sat.png"
+    pre = {
+        host.slot_id: LayerGeometryResolver._rect_from_center(
+            host.slot_id, 400.0, 300.0, 100.0, 100.0),
+        sat.slot_id: LayerGeometryResolver._rect_from_center(
+            sat.slot_id, 400.0, 300.0, 40.0, 40.0),
+    }
+    ctx = BindingContext(canvas_width=800, canvas_height=600, motion_time_s=0.0)
+    out = apply_orbit_to_resolved(state, dict(pre), ctx, 800, 600)
+    drawn = out[sat.slot_id]
+    assert abs(drawn.draw_width - 40.0) < 0.01
+    assert abs(drawn.draw_height - 40.0) < 0.01
+
+
+def test_legacy_orbit_satellite_mode_migrates_to_circular() -> None:
+    state = BasicLayersState()
+    sat = state.layers[2]
+    sat.motion_mode = MOTION_MODE_ORBIT_SATELLITE
+    sat.orbit_host_slot_id = state.layers[1].slot_id
+    from layer_runtime import LayerHotkeyBinding
+    sat.hotkey_bindings = [LayerHotkeyBinding(key_code=70)]
+    sanitize_layer_references(state)
+    assert sat.motion_mode == MOTION_MODE_CIRCULAR
+    assert sat.hotkey_bindings
+
+
+def test_orbit_follow_host_capacity_limit() -> None:
+    state = BasicLayersState()
+    while len(state.layers) < 8:
+        from layer_runtime import default_layer_slot
+        state.layers.append(default_layer_slot(len(state.layers)))
+    host = state.layers[1]
+    host.motion_mode = MOTION_MODE_CIRCULAR
+    for idx, slot_id in enumerate((2, 3, 4, 5, 6, 7)):
+        sat = state.layers[slot_id]
+        sat.motion_mode = MOTION_MODE_ORBIT_SATELLITE
+        sat.orbit_host_slot_id = host.slot_id
+        sat.orbit_satellite_index = idx + 1
+        sat.orbit_satellite_count = 7
+    sanitize_layer_references(state)
+    members = orbit_satellite_member_slot_ids(state, host.slot_id)
+    assert len(members) == MAX_ORBIT_SATELLITES_PER_HOST
+    assert not orbit_host_has_satellite_capacity(state, host.slot_id, 99)
+
+
+def test_orbit_follow_scale_uses_own_near_far() -> None:
+    state = BasicLayersState()
+    host = state.layers[1]
+    host.motion_mode = MOTION_MODE_CIRCULAR
+    host.orbit_radius = 100.0
+    host.orbit_near_scale = 2.0
+    host.orbit_far_scale = 0.5
+    sat = state.layers[2]
+    sat.asset_path = "sat.png"
+    sat.orbit_near_scale = 1.0
+    sat.orbit_far_scale = 1.0
+    _enable_orbit_follow(sat, host)
+    host_st = compute_orbit_motion_state(host, state, 0.5)
+    sat_st = compute_orbit_motion_state(sat, state, 0.5)
+    assert host_st.scale != 1.0
+    assert abs(sat_st.scale - 1.0) < 0.01
+
+
+def test_orbit_follow_resync_interval_constant() -> None:
+    assert ORBIT_HOST_SYNC_INTERVAL_S >= 60.0
+
+
 def main() -> None:
     test_binding_migration()
     test_body_vs_head_vs_free()
@@ -1301,6 +1512,17 @@ def main() -> None:
     test_orbit_render_plan_with_aux_hides_one_slot()
     test_orbit_depth_flips_over_half_turn()
     test_apply_orbit_offsets_resolved_rect()
+    test_orbit_follow_edit_geometry_uses_host_track()
+    test_orbit_frame_plan_cached_per_binding_context()
+    test_orbit_follow_opposite_phase_for_count_two()
+    test_orbit_follow_clears_host_aux_and_stays_visible()
+    test_orbit_follow_uses_own_aux_stack()
+    test_hotkey_targets_single_layer_only()
+    test_orbit_follow_draw_uses_own_scale_rect()
+    test_legacy_orbit_satellite_mode_migrates_to_circular()
+    test_orbit_follow_host_capacity_limit()
+    test_orbit_follow_scale_uses_own_near_far()
+    test_orbit_follow_resync_interval_constant()
     print("smoke_layer_runtime_ok")
 
 

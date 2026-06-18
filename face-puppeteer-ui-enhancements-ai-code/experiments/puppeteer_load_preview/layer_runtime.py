@@ -38,30 +38,22 @@ GIF_PLAYBACK_MODES = (
 )
 
 LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE = "toggle_visible"
-LAYER_HOTKEY_ACTION_HOLD_TO_HIDE = "hold_to_hide"
-LAYER_HOTKEY_ACTION_HOLD_TO_SHOW = "hold_to_show"
-LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE = "hold_to_show_play_once"
 LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE = "gif_play_once"
 LAYER_HOTKEY_ACTION_GIF_SHOW_PLAY_ONCE_HIDE = "gif_show_play_once_hide"
 LAYER_HOTKEY_ACTION_GIF_PLAY = "gif_play"
 LAYER_HOTKEY_ACTION_GIF_STOP = "gif_stop"
+# Removed from UI/runtime (2026-06-18); load-time migration only.
+_DEPRECATED_LAYER_HOTKEY_HOLD_ACTIONS: dict[str, str] = {
+    "hold_to_hide": LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE,
+    "hold_to_show": LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE,
+    "hold_to_show_play_once": LAYER_HOTKEY_ACTION_GIF_SHOW_PLAY_ONCE_HIDE,
+}
 LAYER_HOTKEY_ACTIONS = (
     LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE,
-    LAYER_HOTKEY_ACTION_HOLD_TO_HIDE,
-    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW,
-    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE,
     LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE,
     LAYER_HOTKEY_ACTION_GIF_SHOW_PLAY_ONCE_HIDE,
     LAYER_HOTKEY_ACTION_GIF_PLAY,
     LAYER_HOTKEY_ACTION_GIF_STOP,
-)
-LAYER_HOTKEY_HOLD_ACTIONS = (
-    LAYER_HOTKEY_ACTION_HOLD_TO_HIDE,
-    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW,
-    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE,
-)
-LAYER_HOTKEY_GIF_HOLD_ACTIONS = (
-    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE,
 )
 LAYER_HOTKEY_GIF_ACTIONS = (
     LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE,
@@ -73,10 +65,6 @@ MAX_LAYER_HOTKEY_BINDINGS = 8
 
 LAYER_HOTKEY_ACTION_LABELS: dict[str, str] = {
     LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE: "显隐切换 / Toggle visible",
-    LAYER_HOTKEY_ACTION_HOLD_TO_HIDE: "按住隐藏 / Hold to hide",
-    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW: "按住显示 / Hold to show",
-    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE: (
-        "按住显示播一次 / Hold: show, play once"),
     LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE: "GIF 播一次 / GIF play once",
     LAYER_HOTKEY_ACTION_GIF_SHOW_PLAY_ONCE_HIDE: (
         "显示播一次后隐藏 / Show, play once, hide"),
@@ -191,6 +179,15 @@ SWING_MIN_AMPLITUDE_EPS = 1e-6
 # reserved for future distinct front/back 3D art); which one shows is decided by
 # depth (upper vs lower), NOT by which is "main".
 MOTION_MODE_CIRCULAR = "circular_orbit"
+# Legacy persisted value; loaded layers are normalized to MOTION_MODE_CIRCULAR.
+MOTION_MODE_ORBIT_SATELLITE = "orbit_satellite"
+MAX_ORBIT_SATELLITES_PER_HOST = 5
+ORBIT_SATELLITE_COUNT_MIN = 2
+ORBIT_SATELLITE_COUNT_MAX = MAX_ORBIT_SATELLITES_PER_HOST + 1
+DEFAULT_ORBIT_SATELLITE_COUNT = 2
+DEFAULT_ORBIT_SATELLITE_INDEX = 1
+# Re-anchor follower phase/speed from the host every N seconds (f-062).
+ORBIT_HOST_SYNC_INTERVAL_S = 180.0
 DEFAULT_ORBIT_RADIUS = 80.0
 ORBIT_RADIUS_MIN = 0.0
 ORBIT_RADIUS_MAX = float(LAYER_COORD_SIZE) / 2.0
@@ -373,6 +370,15 @@ def format_layer_row_summary(
         layer: BasicLayerSlot,
         state: Optional[BasicLayersState] = None) -> str:
     if state is not None:
+        if layer_orbits_with_host(layer):
+            host_id = layer.orbit_host_slot_id
+            if host_id is not None and resolve_orbit_host_layer(state, layer) is not None:
+                count = clamp_orbit_satellite_count(layer.orbit_satellite_count)
+                index = clamp_orbit_satellite_index(
+                    layer.orbit_satellite_index, count)
+                return (
+                    f"与图层 {host_id + 1} 一起环绕 · 序号 {index}/{count}"
+                    f" / Orbit with L{host_id + 1} · {index}/{count}")
         owner = orbit_aux_owner(state, layer.slot_id)
         if owner is not None:
             return (
@@ -539,21 +545,64 @@ def find_layer_slot(state: BasicLayersState, slot_id: int) -> Optional[BasicLaye
     return None
 
 
+
+def migrate_layer_hotkey_bindings(state: BasicLayersState) -> None:
+    for layer in state.layers:
+        if not layer.hotkey_bindings:
+            continue
+        layer.hotkey_bindings = [
+            LayerHotkeyBinding(
+                action=normalize_layer_hotkey_action(binding.action),
+                modifiers=int(binding.modifiers),
+                key_code=int(binding.key_code))
+            for binding in layer.hotkey_bindings[:MAX_LAYER_HOTKEY_BINDINGS]
+        ]
+
+
 def sanitize_layer_references(state: BasicLayersState) -> None:
     """Drop bindings/aux targets that point at layers no longer in the stack."""
+    migrate_layer_hotkey_bindings(state)
     live = {layer.slot_id for layer in state.layers}
     for layer in state.layers:
-        aux_id = layer.orbit_aux_slot_id
+        if layer.motion_mode == MOTION_MODE_ORBIT_SATELLITE:
+            layer.motion_mode = MOTION_MODE_CIRCULAR
+        prev_aux_id = layer.orbit_aux_slot_id
+        aux_id = prev_aux_id
         if aux_id is not None and aux_id not in live:
             layer.orbit_aux_slot_id = None
             aux_id = None
         if aux_id is not None:
             layer.orbit_aux_slot_id = normalize_orbit_aux_slot_id(
                 state, layer.slot_id, aux_id)
+            aux_id = layer.orbit_aux_slot_id
+        if prev_aux_id is not None and aux_id is None:
+            freed = find_layer_slot(state, int(prev_aux_id))
+            if (
+                    freed is not None
+                    and layer_orbits_with_host(freed)
+                    and orbit_aux_owner(state, int(prev_aux_id)) is None):
+                freed.visible = True
+        host_id = layer.orbit_host_slot_id
+        if host_id is not None and host_id not in live:
+            layer.orbit_host_slot_id = None
+            host_id = None
+        if host_id is not None:
+            layer.orbit_host_slot_id = normalize_orbit_host_slot_id(
+                state, layer.slot_id, host_id)
         parent_slot = parse_layer_binding_slot(layer.binding_parent)
         if parent_slot is not None and parent_slot not in live:
             layer.binding_parent = None
+    _enforce_orbit_satellite_host_limits(state)
     apply_orbit_requisition_visibility(state)
+
+
+def _enforce_orbit_satellite_host_limits(state: BasicLayersState) -> None:
+    for host_id in circular_orbit_host_slot_ids(state):
+        members = sorted(orbit_satellite_member_slot_ids(state, host_id))
+        for extra_slot_id in members[MAX_ORBIT_SATELLITES_PER_HOST:]:
+            extra = find_layer_slot(state, extra_slot_id)
+            if extra is not None:
+                extra.orbit_host_slot_id = None
 
 
 def layer_slot_uses_orbit_motion(state: BasicLayersState, slot_id: int) -> bool:
@@ -596,6 +645,8 @@ def cleanup_layer_references(state: BasicLayersState, removed_slot_id: int) -> N
     for layer in state.layers:
         if layer.orbit_aux_slot_id == removed_slot_id:
             layer.orbit_aux_slot_id = None
+        if layer.orbit_host_slot_id == removed_slot_id:
+            layer.orbit_host_slot_id = None
         if normalize_binding_target(layer.binding_parent) == bind_target:
             layer.binding_parent = None
 
@@ -664,6 +715,10 @@ def normalize_gif_playback_mode(value: object) -> str:
 def normalize_layer_hotkey_action(value: object) -> str:
     if value in LAYER_HOTKEY_ACTIONS:
         return str(value)
+    key = str(value) if value is not None else ""
+    migrated = _DEPRECATED_LAYER_HOTKEY_HOLD_ACTIONS.get(key)
+    if migrated is not None:
+        return migrated
     return LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE
 
 
@@ -757,13 +812,21 @@ def resolve_gif_frame_index(
     return max(0, frame_count - 1)
 
 
-def apply_layer_hotkey_action(
+def layer_hotkey_action_needs_asset_cache_reset(
+        layer: BasicLayerSlot, action: str) -> bool:
+    """Whether switching to this hotkey action should invalidate GIF asset cache."""
+    if classify_layer_asset_kind(layer.asset_path or "") != "gif":
+        return False
+    normalized = normalize_layer_hotkey_action(action)
+    return normalized in LAYER_HOTKEY_GIF_ACTIONS
+
+
+def _apply_layer_hotkey_action_one(
         state: "BasicLayersState",
         slot_id: int,
         action: str,
         *,
         now: Optional[float] = None) -> bool:
-    """Apply a layer hotkey action (shared by global hotkeys and external triggers)."""
     try:
         layer = state.get_slot(slot_id)
     except KeyError:
@@ -797,6 +860,16 @@ def apply_layer_hotkey_action(
     return False
 
 
+def apply_layer_hotkey_action(
+        state: "BasicLayersState",
+        slot_id: int,
+        action: str,
+        *,
+        now: Optional[float] = None) -> bool:
+    """Apply a layer hotkey action on one layer slot."""
+    return _apply_layer_hotkey_action_one(state, slot_id, action, now=now)
+
+
 def apply_hotkey_action_idle_layer_state(
         layer: BasicLayerSlot,
         action: str,
@@ -809,8 +882,6 @@ def apply_hotkey_action_idle_layer_state(
     is_gif = classify_layer_asset_kind(layer.asset_path or "") == "gif"
     time_now = time.time() if now is None else now
     show_on_trigger = normalized in (
-        LAYER_HOTKEY_ACTION_HOLD_TO_SHOW,
-        LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE,
         LAYER_HOTKEY_ACTION_GIF_SHOW_PLAY_ONCE_HIDE,
         LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE,
     )
@@ -877,6 +948,10 @@ class BasicLayerSlot:
     orbit_near_scale: float = DEFAULT_ORBIT_NEAR_SCALE
     orbit_far_scale: float = DEFAULT_ORBIT_FAR_SCALE
     orbit_aux_slot_id: Optional[int] = None
+    orbit_host_slot_id: Optional[int] = None
+    orbit_satellite_index: int = DEFAULT_ORBIT_SATELLITE_INDEX
+    orbit_satellite_count: int = DEFAULT_ORBIT_SATELLITE_COUNT
+    orbit_follow_last_sync_time_s: float = -1.0
     hotkey_bindings: list[LayerHotkeyBinding] = field(default_factory=list)
     gif_playback_mode: str = GIF_PLAYBACK_LOOP
     gif_playback_epoch: float = 0.0
@@ -925,6 +1000,12 @@ class BasicLayerSlot:
             payload["orbit_far_scale"] = clamp_orbit_scale(self.orbit_far_scale)
             payload["orbit_aux_slot_id"] = (
                 int(self.orbit_aux_slot_id) if self.orbit_aux_slot_id is not None else None)
+            if self.orbit_host_slot_id is not None:
+                payload["orbit_host_slot_id"] = int(self.orbit_host_slot_id)
+                payload["orbit_satellite_index"] = clamp_orbit_satellite_index(
+                    self.orbit_satellite_index, self.orbit_satellite_count)
+                payload["orbit_satellite_count"] = clamp_orbit_satellite_count(
+                    self.orbit_satellite_count)
         if self.hotkey_bindings:
             payload["hotkey_bindings"] = [
                 binding.to_dict() for binding in self.hotkey_bindings[:MAX_LAYER_HOTKEY_BINDINGS]]
@@ -990,70 +1071,17 @@ class BasicLayerSlot:
                 int(data["orbit_aux_slot_id"])
                 if data.get("orbit_aux_slot_id") is not None
                 else None),
+            orbit_host_slot_id=(
+                int(data["orbit_host_slot_id"])
+                if data.get("orbit_host_slot_id") is not None
+                else None),
+            orbit_satellite_index=clamp_orbit_satellite_index(
+                int(data.get("orbit_satellite_index", DEFAULT_ORBIT_SATELLITE_INDEX)),
+                int(data.get("orbit_satellite_count", DEFAULT_ORBIT_SATELLITE_COUNT))),
+            orbit_satellite_count=clamp_orbit_satellite_count(
+                int(data.get("orbit_satellite_count", DEFAULT_ORBIT_SATELLITE_COUNT))),
             hotkey_bindings=layer_hotkey_bindings_from_list(data.get("hotkey_bindings")),
         )
-
-
-def is_layer_hotkey_hold_action(action: str) -> bool:
-    return normalize_layer_hotkey_action(action) in LAYER_HOTKEY_HOLD_ACTIONS
-
-
-@dataclass
-class LayerHotkeyHoldSnapshot:
-    """State captured at hold press; restored on release."""
-    restore_visible: bool
-    restore_gif_playback_mode: str = GIF_PLAYBACK_LOOP
-    restore_gif_hide_when_playback_stops: bool = False
-
-
-def begin_layer_hotkey_hold(
-        layer: BasicLayerSlot,
-        action: str,
-        *,
-        now: Optional[float] = None) -> Optional[LayerHotkeyHoldSnapshot]:
-    """Press phase for hold actions. Returns snapshot to restore on release."""
-    normalized = normalize_layer_hotkey_action(action)
-    time_now = time.time() if now is None else now
-    if normalized == LAYER_HOTKEY_ACTION_HOLD_TO_HIDE:
-        snapshot = LayerHotkeyHoldSnapshot(restore_visible=layer.visible)
-        layer.visible = False
-        return snapshot
-    if normalized == LAYER_HOTKEY_ACTION_HOLD_TO_SHOW:
-        snapshot = LayerHotkeyHoldSnapshot(restore_visible=layer.visible)
-        layer.visible = True
-        return snapshot
-    if normalized == LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE:
-        if classify_layer_asset_kind(layer.asset_path or "") != "gif":
-            return None
-        snapshot = LayerHotkeyHoldSnapshot(
-            restore_visible=layer.visible,
-            restore_gif_playback_mode=normalize_gif_playback_mode(
-                layer.gif_playback_mode),
-            restore_gif_hide_when_playback_stops=layer.gif_hide_when_playback_stops,
-        )
-        layer.gif_hide_when_playback_stops = False
-        set_gif_playback_mode(layer, GIF_PLAYBACK_PLAY_ONCE, now=time_now)
-        layer.visible = True
-        return snapshot
-    return None
-
-
-def end_layer_hotkey_hold(
-        layer: BasicLayerSlot,
-        snapshot: LayerHotkeyHoldSnapshot,
-        *,
-        action: str) -> None:
-    normalized = normalize_layer_hotkey_action(action)
-    if normalized == LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE:
-        layer.visible = snapshot.restore_visible
-        layer.gif_hide_when_playback_stops = (
-            snapshot.restore_gif_hide_when_playback_stops)
-        if snapshot.restore_visible:
-            set_gif_playback_mode(layer, snapshot.restore_gif_playback_mode)
-        else:
-            set_gif_playback_mode(layer, GIF_PLAYBACK_STOPPED)
-        return
-    layer.visible = bool(snapshot.restore_visible)
 
 
 @dataclass
@@ -1320,7 +1348,148 @@ def normalize_motion_mode(value: Optional[str]) -> str:
         return MOTION_MODE_SIMPLE_SWING
     if value == MOTION_MODE_CIRCULAR:
         return MOTION_MODE_CIRCULAR
+    if value == MOTION_MODE_ORBIT_SATELLITE:
+        return MOTION_MODE_CIRCULAR
     return MOTION_MODE_NONE
+
+
+def clamp_orbit_satellite_count(value: int) -> int:
+    return max(
+        ORBIT_SATELLITE_COUNT_MIN,
+        min(ORBIT_SATELLITE_COUNT_MAX, int(value)))
+
+
+def clamp_orbit_satellite_index(index: int, count: int) -> int:
+    count = clamp_orbit_satellite_count(count)
+    index = int(index)
+    return max(1, min(count - 1, index))
+
+
+def orbit_host_slot_is_allowed(
+        state: BasicLayersState,
+        owner_slot_id: int,
+        host_slot_id: Optional[int]) -> bool:
+    if host_slot_id is None:
+        return False
+    if int(host_slot_id) == int(owner_slot_id):
+        return False
+    host = find_layer_slot(state, int(host_slot_id))
+    if host is None:
+        return False
+    if host.motion_mode != MOTION_MODE_CIRCULAR:
+        return False
+    if layer_orbits_with_host(host):
+        return False
+    return orbit_host_has_satellite_capacity(state, int(host_slot_id), int(owner_slot_id))
+
+
+def normalize_orbit_host_slot_id(
+        state: BasicLayersState,
+        owner_slot_id: int,
+        host_slot_id: Optional[int]) -> Optional[int]:
+    if host_slot_id is None:
+        return None
+    if orbit_host_slot_is_allowed(state, owner_slot_id, int(host_slot_id)):
+        return int(host_slot_id)
+    return None
+
+
+def resolve_orbit_host_layer(
+        state: BasicLayersState,
+        layer: BasicLayerSlot) -> Optional[BasicLayerSlot]:
+    if not layer_orbits_with_host(layer):
+        return None
+    host_id = layer.orbit_host_slot_id
+    if host_id is None:
+        return None
+    host = find_layer_slot(state, int(host_id))
+    if host is None or host.motion_mode != MOTION_MODE_CIRCULAR:
+        return None
+    if layer_orbits_with_host(host):
+        return None
+    return host
+
+
+def resolve_orbit_track_layer(
+        state: BasicLayersState,
+        layer: BasicLayerSlot) -> BasicLayerSlot:
+    """Orbit path used for motion + edit chrome (host track when following)."""
+    host = resolve_orbit_host_layer(state, layer)
+    return host if host is not None else layer
+
+
+def orbit_satellite_phase_offset_rad(index: int, count: int) -> float:
+    count = clamp_orbit_satellite_count(count)
+    index = clamp_orbit_satellite_index(index, count)
+    return 2.0 * math.pi * float(index) / float(count)
+
+
+def circular_orbit_host_slot_ids(state: BasicLayersState) -> list[int]:
+    return [
+        layer.slot_id
+        for layer in state.layers
+        if layer.motion_mode == MOTION_MODE_CIRCULAR
+        and not layer_orbits_with_host(layer)]
+
+
+def layer_orbits_with_host(layer: BasicLayerSlot) -> bool:
+    """Circular motion locked to another layer's orbit (own aux stack)."""
+    return (
+        layer.motion_mode == MOTION_MODE_CIRCULAR
+        and layer.orbit_host_slot_id is not None)
+
+
+def layer_joins_shared_orbit_track(layer: BasicLayerSlot) -> bool:
+    return layer_orbits_with_host(layer)
+
+
+def layer_registers_own_hotkeys(layer: BasicLayerSlot) -> bool:
+    return True
+
+
+def orbit_satellite_member_slot_ids(
+        state: BasicLayersState,
+        host_slot_id: int) -> list[int]:
+    host_id = int(host_slot_id)
+    return [
+        layer.slot_id
+        for layer in state.layers
+        if layer_orbits_with_host(layer)
+        and layer.orbit_host_slot_id == host_id
+        and resolve_orbit_host_layer(state, layer) is not None]
+
+
+def orbit_host_satellite_count(
+        state: BasicLayersState,
+        host_slot_id: int,
+        *,
+        exclude_owner_slot_id: Optional[int] = None) -> int:
+    members = orbit_satellite_member_slot_ids(state, host_slot_id)
+    if exclude_owner_slot_id is None:
+        return len(members)
+    return sum(1 for sid in members if sid != int(exclude_owner_slot_id))
+
+
+def orbit_host_has_satellite_capacity(
+        state: BasicLayersState,
+        host_slot_id: int,
+        owner_slot_id: int) -> bool:
+    members = orbit_satellite_member_slot_ids(state, int(host_slot_id))
+    owner = int(owner_slot_id)
+    if owner in members:
+        return True
+    return len(members) < MAX_ORBIT_SATELLITES_PER_HOST
+
+
+def layer_hotkey_action_target_slot_ids(
+        state: BasicLayersState,
+        slot_id: int) -> list[int]:
+    try:
+        layer = state.get_slot(slot_id)
+    except KeyError:
+        return []
+    targets = [int(slot_id)]
+    return targets
 
 
 def clamp_orbit_radius(value: float) -> float:
@@ -1396,7 +1565,7 @@ def consume_layer_gif_playback_visibility_dirty(state: BasicLayersState) -> bool
 def basic_layers_state_has_active_motion(state: BasicLayersState) -> bool:
     return any(
         layer_has_active_swing(layer)
-        or layer_has_active_orbit(layer)
+        or layer_has_active_orbit(layer, state)
         or layer_has_active_gif_playback(layer)
         for layer in state.layers)
 
@@ -1439,20 +1608,21 @@ class OrbitState:
     in_front: bool = True
 
 
-def compute_orbit_state(layer: BasicLayerSlot, time_s: float) -> OrbitState:
-    """Evaluate the tilted-plane circular orbit and project it to the screen.
-
-    In-plane point P(t) = (R*cos t, R*sin t). Tilt the plane by `tilt` about the
-    horizontal screen axis: the sin-component splits into screen-vertical
-    (sin t * sin tilt) and into-screen depth (sin t * cos tilt). Orthographic
-    projection then gives screen offsets and a depth used for scale + occlusion.
-    """
+def compute_orbit_state(
+        layer: BasicLayerSlot,
+        time_s: float,
+        *,
+        extra_phase_rad: float = 0.0) -> OrbitState:
+    """Evaluate the tilted-plane circular orbit and project it to the screen."""
     radius = clamp_orbit_radius(layer.orbit_radius)
     if radius <= ORBIT_MIN_RADIUS_EPS:
         return OrbitState(scale=1.0, depth_norm=0.0, in_front=True)
     speed = clamp_orbit_speed_deg_per_sec(layer.orbit_speed_deg_per_sec)
     tilt = math.radians(clamp_orbit_plane_tilt_deg(layer.orbit_plane_tilt_deg))
-    angle = math.radians(speed * float(time_s)) + float(layer.orbit_phase_rad)
+    angle = (
+        math.radians(speed * float(time_s))
+        + float(layer.orbit_phase_rad)
+        + float(extra_phase_rad))
     cos_t = math.cos(angle)
     sin_t = math.sin(angle)
     offset_x = radius * cos_t
@@ -1470,14 +1640,87 @@ def compute_orbit_state(layer: BasicLayerSlot, time_s: float) -> OrbitState:
         in_front=depth_norm >= 0.0)
 
 
-def layer_has_active_orbit(layer: BasicLayerSlot) -> bool:
+def sync_orbit_follow_kinematics_from_host(
+        layer: BasicLayerSlot,
+        host: BasicLayerSlot,
+        time_s: float) -> None:
+    """Copy host track params; set follower phase = host phase + ring offset."""
+    layer.orbit_radius = host.orbit_radius
+    layer.orbit_plane_tilt_deg = host.orbit_plane_tilt_deg
+    layer.orbit_speed_deg_per_sec = host.orbit_speed_deg_per_sec
+    offset = orbit_satellite_phase_offset_rad(
+        layer.orbit_satellite_index, layer.orbit_satellite_count)
+    layer.orbit_phase_rad = float(host.orbit_phase_rad) + float(offset)
+    layer.orbit_follow_last_sync_time_s = float(time_s)
+
+
+def maybe_sync_orbit_follow_from_host(
+        layer: BasicLayerSlot,
+        host: BasicLayerSlot,
+        time_s: float) -> None:
+    last = float(layer.orbit_follow_last_sync_time_s)
+    if (
+            last < 0.0
+            or time_s - last >= ORBIT_HOST_SYNC_INTERVAL_S):
+        sync_orbit_follow_kinematics_from_host(layer, host, time_s)
+
+
+def compute_orbit_motion_state(
+        layer: BasicLayerSlot,
+        state: BasicLayersState,
+        time_s: float) -> OrbitState:
+    """Circular orbit for one layer; followers mirror host track + own near/far scale."""
+    host = resolve_orbit_host_layer(state, layer)
+    if host is None:
+        return compute_orbit_state(layer, time_s)
+    offset = orbit_satellite_phase_offset_rad(
+        layer.orbit_satellite_index, layer.orbit_satellite_count)
+    radius = clamp_orbit_radius(host.orbit_radius)
+    if radius <= ORBIT_MIN_RADIUS_EPS:
+        return OrbitState(scale=1.0, depth_norm=0.0, in_front=True)
+    speed = clamp_orbit_speed_deg_per_sec(host.orbit_speed_deg_per_sec)
+    tilt = math.radians(clamp_orbit_plane_tilt_deg(host.orbit_plane_tilt_deg))
+    angle = (
+        math.radians(speed * float(time_s))
+        + float(host.orbit_phase_rad)
+        + float(offset))
+    cos_t = math.cos(angle)
+    sin_t = math.sin(angle)
+    offset_x = radius * cos_t
+    offset_y = -radius * sin_t * math.sin(tilt)
+    depth_norm = sin_t * math.cos(tilt)
+    near = clamp_orbit_scale(layer.orbit_near_scale)
+    far = clamp_orbit_scale(layer.orbit_far_scale)
+    blend = (depth_norm + 1.0) / 2.0
+    scale = far + (near - far) * blend
+    return OrbitState(
+        offset_x=offset_x,
+        offset_y=offset_y,
+        scale=scale,
+        depth_norm=depth_norm,
+        in_front=depth_norm >= 0.0)
+
+
+def layer_has_active_orbit(
+        layer: BasicLayerSlot,
+        state: Optional[BasicLayersState] = None) -> bool:
+    if not (
+            layer.enabled
+            and layer.visible
+            and bool(layer.asset_path)
+            and layer.motion_mode == MOTION_MODE_CIRCULAR):
+        return False
+    if layer_orbits_with_host(layer):
+        if state is None:
+            return True
+        host = resolve_orbit_host_layer(state, layer)
+        if host is None:
+            return False
+        return layer_has_active_orbit(host, state)
     return (
-        layer.enabled
-        and layer.visible
-        and bool(layer.asset_path)
-        and layer.motion_mode == MOTION_MODE_CIRCULAR
-        and clamp_orbit_radius(layer.orbit_radius) > ORBIT_MIN_RADIUS_EPS
-        and clamp_orbit_speed_deg_per_sec(layer.orbit_speed_deg_per_sec) > ORBIT_MIN_RADIUS_EPS)
+        clamp_orbit_radius(layer.orbit_radius) > ORBIT_MIN_RADIUS_EPS
+        and clamp_orbit_speed_deg_per_sec(layer.orbit_speed_deg_per_sec)
+        > ORBIT_MIN_RADIUS_EPS)
 
 
 def default_layer_slot(slot_id: int) -> BasicLayerSlot:
@@ -1523,6 +1766,11 @@ class BindingContext:
     binding_smoother: Optional["LayerBindingSmoother"] = field(
         default=None, compare=False, repr=False)
     motion_time_s: Optional[float] = None
+    # Per-frame cache: ``apply_orbit_to_resolved`` and compositor share one plan.
+    _orbit_plan_cache: Optional[tuple[dict[int, "_OrbitDrawPlan"], set[int]]] = field(
+        default=None, compare=False, repr=False)
+    _orbit_plan_cache_time_s: Optional[float] = field(
+        default=None, compare=False, repr=False)
 
     @property
     def scale_x(self) -> float:
@@ -2450,6 +2698,7 @@ class _OrbitDrawPlan:
     scale: float
     pivot_u: float
     pivot_v: float
+    pivot_slot_id: Optional[int] = None
 
 
 def orbit_aux_carriers(state: BasicLayersState) -> dict[int, int]:
@@ -2667,10 +2916,11 @@ def compute_orbit_edit_geometry(
         return None
     canvas_width = max(1, int(canvas_width))
     canvas_height = max(1, int(canvas_height))
+    track_layer = resolve_orbit_track_layer(state, layer)
     shift_x, shift_y = orbit_binding_shift_for_layer(
-        state, layer, asset_loader, canvas_width, canvas_height, binding_context)
+        state, track_layer, asset_loader, canvas_width, canvas_height, binding_context)
     path_points, pivot_xy = sample_orbit_path_canvas_points(
-        layer,
+        track_layer,
         canvas_width,
         canvas_height,
         shift_x,
@@ -2686,7 +2936,7 @@ def compute_orbit_edit_geometry(
     if smoother is not None and geometry_context is not None:
         resolved = smoother.apply(state, resolved, geometry_context)
     bind_xy = layer_binding_anchor_canvas_xy(
-        layer, state, binding_context, resolved, canvas_width, canvas_height)
+        track_layer, state, binding_context, resolved, canvas_width, canvas_height)
     return OrbitEditGeometry(
         slot_id=layer.slot_id,
         path_points=path_points,
@@ -2776,7 +3026,15 @@ def orbit_frame_plan(
         binding_context: Optional[BindingContext]) -> tuple[dict[int, _OrbitDrawPlan], set[int]]:
     if binding_context is None or binding_context.motion_time_s is None:
         return {}, set()
-    return compute_orbit_render_plan(state, binding_context.motion_time_s)
+    time_s = float(binding_context.motion_time_s)
+    cached_time = binding_context._orbit_plan_cache_time_s
+    cached_plan = binding_context._orbit_plan_cache
+    if cached_plan is not None and cached_time == time_s:
+        return cached_plan
+    plan = compute_orbit_render_plan(state, time_s)
+    binding_context._orbit_plan_cache = plan
+    binding_context._orbit_plan_cache_time_s = time_s
+    return plan
 
 
 def orbit_selection_slot_id(
@@ -2786,6 +3044,26 @@ def orbit_selection_slot_id(
     if plan is not None:
         return plan.source_slot_id
     return display_slot_id
+
+
+def assign_orbit_draw_plan(
+        state: BasicLayersState,
+        overrides: dict[int, _OrbitDrawPlan],
+        hidden: set[int],
+        plan: _OrbitDrawPlan,
+        st: OrbitState,
+        host: BasicLayerSlot) -> None:
+    """Publish one orbit draw plan using the layer's own main/aux stack pair."""
+    aux_id = host.orbit_aux_slot_id
+    aux_layer = find_layer_slot(state, aux_id) if aux_id is not None else None
+    if aux_layer is None or aux_id == host.slot_id:
+        overrides[plan.source_slot_id] = plan
+        return
+    upper_id, lower_id = orbit_upper_lower_slot_ids(host, aux_layer)
+    shown_id = upper_id if st.in_front else lower_id
+    hidden_id = lower_id if st.in_front else upper_id
+    overrides[shown_id] = plan
+    hidden.add(hidden_id)
 
 
 def compute_orbit_render_plan(
@@ -2803,26 +3081,18 @@ def compute_orbit_render_plan(
     overrides: dict[int, _OrbitDrawPlan] = {}
     hidden: set[int] = set()
     for layer in state.layers:
-        if not layer_has_active_orbit(layer):
+        if not layer_has_active_orbit(layer, state):
             continue
-        st = compute_orbit_state(layer, time_s)
+        st = compute_orbit_motion_state(layer, state, time_s)
         plan = _OrbitDrawPlan(
             source_slot_id=layer.slot_id,
             offset_x=st.offset_x,
             offset_y=st.offset_y,
             scale=st.scale,
             pivot_u=clamp_swing_pivot_u(layer.orbit_pivot_u),
-            pivot_v=clamp_swing_pivot_v(layer.orbit_pivot_v))
-        aux_id = layer.orbit_aux_slot_id
-        aux_layer = find_layer_slot(state, aux_id) if aux_id is not None else None
-        if aux_layer is None or aux_id == layer.slot_id:
-            overrides[layer.slot_id] = plan
-            continue
-        upper_id, lower_id = orbit_upper_lower_slot_ids(layer, aux_layer)
-        shown_id = upper_id if st.in_front else lower_id
-        hidden_id = lower_id if st.in_front else upper_id
-        overrides[shown_id] = plan
-        hidden.add(hidden_id)
+            pivot_v=clamp_swing_pivot_v(layer.orbit_pivot_v),
+            pivot_slot_id=layer.slot_id)
+        assign_orbit_draw_plan(state, overrides, hidden, plan, st, layer)
     return overrides, hidden
 
 
@@ -2837,7 +3107,7 @@ def apply_orbit_to_resolved(
     motion_time_s = binding_context.motion_time_s
     if motion_time_s is None:
         return resolved
-    overrides, hidden = compute_orbit_render_plan(state, motion_time_s)
+    overrides, hidden = orbit_frame_plan(state, binding_context)
     if not overrides and not hidden:
         return resolved
     if local_rects is None:
@@ -2846,34 +3116,41 @@ def apply_orbit_to_resolved(
     sx = float(canvas_width) / float(LAYER_COORD_SIZE)
     sy = float(canvas_height) / float(LAYER_COORD_SIZE)
     for slot_id, plan in overrides.items():
-        source_bound = pre_orbit.get(plan.source_slot_id)
-        base_rect = source_bound if source_bound is not None else pre_orbit.get(slot_id)
+        pivot_slot_id = (
+            plan.pivot_slot_id if plan.pivot_slot_id is not None else plan.source_slot_id)
+        source_bound = pre_orbit.get(pivot_slot_id)
+        base_rect = pre_orbit.get(slot_id)
+        if base_rect is None:
+            base_rect = pre_orbit.get(plan.source_slot_id)
         if base_rect is None:
             continue
+        size_rect = pre_orbit.get(plan.source_slot_id) or base_rect
         shift_x = 0.0
         shift_y = 0.0
-        local_rect = local_rects.get(plan.source_slot_id)
+        local_rect = local_rects.get(pivot_slot_id)
         if source_bound is not None and local_rect is not None:
             shift_x, shift_y = orbit_binding_shift(source_bound, local_rect)
         pivot_x = plan.pivot_u * float(canvas_width) + shift_x
         pivot_y = plan.pivot_v * float(canvas_height) + shift_y
-        source_layer = find_layer_slot(state, plan.source_slot_id)
+        pivot_layer = find_layer_slot(state, pivot_slot_id)
         follow_rot = (
-            orbit_binding_follow_rotation_deg(source_layer, state, binding_context)
-            if source_layer is not None else 0.0)
+            orbit_binding_follow_rotation_deg(pivot_layer, state, binding_context)
+            if pivot_layer is not None else 0.0)
         offset_x = plan.offset_x * sx
         offset_y = plan.offset_y * sy
         offset_x, offset_y = rotate_orbit_plane_offsets(
             offset_x, offset_y, follow_rot)
         center_x = pivot_x + offset_x
         center_y = pivot_y + offset_y
-        width = max(1.0, base_rect.draw_width * plan.scale)
-        height = max(1.0, base_rect.draw_height * plan.scale)
+        width = max(1.0, size_rect.draw_width * plan.scale)
+        height = max(1.0, size_rect.draw_height * plan.scale)
         new_rect = LayerGeometryResolver._rect_from_center(
             slot_id, center_x, center_y, width, height)
-        new_rect.smoothed_rotation_deg = base_rect.smoothed_rotation_deg
+        new_rect.smoothed_rotation_deg = size_rect.smoothed_rotation_deg
         resolved[slot_id] = new_rect
     for slot_id in hidden:
+        if slot_id in overrides:
+            continue
         resolved.pop(slot_id, None)
     strip_orbit_requisitioned_native_rects(state, resolved, set(overrides))
     return resolved
@@ -3471,6 +3748,10 @@ def save_basic_layers_state(
         state: BasicLayersState,
         ui_state_file_path: str,
         relativize_path: Callable[[Optional[str]], Optional[str]]) -> None:
+    for layer in state.layers:
+        host = resolve_orbit_host_layer(state, layer)
+        if host is not None:
+            sync_orbit_follow_kinematics_from_host(layer, host, 0.0)
     sanitize_layer_references(state)
     directory = get_basic_layers_directory(ui_state_file_path)
     os.makedirs(directory, exist_ok=True)

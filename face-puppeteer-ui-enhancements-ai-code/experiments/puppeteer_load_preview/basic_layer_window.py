@@ -75,9 +75,6 @@ from layer_runtime import (
     LAYER_HOTKEY_ACTIONS,
     LAYER_HOTKEY_ACTION_LABELS,
     LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE,
-    LAYER_HOTKEY_ACTION_HOLD_TO_HIDE,
-    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW,
-    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE,
     LAYER_HOTKEY_GIF_ACTIONS,
     MAX_LAYER_HOTKEY_BINDINGS,
     GIF_PLAYBACK_LOOP,
@@ -85,8 +82,22 @@ from layer_runtime import (
     apply_orbit_requisition_visibility,
     orbit_aux_carriers,
     orbit_aux_owner,
-    layer_slot_uses_orbit_motion,
+    MOTION_MODE_CIRCULAR,
+    DEFAULT_ORBIT_SATELLITE_COUNT,
+    DEFAULT_ORBIT_SATELLITE_INDEX,
+    ORBIT_SATELLITE_COUNT_MAX,
+    ORBIT_SATELLITE_COUNT_MIN,
+    clamp_orbit_satellite_count,
+    clamp_orbit_satellite_index,
+    circular_orbit_host_slot_ids,
+    MAX_ORBIT_SATELLITES_PER_HOST,
+    orbit_host_has_satellite_capacity,
+    orbit_host_satellite_count,
+    layer_orbits_with_host,
+    normalize_orbit_host_slot_id,
+    sync_orbit_follow_kinematics_from_host,
     normalize_orbit_aux_slot_id,
+    layer_slot_uses_orbit_motion,
     sanitize_layer_references,
     stack_position_can_move_down,
     stack_position_can_move_up,
@@ -102,7 +113,7 @@ THUMB_SIZE = 52
 ROW_MIN_HEIGHT = 56
 SELECTED_BORDER = wx.Colour(255, 210, 0)
 THUMB_HIGHLIGHT = wx.Colour(255, 200, 0)
-DETAIL_DOCK_MIN_HEIGHT = 360
+DETAIL_DOCK_MIN_HEIGHT = 420
 PLACEHOLDER_HEIGHT = 72
 REMOVE_LAYER_BTN_BG = wx.Colour(210, 45, 45)
 REMOVE_LAYER_BTN_FG = wx.WHITE
@@ -894,6 +905,79 @@ class LayerDetailDock(wx.Panel):
         orbit_sizer = wx.BoxSizer(wx.VERTICAL)
         self.orbit_panel.SetSizer(orbit_sizer)
 
+        self.orbit_with_host_cb = wx.CheckBox(
+            self.orbit_panel,
+            label="与…一起环绕 / Orbit with…")
+        self.orbit_with_host_cb.SetToolTip(
+            "仍为圆周运动：角速度与目标图层实时锁定；"
+            "选本层时预览目标轨道；请为本图层指定辅助图层以实现前后遮挡。"
+            " / Still circular orbit: speed locked live to host; "
+            "preview shows host orbit when selected; set own aux for occlusion.")
+        orbit_sizer.Add(self.orbit_with_host_cb, 0, wx.ALL, 4)
+
+        self.orbit_satellite_panel = wx.Panel(self.orbit_panel)
+        orbit_sat_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.orbit_satellite_panel.SetSizer(orbit_sat_sizer)
+        self.orbit_satellite_hint = wx.StaticText(
+            self.orbit_satellite_panel,
+            label=(
+                "轨道与目标图层一致（选本层时预览目标轨道）；角速度实时锁定目标。"
+                f" 每目标最多 {MAX_ORBIT_SATELLITES_PER_HOST} 个跟随图层。"
+                f" / Track matches host (preview shows host orbit when selected); "
+                f"speed locked live; max {MAX_ORBIT_SATELLITES_PER_HOST} followers per host."))
+        self.orbit_satellite_hint.Wrap(440)
+        self.orbit_satellite_hint.SetForegroundColour(wx.Colour(90, 90, 90))
+        orbit_sat_sizer.Add(self.orbit_satellite_hint, 0, wx.ALL, 4)
+
+        host_row = wx.BoxSizer(wx.HORIZONTAL)
+        host_row.Add(
+            wx.StaticText(self.orbit_satellite_panel, label="目标图层 / Host layer"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            6)
+        self.orbit_host_choice = wx.Choice(
+            self.orbit_satellite_panel, choices=["（无 / None）"])
+        self.orbit_host_choice.SetToolTip(
+            "须为独立「圆周运动」图层（未跟随其他图层）"
+            " / Must be a standalone circular-orbit layer")
+        host_row.Add(self.orbit_host_choice, 1, wx.EXPAND)
+        orbit_sat_sizer.Add(host_row, 0, wx.EXPAND | wx.ALL, 4)
+
+        count_row = wx.BoxSizer(wx.HORIZONTAL)
+        count_row.Add(
+            wx.StaticText(
+                self.orbit_satellite_panel,
+                label="环上总数 / Bodies on ring"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            6)
+        self.orbit_satellite_count_spin = wx.SpinCtrl(
+            self.orbit_satellite_panel,
+            value=str(DEFAULT_ORBIT_SATELLITE_COUNT),
+            min=ORBIT_SATELLITE_COUNT_MIN,
+            max=ORBIT_SATELLITE_COUNT_MAX)
+        self.orbit_satellite_count_spin.SetToolTip(
+            f"含目标图层，最多 {MAX_ORBIT_SATELLITES_PER_HOST + 1}（目标+{MAX_ORBIT_SATELLITES_PER_HOST} 跟随）"
+            f" / Includes host; max {MAX_ORBIT_SATELLITES_PER_HOST + 1} bodies")
+        count_row.Add(self.orbit_satellite_count_spin, 0, wx.RIGHT, 8)
+        count_row.Add(
+            wx.StaticText(
+                self.orbit_satellite_panel,
+                label="本层序号 / This index"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            6)
+        self.orbit_satellite_index_spin = wx.SpinCtrl(
+            self.orbit_satellite_panel,
+            value=str(DEFAULT_ORBIT_SATELLITE_INDEX),
+            min=1,
+            max=ORBIT_SATELLITE_COUNT_MAX - 1)
+        self.orbit_satellite_index_spin.SetToolTip(
+            "0 由目标图层占用；本层填 1…N-1 / Index 0 is host; use 1…N-1 here")
+        count_row.Add(self.orbit_satellite_index_spin, 0)
+        orbit_sat_sizer.Add(count_row, 0, wx.EXPAND | wx.ALL, 4)
+        orbit_sizer.Add(self.orbit_satellite_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+
         radius_row = wx.BoxSizer(wx.HORIZONTAL)
         radius_row.Add(
             wx.StaticText(self.orbit_panel, label="半径 / Radius"),
@@ -1123,7 +1207,6 @@ class BasicLayerWindow(wx.Frame):
         self._hotkey_row_widgets: list[dict] = []
         self._hotkey_capture_row: Optional[int] = None
         self._hotkey_ui_syncing = False
-        self._hotkey_ui_syncing = False
         primary = main_frame.basic_layers_state.selected_slot_id
         if primary is not None:
             self._selected_slot_ids = {primary}
@@ -1242,17 +1325,18 @@ class BasicLayerWindow(wx.Frame):
         dock.orbit_near_scale_slider.Bind(wx.EVT_SLIDER, self._on_orbit_changed)
         dock.orbit_far_scale_slider.Bind(wx.EVT_SLIDER, self._on_orbit_changed)
         dock.orbit_aux_choice.Bind(wx.EVT_CHOICE, self._on_orbit_aux_changed)
+        dock.orbit_with_host_cb.Bind(wx.EVT_CHECKBOX, self._on_orbit_with_host_changed)
+        dock.orbit_host_choice.Bind(wx.EVT_CHOICE, self._on_orbit_host_changed)
+        dock.orbit_satellite_count_spin.Bind(
+            wx.EVT_SPINCTRL, self._on_orbit_satellite_count_changed)
+        dock.orbit_satellite_index_spin.Bind(
+            wx.EVT_SPINCTRL, self._on_orbit_satellite_index_changed)
         dock.edit_orbit_pivot_btn.Bind(wx.EVT_BUTTON, self._on_edit_orbit_pivot)
         dock.hotkey_add_btn.Bind(wx.EVT_BUTTON, self._on_add_hotkey_binding)
 
     def _hotkey_action_choices(self, layer: BasicLayerSlot) -> list[str]:
-        actions = [
-            LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE,
-            LAYER_HOTKEY_ACTION_HOLD_TO_HIDE,
-            LAYER_HOTKEY_ACTION_HOLD_TO_SHOW,
-        ]
+        actions = [LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE]
         if classify_layer_asset_kind(layer.asset_path or "") == "gif":
-            actions.append(LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE)
             actions.extend(LAYER_HOTKEY_GIF_ACTIONS)
         return actions
 
@@ -1265,9 +1349,12 @@ class BasicLayerWindow(wx.Frame):
     def refresh_hotkey_section_visibility(self) -> None:
         enabled = self.main_frame.is_layer_hotkeys_enabled()
         dock = self.detail_dock
-        dock.hotkey_title.Show(enabled)
+        dock.hotkey_title.Show(True)
         dock.hotkey_rows_panel.Show(enabled)
         dock.hotkey_add_btn.Show(enabled)
+        dock.hotkey_disabled_hint.SetLabel(
+            "后处理栏未启用图层快捷键时此处不可用。"
+            " / Layer hotkeys off — enable in postprocess panel.")
         dock.hotkey_disabled_hint.Show(not enabled)
         if not enabled:
             self._hotkey_capture_row = None
@@ -1783,7 +1870,15 @@ class BasicLayerWindow(wx.Frame):
         dock.layer_block.Enable()
         dock.motion_choice.Enable()
         dock.visible_cb.SetValue(layer.visible)
-        self._sync_hotkey_ui(layer)
+        bindings_sig = tuple(
+            (binding.action, int(binding.modifiers), int(binding.key_code))
+            for binding in layer.hotkey_bindings[:MAX_LAYER_HOTKEY_BINDINGS])
+        if (
+                getattr(self, "_hotkey_ui_slot_id", None) != slot_id
+                or getattr(self, "_hotkey_ui_bindings_sig", None) != bindings_sig):
+            self._sync_hotkey_ui(layer)
+            self._hotkey_ui_slot_id = slot_id
+            self._hotkey_ui_bindings_sig = bindings_sig
         scale_pct = int(round(max(0.05, layer.transform.scale) * 100))
         dock.scale_slider.SetValue(max(5, min(300, scale_pct)))
         dock.scale_label.SetLabel(f"{layer.transform.scale:.2f}")
@@ -1839,6 +1934,8 @@ class BasicLayerWindow(wx.Frame):
         has_asset = bool(layer.asset_path)
         swing_enabled = layer.motion_mode == MOTION_MODE_SIMPLE_SWING
         orbit_enabled = layer.motion_mode == MOTION_MODE_CIRCULAR
+        follow_enabled = orbit_enabled and layer_orbits_with_host(layer)
+        dock.orbit_with_host_cb.SetValue(follow_enabled)
         dock.motion_panel.Enable(swing_enabled)
         dock.motion_panel.Show(swing_enabled)
         dock.edit_swing_pivot_btn.Enable(swing_enabled and has_asset)
@@ -1866,6 +1963,39 @@ class BasicLayerWindow(wx.Frame):
         dock.orbit_panel.Enable(orbit_enabled)
         dock.orbit_panel.Show(orbit_enabled)
         dock.edit_orbit_pivot_btn.Enable(orbit_enabled)
+        sat_count = clamp_orbit_satellite_count(layer.orbit_satellite_count)
+        sat_index = clamp_orbit_satellite_index(layer.orbit_satellite_index, sat_count)
+        host_targets = self._populate_orbit_host_choice(state, slot_id)
+        try:
+            host_index = host_targets.index(layer.orbit_host_slot_id)
+        except ValueError:
+            host_index = 0
+        dock.orbit_host_choice.SetSelection(host_index)
+        dock.orbit_satellite_count_spin.SetRange(
+            ORBIT_SATELLITE_COUNT_MIN, ORBIT_SATELLITE_COUNT_MAX)
+        dock.orbit_satellite_count_spin.SetValue(sat_count)
+        dock.orbit_satellite_index_spin.SetRange(1, max(1, sat_count - 1))
+        dock.orbit_satellite_index_spin.SetValue(sat_index)
+        dock.orbit_satellite_panel.Enable(follow_enabled)
+        dock.orbit_satellite_panel.Show(follow_enabled)
+        track_locked = follow_enabled
+        dock.orbit_radius_slider.Enable(not track_locked)
+        dock.orbit_tilt_slider.Enable(not track_locked)
+        dock.orbit_speed_slider.Enable(not track_locked)
+        if follow_enabled:
+            host = None
+            if layer.orbit_host_slot_id is not None:
+                try:
+                    host = state.get_slot(layer.orbit_host_slot_id)
+                except KeyError:
+                    host = None
+            if host is not None:
+                dock.orbit_radius_label.SetLabel(
+                    f"{clamp_orbit_radius(host.orbit_radius):.0f} (锁定)")
+                dock.orbit_tilt_label.SetLabel(
+                    f"{clamp_orbit_plane_tilt_deg(host.orbit_plane_tilt_deg):.0f}° (锁定)")
+                dock.orbit_speed_label.SetLabel(
+                    f"{clamp_orbit_speed_deg_per_sec(host.orbit_speed_deg_per_sec):.0f}°/s (锁定)")
         dock.binding_signal_help.SetLabel(
             "两段射线（可延伸）：① 底→脖 ② 脖→头；参考 % 仅移动示意点，不移动已绑图层。"
             " / Unbounded spine rays; reference % moves diagram only.")
@@ -2067,8 +2197,11 @@ class BasicLayerWindow(wx.Frame):
             layer.motion_mode = MOTION_MODE_CIRCULAR
         else:
             layer.motion_mode = MOTION_MODE_NONE
+            layer.orbit_host_slot_id = None
         sanitize_layer_references(self.main_frame.basic_layers_state)
         self.main_frame.persist_basic_layers_state()
+        if self.main_frame.is_layer_hotkeys_enabled():
+            self.main_frame.sync_layer_hotkey_registry()
         self._refresh_detail_dock()
         self.refresh_all()
         self.main_frame.on_layer_state_changed()
@@ -2142,6 +2275,9 @@ class BasicLayerWindow(wx.Frame):
             return
         dock = self.detail_dock
         layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        if layer_orbits_with_host(layer):
+            event.Skip()
+            return
         layer.orbit_radius = clamp_orbit_radius(float(dock.orbit_radius_slider.GetValue()))
         layer.orbit_plane_tilt_deg = clamp_orbit_plane_tilt_deg(
             float(dock.orbit_tilt_slider.GetValue()))
@@ -2228,12 +2364,154 @@ class BasicLayerWindow(wx.Frame):
                 continue
             if layer_slot_uses_orbit_motion(state, sid):
                 continue
+            other = state.get_slot(sid)
+            if layer_orbits_with_host(other):
+                continue
             labels.append(
                 f"图层 {sid + 1} 堆栈位 / Layer {sid + 1} stack slot")
             targets.append(sid)
         self.detail_dock.orbit_aux_choice.Set(labels)
         self._orbit_aux_targets = targets
         return targets
+
+    def _populate_orbit_host_choice(
+            self,
+            state: BasicLayersState,
+            owner_slot_id: int) -> list[Optional[int]]:
+        labels = ["（无 / None）"]
+        targets: list[Optional[int]] = [None]
+        owner = state.get_slot(owner_slot_id)
+        current_host = (
+            owner.orbit_host_slot_id
+            if owner is not None and layer_orbits_with_host(owner)
+            else None)
+        for host_id in circular_orbit_host_slot_ids(state):
+            if host_id == owner_slot_id:
+                continue
+            if (
+                    not orbit_host_has_satellite_capacity(state, host_id, owner_slot_id)
+                    and host_id != current_host):
+                continue
+            host = state.get_slot(host_id)
+            sat_n = orbit_host_satellite_count(state, host_id, exclude_owner_slot_id=owner_slot_id)
+            title = format_layer_row_title(host_id, host)
+            labels.append(f"{title} ({sat_n}/{MAX_ORBIT_SATELLITES_PER_HOST})")
+            targets.append(host_id)
+        if (
+                current_host is not None
+                and current_host not in targets
+                and find_layer_slot(state, current_host) is not None):
+            host = state.get_slot(current_host)
+            labels.append(
+                f"{format_layer_row_title(current_host, host)} (current)")
+            targets.append(current_host)
+        self.detail_dock.orbit_host_choice.Set(labels)
+        self._orbit_host_targets = targets
+        return targets
+
+    def _apply_orbit_follow_from_host(
+            self,
+            layer: BasicLayerSlot,
+            host: BasicLayerSlot,
+            *,
+            time_s: float = 0.0) -> None:
+        sync_orbit_follow_kinematics_from_host(layer, host, time_s)
+
+    def _on_orbit_with_host_changed(self, event: wx.Event) -> None:
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            return
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        state = self.main_frame.basic_layers_state
+        if self.detail_dock.orbit_with_host_cb.GetValue():
+            if layer.motion_mode != MOTION_MODE_CIRCULAR:
+                layer.motion_mode = MOTION_MODE_CIRCULAR
+            layer.visible = True
+            if layer.orbit_host_slot_id is None:
+                hosts = [
+                    hid for hid in circular_orbit_host_slot_ids(state)
+                    if orbit_host_has_satellite_capacity(state, hid, slot_id)]
+                if hosts:
+                    layer.orbit_host_slot_id = hosts[0]
+            host = None
+            if layer.orbit_host_slot_id is not None:
+                try:
+                    host = state.get_slot(layer.orbit_host_slot_id)
+                except KeyError:
+                    host = None
+            if host is not None:
+                self._apply_orbit_follow_from_host(layer, host)
+        else:
+            layer.orbit_host_slot_id = None
+            layer.orbit_follow_last_sync_time_s = -1.0
+        sanitize_layer_references(state)
+        self.main_frame.persist_basic_layers_state()
+        self._refresh_detail_dock()
+        self.refresh_all()
+        self.main_frame.on_layer_state_changed()
+        event.Skip()
+
+    def _on_orbit_host_changed(self, event: wx.Event) -> None:
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            return
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        targets = getattr(self, "_orbit_host_targets", [None])
+        choice = self.detail_dock.orbit_host_choice.GetSelection()
+        host_id = targets[choice] if 0 <= choice < len(targets) else None
+        new_host = normalize_orbit_host_slot_id(
+            self.main_frame.basic_layers_state, slot_id, host_id)
+        if host_id is not None and new_host is None:
+            wx.MessageBox(
+                f"该目标已有 {MAX_ORBIT_SATELLITES_PER_HOST} 个跟随图层，无法再加入。"
+                f" / Host already has {MAX_ORBIT_SATELLITES_PER_HOST} followers.",
+                "与…一起环绕 / Orbit with…",
+                wx.OK | wx.ICON_WARNING,
+                parent=self)
+            self._refresh_detail_dock()
+            event.Skip()
+            return
+        layer.orbit_host_slot_id = new_host
+        if new_host is not None:
+            try:
+                host = self.main_frame.basic_layers_state.get_slot(new_host)
+                self._apply_orbit_follow_from_host(layer, host)
+            except KeyError:
+                pass
+        sanitize_layer_references(self.main_frame.basic_layers_state)
+        self.main_frame.persist_basic_layers_state()
+        self._refresh_detail_dock()
+        self.refresh_all()
+        self.main_frame.on_layer_state_changed()
+        event.Skip()
+
+    def _on_orbit_satellite_count_changed(self, event: wx.Event) -> None:
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            return
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        count = clamp_orbit_satellite_count(
+            self.detail_dock.orbit_satellite_count_spin.GetValue())
+        layer.orbit_satellite_count = count
+        layer.orbit_satellite_index = clamp_orbit_satellite_index(
+            layer.orbit_satellite_index, count)
+        self.detail_dock.orbit_satellite_index_spin.SetRange(1, max(1, count - 1))
+        self.detail_dock.orbit_satellite_index_spin.SetValue(layer.orbit_satellite_index)
+        self.main_frame.persist_basic_layers_state()
+        self.main_frame.on_layer_state_changed()
+        event.Skip()
+
+    def _on_orbit_satellite_index_changed(self, event: wx.Event) -> None:
+        slot_id = self._current_detail_slot()
+        if slot_id is None:
+            return
+        layer = self.main_frame.basic_layers_state.get_slot(slot_id)
+        count = clamp_orbit_satellite_count(layer.orbit_satellite_count)
+        layer.orbit_satellite_index = clamp_orbit_satellite_index(
+            self.detail_dock.orbit_satellite_index_spin.GetValue(), count)
+        self.main_frame.persist_basic_layers_state()
+        self.main_frame.on_layer_state_changed()
+        event.Skip()
 
     def _on_smooth_alpha_changed(self, event: wx.Event) -> None:
         slot_id = self._current_detail_slot()
