@@ -63,7 +63,7 @@ $syncArgs = @(
     "buckets", "sync",
     $MirrorRoot,
     "hf://buckets/$BucketId",
-    "--exclude", ".git/**"
+    "--exclude=.git/**"
 )
 
 if ($DryRun) {
