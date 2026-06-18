@@ -10,6 +10,25 @@
 
 ---
 
+## 2026-06-19
+
+### 呼吸 · 立绘按钮
+
+| # | 改动 |
+|---|------|
+| B1 | **呼吸幅度增益**：面捕「模型传入」呼吸区新增滑块 **1×–3×**（`breathing_amplitude_gain`）；写入 `mouth_settings` 持久化 |
+| B2 | 顶栏 THA3 按钮文案 **「加载立绘」→「加载上次立绘 / Load Last Portrait」**（与「加载上次 THA4 Student」命名一致） |
+
+### 图层 · 环绕跟随（orbit host）
+
+| # | 改动 |
+|---|------|
+| G6 | **与…一起环绕 / Orbit with…**：跟随层为 `circular` + `orbit_host_slot_id`，运动学读宿主轨道参数 + 自身近远缩放；各层**独立**辅助槽做前后遮挡 |
+| G7 | 选中跟随层时轨道编辑环显示**宿主**轨道；`BindingContext.orbit_frame_plan` 缓存避免每帧重算 |
+| G8 | 旧存档 `motion_mode: orbit_satellite` 加载时迁移为 `circular`；解除辅助槽时恢复跟随层可见性 |
+
+---
+
 ## 2026-06-16
 
 ### HF Bucket 完整发行 · 瘦包 NN 外置
@@ -62,21 +81,22 @@
 
 ### 图层快捷键 · GIF 播放（f-062 子集）
 
-> **状态：🟠 半损坏·待修（2026-06-16）** — 代码已合入 develop/main 同步链，但快捷键**设置、注册与按住类动作**仍有已知回归（见 `TROUBLESHOOTING_QA.md` Q16b–Q16d、`easyvtuberstudio条目设计手册.md` f-062）。**直播关键路径请勿依赖**，待下一轮修复验收。
+> **状态：🟡 部分可用·待验收（2026-06-18）** — 2026-06-18 修热键 `immediate` 参数名错误（曾致按热键无效）；设置/性能已缓解，见 `TROUBLESHOOTING_QA.md` Q16b–Q16d。
 
 | # | 改动 |
 |---|------|
 | L1 | **全局热键**：`layer_hotkey_registry.py` + `BasicLayerSlot.hotkey_bindings`；图层窗录制键位 |
-| L2 | **动作**：显隐切换；**按住隐藏 / 按住显示**；GIF **按住显示播一次** / 播一次 / **显示播一次后隐藏** / 循环 / 停止 |
+| L2 | **动作**：显隐切换；GIF **播一次** / **显示播一次后隐藏** / 循环 / 停止（**已移除**全部「按住」类动作，见设计手册 f-062 难以实现） |
 | L3 | **`apply_layer_hotkey_action`**：主窗与外部触发共用；`smoke_layer_hotkeys.py` |
 | L4 | **启动加固**：`EVT_HOTKEY` 可用性守卫；HWND 就绪后再注册热键；图层窗独立顶层 `parent=None` |
 | L5 | **热键总开关**：后处理栏「启用图层快捷键」，**默认关**；勾选后才懒加载 `LayerHotkeyRegistry` |
 | L6 | **启动崩溃修复**：`wx.HotKeyEvent` 在 wx 4.2 不存在，改 `wx.Event`；图层窗延迟到控件面板建完后再打开 |
-| L7 | **按住显示播一次**：`hold_to_show_play_once`；按住从第 1 帧播 GIF 一次，松手恢复按下前显隐与播放状态 |
+| L7 | ~~按住显示播一次~~ **已移除**（2026-06-18）：`hold_to_*` 改列设计手册「难以实现」；旧绑定加载时自动迁移 |
+| L11 | **性能/卡死**：去掉每帧按住轮询；热键/GIF 副作用改 `CallAfter` 轻量重绘；面捕与 THA 推理 worker **latest-wins** 单次 `CallAfter` |
 | L8 | **切换快捷键动作**：下拉改热键行为时 `reload_layer_from_asset` 清缓存并重置 GIF 待机态 |
 | L9 | **稳定性/性能**：动作切换 `CallAfter` 防下拉闪退；按住热键轻量重绘；`play_once` 仅可见时持续刷新 |
 | L10 | **快捷键设置修复**：重建快捷键 UI 时屏蔽 `EVT_CHOICE` 误写盘；草稿行（未录键）可持久化；启动后再 `sync` 注册 |
-| L11 | **发布标记**：f-062 子集标为 **半损坏·待修**；双仓同步 + GitHub PR / HF Bucket 发布说明更新 |
+| L12 | **热键无效根因修复**：`notify_layer_composite_dirty(immediate_capture=)`；热键按需写盘；非 GIF 切换动作不再清缓存；详情刷新跳过无谓快捷键 UI 重建 |
 
 ### 窗口捕获 · 长时性能
 

@@ -1,7 +1,6 @@
 """Global layer hotkey registration (Win32 RegisterHotKey via wx)."""
 from __future__ import annotations
 
-import ctypes
 from dataclasses import dataclass
 from typing import Optional
 
@@ -11,16 +10,11 @@ from layer_runtime import (
     MAX_LAYER_HOTKEY_BINDINGS,
     BasicLayersState,
     LayerHotkeyBinding,
+    layer_registers_own_hotkeys,
     normalize_layer_hotkey_action,
 )
 
 HOTKEY_ID_BASE = 0xBE00
-
-_VK_SHIFT = 0x10
-_VK_CONTROL = 0x11
-_VK_MENU = 0x12
-_VK_LWIN = 0x5B
-_VK_RWIN = 0x5C
 
 
 @dataclass(frozen=True)
@@ -29,33 +23,6 @@ class LayerHotkeyDispatch:
     action: str
     modifiers: int = 0
     key_code: int = 0
-
-
-def _vk_down(vk: int) -> bool:
-    return bool(ctypes.windll.user32.GetAsyncKeyState(int(vk)) & 0x8000)
-
-
-def is_hotkey_still_pressed(modifiers: int, key_code: int) -> bool:
-    """Poll whether a registered hotkey combo is still held (Win32 only)."""
-    if wx.Platform != "__WXMSW__":
-        return False
-    if key_code <= 0:
-        return False
-    if not _vk_down(key_code):
-        return False
-    if modifiers & wx.MOD_SHIFT:
-        if not (_vk_down(_VK_SHIFT) or _vk_down(0xA0) or _vk_down(0xA1)):
-            return False
-    if modifiers & wx.MOD_CONTROL:
-        if not (_vk_down(_VK_CONTROL) or _vk_down(0xA2) or _vk_down(0xA3)):
-            return False
-    if modifiers & wx.MOD_ALT:
-        if not (_vk_down(_VK_MENU) or _vk_down(0xA4) or _vk_down(0xA5)):
-            return False
-    if modifiers & wx.MOD_WIN:
-        if not (_vk_down(_VK_LWIN) or _vk_down(_VK_RWIN)):
-            return False
-    return True
 
 
 def format_key_spec(modifiers: int, key_code: int) -> str:
@@ -134,6 +101,8 @@ class LayerHotkeyRegistry:
             return
         seen_keys: dict[tuple[int, int], str] = {}
         for layer in state.layers:
+            if not layer_registers_own_hotkeys(layer):
+                continue
             for binding_index, binding in enumerate(
                     layer.hotkey_bindings[:MAX_LAYER_HOTKEY_BINDINGS]):
                 if binding.key_code <= 0:
@@ -167,6 +136,10 @@ class LayerHotkeyRegistry:
                     modifiers=int(binding.modifiers),
                     key_code=int(binding.key_code),
                 )
+
+    @property
+    def registered_count(self) -> int:
+        return len(self._dispatch)
 
     def handle_hotkey(self, hotkey_id: int) -> Optional[LayerHotkeyDispatch]:
         return self._dispatch.get(int(hotkey_id))

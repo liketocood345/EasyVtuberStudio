@@ -227,7 +227,7 @@ python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtu
 
 1. **项目不再**为「不正常虚拟摄像头流」增加兼容逻辑（不替 DroidCam 擦屁股）；
 2. 增加 **窗口捕获**：直接抓取 **DroidCam 预览窗口** 的客户区画面，与你在客户端里看到的画面一致；
-3. **会记忆上次捕获的窗口**（`load_preview_ui_state.json` 里的 `window_capture_hwnd` / `window_capture_title`）；在 **Load Other / Load Last 加载模型**（或 THA3 加载立绘）时会刷新列表并 **优先连接窗口捕获**，其次摄像头。
+3. **会记忆上次捕获的窗口**（`load_preview_ui_state.json` 里的 `window_capture_hwnd` / `window_capture_title`）；在 **Load Other / Load Last 加载模型**（或 THA3 **加载上次立绘**）时会刷新列表并 **优先连接窗口捕获**，其次摄像头。
 
 **推荐操作（fork / develop 相同）：**
 
@@ -344,9 +344,9 @@ python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtu
 
 ### Q16b：图层快捷键按了没反应？
 
-> **🟠 半损坏·待修（2026-06-16）**：图层快捷键子系统（f-062）已上线但**不稳定**——设置 UI 曾误清空绑定、切换动作可能闪退、按热键可能掉帧。下列步骤可缓解，**不保证**全部场景；修复验收前请勿用于直播关键道具。
+> **🟡 部分可用·待验收（2026-06-18）**：2026-06-18 已修热键回调错误参数名。**2026-06-18 起已移除全部「按住」类快捷键**（曾导致按住卡死、掉帧）；旧 `hold_to_*` 绑定加载时自动迁移。
 
-**A：** 须先勾选后处理 **「启用图层混合 / Enable Layer Blending」**，并勾选 **「启用图层快捷键 / Enable Layer Hotkeys」**（默认关；未勾选时详情区快捷键区会隐藏且不会注册全局热键）。在图层系统窗口选中图层 → 详情区快捷键 → **+ 添加快捷键** → 选动作 → **录制 / Capture** 键位（须先录制键位才会注册；仅选动作未录键不会生效）。GIF 动作含：**按住显示播一次**、播一次、**显示播一次后隐藏**、循环、停止。非 GIF 图层可用显隐/按住类动作。若状态栏提示注册失败，换 `Ctrl+Alt+数字键` 等组合。**改动作后请重启应用再试一次注册。**
+**A：** 须先勾选后处理 **「启用图层混合 / Enable Layer Blending」**，并勾选 **「启用图层快捷键 / Enable Layer Hotkeys」**（默认关）。在图层系统窗口选中图层 → 详情区快捷键 → **+ 添加快捷键** → 选动作 → **录制 / Capture** 键位。GIF 图层可用：播一次、**显示播一次后隐藏**、循环、停止。非 GIF 图层可用 **显隐切换**。若状态栏提示注册失败，换 `Ctrl+Alt+数字键` 等组合。
 
 ---
 
@@ -356,12 +356,13 @@ python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtu
 
 ---
 
-### Q16d：切换快捷键动作（尤其「按住显示」）闪退，或按热键后帧率骤降？
+### Q16d：按热键后帧率骤降或界面/面捕偶发卡死？
 
 **A：**
 
-1. **闪退**：若在图层窗 **快捷键动作下拉** 切换时崩溃，多为在 `EVT_CHOICE` 回调里 **同步重建** 了快捷键行（销毁当前下拉控件）。已改为 `CallAfter` 延迟重载素材，且重载时 **不再重建** 快捷键 UI。
-2. **帧率约降至 1/4**：按住/松开类热键若每次触发 `on_layer_state_changed`（全量合成 + 写盘 + 刷新整个图层窗），会明显拖慢输出。按住类现仅 **轻量重绘输出**；GIF `play_once` 仅在图层 **可见** 时才计入持续动画刷新，避免隐藏后仍满帧合成。
+1. **按住类热键（已移除，2026-06-18）**：`hold_to_hide` / `hold_to_show` / `hold_to_show_play_once` 会在 `WM_HOTKEY` 与每帧 `GetAsyncKeyState` 轮询之间叠加全量合成，导致按住期间 UI 卡死、掉帧；窗口捕获与摄像头/视频流面捕均可触发。已全部移除；旧绑定加载时自动迁移为切换显隐或「显示播一次后隐藏」。
+2. **面捕队列堆积**：MediaPipe 与 THA 推理 worker 若每帧多次 `CallAfter`，主线程事件队列会胀满并表现为面捕卡顿。已改为 worker 内 **latest-wins**（每轮只投递一次 UI 回调）。
+3. **切换动作闪退**：快捷键动作下拉切换时已 `CallAfter` 延迟重载，且重载时不再重建快捷键 UI。
 
 ---
 
@@ -380,7 +381,7 @@ python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtu
 
 ### Q17b：为什么启动后摄像头没自动连上？
 
-**A：** **设计如此。** 启动时不调用自动连源；在 **Load Other / Load Last 加载模型**（或 THA3 加载立绘）时会 `refresh_and_autoload_video_source()`，此时记忆的 **窗口捕获** 优先于摄像头。若尚未加载模型，请手动刷新设备列表或先 Load Other。
+**A：** **设计如此。** 启动时不调用自动连源；在 **Load Other / Load Last 加载模型**（或 THA3 **加载上次立绘**）时会 `refresh_and_autoload_video_source()`，此时记忆的 **窗口捕获** 优先于摄像头。若尚未加载模型，请手动刷新设备列表或先 Load Other。
 
 ---
 

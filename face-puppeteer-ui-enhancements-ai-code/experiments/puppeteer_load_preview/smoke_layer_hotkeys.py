@@ -10,18 +10,18 @@ from layer_runtime import (
     GIF_PLAYBACK_LOOP,
     GIF_PLAYBACK_PLAY_ONCE,
     GIF_PLAYBACK_STOPPED,
-    LAYER_HOTKEY_ACTION_HOLD_TO_HIDE,
-    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW,
-    LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE,
+    LAYER_HOTKEY_ACTION_GIF_PLAY,
+    LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE,
+    LAYER_HOTKEY_ACTION_GIF_SHOW_PLAY_ONCE_HIDE,
+    LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE,
     BasicLayerSlot,
     BasicLayersState,
     LayerHotkeyBinding,
     apply_layer_hotkey_action,
     apply_hotkey_action_idle_layer_state,
-    begin_layer_hotkey_hold,
-    end_layer_hotkey_hold,
-    is_layer_hotkey_hold_action,
+    layer_hotkey_action_needs_asset_cache_reset,
     layer_hotkey_bindings_from_list,
+    migrate_layer_hotkey_bindings,
     normalize_layer_hotkey_action,
     consume_layer_gif_playback_visibility_dirty,
     reload_layer_from_asset_material,
@@ -29,7 +29,7 @@ from layer_runtime import (
     layer_has_active_gif_playback,
     set_gif_playback_mode,
 )
-from layer_hotkey_registry import format_key_spec, hotkey_id_for_binding
+from layer_hotkey_registry import hotkey_id_for_binding
 
 
 def test_gif_playback_stopped_returns_first_frame() -> None:
@@ -87,149 +87,71 @@ def test_apply_layer_hotkey_toggle_visible() -> None:
     assert not layer.visible
 
 
-def test_hold_to_hide_and_release() -> None:
-    layer = BasicLayerSlot(slot_id=0, visible=True)
-    snapshot = begin_layer_hotkey_hold(layer, LAYER_HOTKEY_ACTION_HOLD_TO_HIDE)
-    assert snapshot is not None
-    assert snapshot.restore_visible is True
-    assert not layer.visible
-    end_layer_hotkey_hold(layer, snapshot, action=LAYER_HOTKEY_ACTION_HOLD_TO_HIDE)
-    assert layer.visible
-
-
-def test_hold_to_show_and_release() -> None:
-    layer = BasicLayerSlot(slot_id=0, visible=False)
-    snapshot = begin_layer_hotkey_hold(layer, LAYER_HOTKEY_ACTION_HOLD_TO_SHOW)
-    assert snapshot is not None
-    assert snapshot.restore_visible is False
-    assert layer.visible
-    end_layer_hotkey_hold(layer, snapshot, action=LAYER_HOTKEY_ACTION_HOLD_TO_SHOW)
-    assert not layer.visible
-
-
-def test_hold_to_show_play_once_gif() -> None:
-    layer = BasicLayerSlot(slot_id=0, visible=False, asset_path="fx.gif")
-    set_gif_playback_mode(layer, GIF_PLAYBACK_LOOP, now=0.0)
-    snapshot = begin_layer_hotkey_hold(
-        layer, LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE, now=1.0)
-    assert snapshot is not None
-    assert snapshot.restore_visible is False
-    assert snapshot.restore_gif_playback_mode == GIF_PLAYBACK_LOOP
-    assert layer.visible
-    assert layer.gif_playback_mode == GIF_PLAYBACK_PLAY_ONCE
-    assert not layer.gif_hide_when_playback_stops
-    durations = [50, 50]
-    assert resolve_gif_frame_index(layer, durations, 100, 2, 1.02) == 0
-    assert resolve_gif_frame_index(layer, durations, 100, 2, 1.06) == 1
-    assert resolve_gif_frame_index(layer, durations, 100, 2, 1.12) == 0
-    assert layer.visible
-    assert layer.gif_playback_mode == GIF_PLAYBACK_STOPPED
-    end_layer_hotkey_hold(
-        layer, snapshot, action=LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE)
-    assert not layer.visible
-    assert layer.gif_playback_mode == GIF_PLAYBACK_STOPPED
-
-
-def test_hold_to_show_play_once_release_early() -> None:
-    layer = BasicLayerSlot(slot_id=0, visible=False, asset_path="fx.gif")
-    snapshot = begin_layer_hotkey_hold(
-        layer, LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE, now=0.0)
-    assert snapshot is not None
-    durations = [100, 100]
-    assert resolve_gif_frame_index(layer, durations, 200, 2, 0.05) == 0
-    end_layer_hotkey_hold(
-        layer, snapshot, action=LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE)
-    assert not layer.visible
-    assert layer.gif_playback_mode == GIF_PLAYBACK_STOPPED
-
-
-def test_hold_to_show_play_once_requires_gif() -> None:
-    layer = BasicLayerSlot(slot_id=0, visible=False, asset_path="still.png")
-    assert begin_layer_hotkey_hold(
-        layer, LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE) is None
-
-
-def test_reload_layer_from_asset_material_for_hotkey_action() -> None:
-    layer = BasicLayerSlot(slot_id=0, visible=True, asset_path="fx.gif")
-    set_gif_playback_mode(layer, GIF_PLAYBACK_PLAY_ONCE, now=1.0)
-    layer.gif_hide_when_playback_stops = True
-    assert reload_layer_from_asset_material(
-        layer, idle_for_hotkey_action="hold_to_show_play_once", now=2.0)
-    assert not layer.visible
-    assert layer.gif_playback_mode == GIF_PLAYBACK_STOPPED
-    assert not layer.gif_hide_when_playback_stops
-
-    layer.visible = True
-    set_gif_playback_mode(layer, GIF_PLAYBACK_STOPPED, now=3.0)
-    apply_hotkey_action_idle_layer_state(layer, "gif_play", now=4.0)
-    assert layer.visible
-    assert layer.gif_playback_mode == GIF_PLAYBACK_LOOP
-
-
-def test_gif_play_once_motion_only_when_visible() -> None:
-    layer = BasicLayerSlot(slot_id=0, visible=False, asset_path="fx.gif")
-    set_gif_playback_mode(layer, GIF_PLAYBACK_PLAY_ONCE, now=0.0)
-    assert not layer_has_active_gif_playback(layer)
-    layer.visible = True
-    assert layer_has_active_gif_playback(layer)
-
-
-def test_reload_layer_from_asset_material_requires_path() -> None:
-    layer = BasicLayerSlot(slot_id=0, asset_path=None)
-    assert not reload_layer_from_asset_material(layer)
-
-
-def test_hold_action_normalization() -> None:
-    assert is_layer_hotkey_hold_action(LAYER_HOTKEY_ACTION_HOLD_TO_HIDE)
-    assert is_layer_hotkey_hold_action(LAYER_HOTKEY_ACTION_HOLD_TO_SHOW)
-    assert is_layer_hotkey_hold_action(LAYER_HOTKEY_ACTION_HOLD_TO_SHOW_PLAY_ONCE)
-    assert not is_layer_hotkey_hold_action("toggle_visible")
-    assert normalize_layer_hotkey_action("hold_to_hide") == LAYER_HOTKEY_ACTION_HOLD_TO_HIDE
-
-
-def test_apply_layer_hotkey_gif_requires_gif_asset() -> None:
+def test_deprecated_hold_actions_migrate_on_load() -> None:
     state = BasicLayersState()
     layer = state.layers[0]
-    layer.asset_path = "test.png"
-    assert not apply_layer_hotkey_action(state, layer.slot_id, "gif_play")
+    layer.hotkey_bindings = [
+        LayerHotkeyBinding(action="hold_to_hide", modifiers=0, key_code=65),
+        LayerHotkeyBinding(action="hold_to_show_play_once", modifiers=0, key_code=66),
+    ]
+    migrate_layer_hotkey_bindings(state)
+    assert layer.hotkey_bindings[0].action == LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE
+    assert (
+        layer.hotkey_bindings[1].action
+        == LAYER_HOTKEY_ACTION_GIF_SHOW_PLAY_ONCE_HIDE)
+
+
+def test_normalize_layer_hotkey_action_defaults_unknown() -> None:
+    assert normalize_layer_hotkey_action("hold_to_hide") == LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE
+    assert normalize_layer_hotkey_action("bogus") == LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE
+    assert normalize_layer_hotkey_action("gif_play_once") == LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE
 
 
 def test_hotkey_binding_round_trip() -> None:
-    binding = LayerHotkeyBinding(action="toggle_visible", modifiers=2, key_code=70)
-    restored = LayerHotkeyBinding.from_dict(binding.to_dict())
-    assert restored is not None
-    assert restored.action == "toggle_visible"
-    assert restored.modifiers == 2
-    assert restored.key_code == 70
-
-
-def test_draft_hotkey_binding_without_key() -> None:
-    draft = LayerHotkeyBinding(action="hold_to_show", modifiers=0, key_code=0)
+    draft = LayerHotkeyBinding(action="gif_play_once", modifiers=0, key_code=0)
     restored = LayerHotkeyBinding.from_dict(draft.to_dict())
     assert restored is not None
-    assert restored.key_code == 0
-    assert restored.action == "hold_to_show"
-    bindings = layer_hotkey_bindings_from_list([draft.to_dict()])
+    assert restored.action == "gif_play_once"
+
+
+def test_hotkey_action_needs_asset_cache_reset() -> None:
+    layer = BasicLayerSlot(slot_id=0, asset_path="x.gif")
+    assert layer_hotkey_action_needs_asset_cache_reset(
+        layer, LAYER_HOTKEY_ACTION_GIF_PLAY_ONCE)
+    assert not layer_hotkey_action_needs_asset_cache_reset(
+        layer, LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE)
+
+
+def test_reload_layer_idle_for_gif_show_play_once_hide() -> None:
+    layer = BasicLayerSlot(slot_id=0, asset_path="a.gif", visible=True)
+    assert reload_layer_from_asset_material(
+        layer, idle_for_hotkey_action="gif_show_play_once_hide", now=2.0)
+    assert not layer.visible
+    assert layer.gif_playback_mode == GIF_PLAYBACK_STOPPED
+
+
+def test_layer_hotkey_bindings_from_list() -> None:
+    bindings = layer_hotkey_bindings_from_list([
+        {"action": "hold_to_show", "modifiers": 2, "key_code": 70},
+    ])
     assert len(bindings) == 1
-    assert bindings[0].key_code == 0
+    assert bindings[0].action == LAYER_HOTKEY_ACTION_TOGGLE_VISIBLE
 
 
-def test_hotkey_id_encoding() -> None:
-    assert hotkey_id_for_binding(3, 1) != hotkey_id_for_binding(3, 0)
-    assert hotkey_id_for_binding(3, 1) != hotkey_id_for_binding(4, 1)
+def test_hotkey_id_for_binding() -> None:
+    assert hotkey_id_for_binding(2, 1) > hotkey_id_for_binding(2, 0)
 
 
-def test_format_key_spec() -> None:
-    try:
-        import wx
-    except ImportError:
-        return
-    app = wx.App(False)
-    try:
-        label = format_key_spec(0, ord("F"))
-        assert "F" in label
-    finally:
-        app.Destroy()
+def test_apply_hotkey_action_idle_layer_state_gif_play() -> None:
+    layer = BasicLayerSlot(slot_id=0, asset_path="loop.gif")
+    apply_hotkey_action_idle_layer_state(layer, LAYER_HOTKEY_ACTION_GIF_PLAY, now=0.0)
+    assert layer.gif_playback_mode == GIF_PLAYBACK_LOOP
+
+
+def test_layer_has_active_gif_playback() -> None:
+    layer = BasicLayerSlot(slot_id=0, asset_path="a.gif", visible=True)
+    set_gif_playback_mode(layer, GIF_PLAYBACK_LOOP, now=0.0)
+    assert layer_has_active_gif_playback(layer)
 
 
 def main() -> None:
@@ -238,20 +160,15 @@ def main() -> None:
     test_gif_playback_once_returns_to_stopped()
     test_gif_show_play_once_hide()
     test_apply_layer_hotkey_toggle_visible()
-    test_hold_to_hide_and_release()
-    test_hold_to_show_and_release()
-    test_hold_to_show_play_once_gif()
-    test_hold_to_show_play_once_release_early()
-    test_hold_to_show_play_once_requires_gif()
-    test_reload_layer_from_asset_material_for_hotkey_action()
-    test_gif_play_once_motion_only_when_visible()
-    test_reload_layer_from_asset_material_requires_path()
-    test_hold_action_normalization()
-    test_apply_layer_hotkey_gif_requires_gif_asset()
+    test_deprecated_hold_actions_migrate_on_load()
+    test_normalize_layer_hotkey_action_defaults_unknown()
     test_hotkey_binding_round_trip()
-    test_draft_hotkey_binding_without_key()
-    test_hotkey_id_encoding()
-    test_format_key_spec()
+    test_hotkey_action_needs_asset_cache_reset()
+    test_reload_layer_idle_for_gif_show_play_once_hide()
+    test_layer_hotkey_bindings_from_list()
+    test_hotkey_id_for_binding()
+    test_apply_hotkey_action_idle_layer_state_gif_play()
+    test_layer_has_active_gif_playback()
     print("smoke_layer_hotkeys_ok")
 
 

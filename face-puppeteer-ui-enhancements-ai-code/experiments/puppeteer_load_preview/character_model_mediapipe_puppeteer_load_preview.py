@@ -162,16 +162,15 @@ from layer_runtime import (
     load_basic_layers_state,
     OrbitEditGeometry,
     resolve_layer_rects,
+    resolve_orbit_track_layer,
     resolved_layer_rotation_deg,
     save_basic_layers_state,
     apply_layer_hotkey_action as apply_layer_hotkey_action_to_state,
-    begin_layer_hotkey_hold,
-    end_layer_hotkey_hold,
-    is_layer_hotkey_hold_action,
+    layer_hotkey_action_target_slot_ids,
+    layer_hotkey_action_needs_asset_cache_reset,
     reload_layer_from_asset_material,
-    LayerHotkeyHoldSnapshot,
 )
-from layer_hotkey_registry import LayerHotkeyRegistry, is_hotkey_still_pressed
+from layer_hotkey_registry import LayerHotkeyRegistry
 from layer_interaction import (
     LayerEditMode,
     apply_move_delta,
@@ -965,15 +964,6 @@ class WebcamPreviewPopupFrame(wx.Frame):
         event.Skip()
 
 
-@dataclass
-class _LayerHotkeyHoldSession:
-    slot_id: int
-    action: str
-    modifiers: int
-    key_code: int
-    snapshot: "LayerHotkeyHoldSnapshot"
-
-
 class MainFrame(wx.Frame):
     IMAGE_SIZE = 512
     SOURCE_PREVIEW_SIZE = 192
@@ -1270,7 +1260,7 @@ class MainFrame(wx.Frame):
 
         self.output_frame = None
         self.create_ui()
-        self._layer_hotkey_hold_sessions: list[_LayerHotkeyHoldSession] = []
+        self._layer_hotkey_refresh_pending = False
         self.layer_hotkey_registry: Optional[LayerHotkeyRegistry] = None
         self._layer_hotkey_evt_bound = False
         self.apply_persistent_ui_state()
@@ -1574,7 +1564,7 @@ class MainFrame(wx.Frame):
         return registry
 
     def _teardown_layer_hotkeys(self) -> None:
-        self._clear_layer_hotkey_holds(restore=True)
+        self._layer_hotkey_refresh_pending = False
         registry = getattr(self, "layer_hotkey_registry", None)
         if registry is not None:
             try:
@@ -1597,83 +1587,40 @@ class MainFrame(wx.Frame):
             self.basic_layers_state,
             enabled=True)
         failures = registry.failures
+        registered = registry.registered_count
         if failures and hasattr(self, "layer_blend_status_text"):
             preview = failures[0]
             if len(failures) > 1:
                 preview = f"{preview} (+{len(failures) - 1} more)"
+            suffix = f"；已注册 {registered} 个" if registered else ""
             self.layer_blend_status_text.SetLabel(
-                f"图层快捷键注册失败 / Layer hotkey failed: {preview}")
+                f"图层快捷键注册失败 / Layer hotkey failed: {preview}{suffix}")
         elif hasattr(self, "layer_blend_status_text"):
             self.refresh_layer_blend_status()
 
-    def _clear_layer_hotkey_holds(self, *, restore: bool = True) -> None:
-        sessions = getattr(self, "_layer_hotkey_hold_sessions", None)
-        if not sessions:
-            return
-        if restore:
-            for session in sessions:
-                layer = self.basic_layers_state.get_slot(session.slot_id)
-                end_layer_hotkey_hold(
-                    layer, session.snapshot, action=session.action)
-        sessions.clear()
-
-    def begin_layer_hotkey_hold(
+    def _schedule_layer_hotkey_visual_refresh(
             self,
-            slot_id: int,
-            action: str,
-            modifiers: int,
-            key_code: int) -> bool:
-        if not self.is_layer_blend_enabled():
-            return False
-        if not self.is_layer_hotkeys_enabled():
-            return False
-        for session in self._layer_hotkey_hold_sessions:
-            if (session.slot_id == slot_id
-                    and session.modifiers == modifiers
-                    and session.key_code == key_code):
-                return True
-        layer = self.basic_layers_state.get_slot(slot_id)
-        snapshot = begin_layer_hotkey_hold(layer, action)
-        if snapshot is None:
-            return False
-        self._layer_hotkey_hold_sessions.append(
-            _LayerHotkeyHoldSession(
-                slot_id=int(slot_id),
-                action=str(action),
-                modifiers=int(modifiers),
-                key_code=int(key_code),
-                snapshot=snapshot,
-            ))
-        self.notify_layer_composite_dirty(immediate=True)
-        self.refresh_layer_slot_ui(slot_id)
-        return True
+            slot_ids: Optional[list[int]] = None) -> None:
+        if getattr(self, "_is_closing", False):
+            return
+        self._layer_hotkey_refresh_slot_ids = (
+            None if slot_ids is None
+            else [int(sid) for sid in slot_ids])
+        if self._layer_hotkey_refresh_pending:
+            return
+        self._layer_hotkey_refresh_pending = True
+        wx.CallAfter(self._run_layer_hotkey_visual_refresh)
 
-    def poll_layer_hotkey_holds(self) -> None:
-        if not self.is_layer_hotkeys_enabled():
-            if self._layer_hotkey_hold_sessions:
-                self._clear_layer_hotkey_holds(restore=True)
+    def _run_layer_hotkey_visual_refresh(self) -> None:
+        self._layer_hotkey_refresh_pending = False
+        if getattr(self, "_is_closing", False):
             return
-        sessions = getattr(self, "_layer_hotkey_hold_sessions", None)
-        if not sessions:
-            return
-        ended = False
-        remaining: list[_LayerHotkeyHoldSession] = []
-        ended_slot_ids: list[int] = []
-        for session in sessions:
-            if is_hotkey_still_pressed(session.modifiers, session.key_code):
-                remaining.append(session)
-            else:
-                layer = self.basic_layers_state.get_slot(session.slot_id)
-                end_layer_hotkey_hold(
-                    layer, session.snapshot, action=session.action)
-                ended_slot_ids.append(session.slot_id)
-                ended = True
-        if not ended:
-            return
-        self._layer_hotkey_hold_sessions = remaining
-        self.notify_layer_composite_dirty(immediate=True)
-        for slot_id in ended_slot_ids:
-            self.refresh_layer_slot_ui(slot_id)
+        slot_ids = getattr(self, "_layer_hotkey_refresh_slot_ids", None)
+        self._layer_hotkey_refresh_slot_ids = None
+        self.notify_layer_composite_dirty(immediate_capture=False)
+        if slot_ids:
+            for slot_id in slot_ids:
+                self.refresh_layer_slot_ui(slot_id)
 
     def poll_layer_gif_playback_side_effects(self) -> None:
         if not self.is_layer_blend_enabled():
@@ -1687,9 +1634,7 @@ class MainFrame(wx.Frame):
         if not consume_layer_gif_playback_visibility_dirty(self.basic_layers_state):
             return
         self.persist_basic_layers_state()
-        self.notify_layer_composite_dirty(immediate=True)
-        for slot_id in dirty_slot_ids:
-            self.refresh_layer_slot_ui(slot_id)
+        self._schedule_layer_hotkey_visual_refresh(dirty_slot_ids)
 
     def apply_layer_hotkey_action(self, slot_id: int, action: str) -> bool:
         """External + global hotkey entry: toggle visibility or control GIF playback."""
@@ -1697,12 +1642,24 @@ class MainFrame(wx.Frame):
             return False
         if not self.is_layer_hotkeys_enabled():
             return False
+        target_ids = layer_hotkey_action_target_slot_ids(
+            self.basic_layers_state, slot_id)
+        if not target_ids:
+            return False
+        visibility_before = {
+            tid: bool(self.basic_layers_state.get_slot(tid).visible)
+            for tid in target_ids}
         if not apply_layer_hotkey_action_to_state(
                 self.basic_layers_state, slot_id, action):
             return False
-        self.persist_basic_layers_state()
-        self.notify_layer_composite_dirty(immediate=True)
-        self.refresh_layer_slot_ui(slot_id)
+        visibility_changed = False
+        for tid in target_ids:
+            layer = self.basic_layers_state.get_slot(tid)
+            if bool(layer.visible) != visibility_before[tid]:
+                visibility_changed = True
+        if visibility_changed:
+            self.persist_basic_layers_state()
+        self._schedule_layer_hotkey_visual_refresh(target_ids)
         return True
 
     def on_layer_global_hotkey(self, event: wx.Event) -> None:
@@ -1714,14 +1671,7 @@ class MainFrame(wx.Frame):
         if dispatch is None:
             event.Skip()
             return
-        if is_layer_hotkey_hold_action(dispatch.action):
-            self.begin_layer_hotkey_hold(
-                dispatch.slot_id,
-                dispatch.action,
-                dispatch.modifiers,
-                dispatch.key_code)
-        else:
-            self.apply_layer_hotkey_action(dispatch.slot_id, dispatch.action)
+        self.apply_layer_hotkey_action(dispatch.slot_id, dispatch.action)
 
     def get_spine_neck_anchor_ratio(self) -> float:
         return clamp_neck_anchor_ratio(
@@ -1811,7 +1761,7 @@ class MainFrame(wx.Frame):
             window.refresh_all()
 
     def on_layer_state_changed(self) -> None:
-        self.notify_layer_composite_dirty(immediate=True)
+        self.notify_layer_composite_dirty(immediate_capture=True)
         self.refresh_basic_layer_window_if_visible()
         self.refresh_layer_blend_status()
         self.persist_basic_layers_state()
@@ -1835,18 +1785,22 @@ class MainFrame(wx.Frame):
             slot_id: int,
             *,
             hotkey_action: Optional[str] = None) -> None:
-        """Invalidate cached pixels and reset playback for a layer's current asset."""
+        """Reset runtime playback/visibility for a layer after hotkey action change."""
         try:
             layer = self.basic_layers_state.get_slot(slot_id)
         except KeyError:
             return
         asset_path = layer.asset_path
+        was_visible = bool(layer.visible)
         if not reload_layer_from_asset_material(
                 layer, idle_for_hotkey_action=hotkey_action):
             return
-        self.layer_asset_cache.invalidate(asset_path)
-        self.persist_basic_layers_state()
-        self.notify_layer_composite_dirty(immediate=True)
+        if hotkey_action is not None and layer_hotkey_action_needs_asset_cache_reset(
+                layer, hotkey_action):
+            self.layer_asset_cache.invalidate(asset_path)
+        if bool(layer.visible) != was_visible:
+            self.persist_basic_layers_state()
+        self.notify_layer_composite_dirty(immediate_capture=True)
         self.refresh_layer_slot_ui(slot_id)
 
     def refresh_layer_blend_status(self) -> None:
@@ -3249,6 +3203,8 @@ class MainFrame(wx.Frame):
             name="tha4-pose-infer").start()
 
     def _async_pose_infer_worker(self) -> None:
+        last_pose: Optional[List[float]] = None
+        last_wx_image: Optional[wx.Image] = None
         try:
             while not self._is_closing:
                 with self._infer_lock:
@@ -3256,9 +3212,9 @@ class MainFrame(wx.Frame):
                     self._pending_infer_pose = None
                 if pose is None:
                     break
-                wx_image = None
                 try:
-                    wx_image = self.render_pose_to_wx_image(pose)
+                    last_wx_image = self.render_pose_to_wx_image(pose)
+                    last_pose = list(pose)
                 except Exception as exc:
                     if not getattr(self, "_last_infer_worker_error", None):
                         self._last_infer_worker_error = repr(exc)
@@ -3266,13 +3222,18 @@ class MainFrame(wx.Frame):
                             "async pose infer failed (logged once):",
                             exc,
                             file=sys.stderr)
-                wx.CallAfter(self._finish_async_pose_infer, list(pose), wx_image)
+                    last_wx_image = None
                 with self._infer_lock:
                     if self._pending_infer_pose is None:
                         break
         finally:
             with self._infer_lock:
                 self._infer_worker_active = False
+        if (
+                not self._is_closing
+                and last_pose is not None
+                and last_wx_image is not None):
+            wx.CallAfter(self._finish_async_pose_infer, last_pose, last_wx_image)
 
     def _finish_async_pose_infer(self, pose_list: List[float], wx_image: Optional[wx.Image]) -> None:
         if self._is_closing or wx_image is None:
@@ -6617,7 +6578,7 @@ class MainFrame(wx.Frame):
             self.load_last_tha3_png_button = wx.Button(
                 controls_header_panel,
                 wx.ID_ANY,
-                "加载立绘 / Load Last Portrait")
+                "加载上次立绘 / Load Last Portrait")
             self.load_last_tha3_png_button.Bind(wx.EVT_BUTTON, self.load_last_tha3_character_png)
             controls_header_row1.Add(self.load_last_tha3_png_button, 0, wx.EXPAND | wx.LEFT, 6)
 
@@ -9377,6 +9338,7 @@ class MainFrame(wx.Frame):
             name="mediapipe-detect").start()
 
     def _mediapipe_detect_worker(self) -> None:
+        latest_detection = None
         try:
             while not self._is_closing:
                 with self._mediapipe_lock:
@@ -9389,7 +9351,8 @@ class MainFrame(wx.Frame):
                     break
                 mediapipe_image, time_ms, _frame_buffer = job
                 try:
-                    detection_result = landmarker.detect_for_video(mediapipe_image, time_ms)
+                    latest_detection = landmarker.detect_for_video(
+                        mediapipe_image, time_ms)
                 except (ValueError, RuntimeError) as exc:
                     if not self._mediapipe_detect_error_logged:
                         self._mediapipe_detect_error_logged = True
@@ -9399,13 +9362,14 @@ class MainFrame(wx.Frame):
                             file=sys.stderr)
                     continue
                 self._mediapipe_detect_error_logged = False
-                wx.CallAfter(self._finish_mediapipe_detect, detection_result)
                 with self._mediapipe_lock:
                     if self._pending_mediapipe_job is None:
                         break
         finally:
             with self._mediapipe_lock:
                 self._mediapipe_worker_active = False
+        if latest_detection is not None and not self._is_closing:
+            wx.CallAfter(self._finish_mediapipe_detect, latest_detection)
 
     def _ensure_window_capture_worker(self) -> None:
         """Start the background window-capture grabber if it is not running."""
@@ -9739,7 +9703,10 @@ class MainFrame(wx.Frame):
         if self._layer_edit_mode == LayerEditMode.ORBIT_MOVE:
             dx = pos[0] - self._layer_drag_last_pos[0]
             dy = pos[1] - self._layer_drag_last_pos[1]
-            apply_orbit_pivot_canvas_delta(layer, float(dx), float(dy), canvas_w, canvas_h)
+            pivot_layer = resolve_orbit_track_layer(
+                self.basic_layers_state, layer)
+            apply_orbit_pivot_canvas_delta(
+                pivot_layer, float(dx), float(dy), canvas_w, canvas_h)
         elif self._layer_edit_mode == LayerEditMode.SCALE:
             binding_context = self._make_binding_context(canvas_w, canvas_h)
             resolved = resolve_layer_rects(
@@ -10372,7 +10339,6 @@ class MainFrame(wx.Frame):
         self._maybe_schedule_transparent_capture_update()
 
     def on_display_timer(self, event: Optional[wx.Event] = None):
-        self.poll_layer_hotkey_holds()
         self.poll_layer_gif_playback_side_effects()
         if self.is_model_loaded():
             self.update_display_transform_state()

@@ -2,8 +2,8 @@
 
 > **用途**：每次**添加或修改产品功能**前，Agent/开发者须对照 **§Top 10** 逐项自检，避免踩历史高频故障区。
 > **数据源**：`e:\record\labeled_prompt.md` 中 `问题修复` 标签（按主题聚合频次）。
-> **生成时间**：2026-06-16T19:07:38.636133+10:00
-> **问题修复样本量**：93 条
+> **生成时间**：2026-06-19T00:15:45.923527+10:00
+> **问题修复样本量**：109 条
 > **自动更新**：每次 `git push` 成功后由 `post-push` hook 刷新；`sync_develop_to_fork.ps1` 同步前也会刷新。
 > **手动重建**：`python e:\record\_build_bug_feedback_index.py` 或 `scripts\maint\refresh_bug_hotspot_checklist.ps1`
 > **详细索引**：`e:\record\bug_feedback_index.json` · 用语分析 `e:\record\bug_feedback_vocab.md`
@@ -14,13 +14,13 @@
 
 | 排名 | 主题 | 次数 | 核心代码区 |
 |------|------|------|------------|
-| 1 | 闪退 / 打不开 / 进程卡死 | 15 | `character_model_mediapipe_puppeteer_load_preview.py` 初始化与 `OnInit` |
-| 2 | 图层系统（L0–L3 / 外挂窗） | 14 | `face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/layer_runtime.py` |
-| 3 | 性能 / 卡顿 / 掉帧 | 11 | 主循环 `update_capture_panel` / 推理与显示链 |
-| 4 | 终端报错 / 堆栈 / OpenCV-wx 异常 | 9 | 摄像头 `VideoCapture` / DSHOW（`cap.cpp` 报错） |
-| 5 | 真透明输出 / 额外窗 / 直播采集 | 9 | `transparent_capture_window.py` · `output_backends.py` |
-| 6 | 布局 / 分割条 / 持久化 | 8 | `workspace/load_preview_ui_state.json` |
-| 7 | 绑定 / 跟随 / 镜像 / 倾斜 | 7 | `layer_runtime.py` → `BindingContext`、绑定求值 |
+| 1 | 闪退 / 打不开 / 进程卡死 | 17 | `character_model_mediapipe_puppeteer_load_preview.py` 初始化与 `OnInit` |
+| 2 | 图层系统（L0–L3 / 外挂窗） | 16 | `face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/layer_runtime.py` |
+| 3 | 性能 / 卡顿 / 掉帧 | 15 | 主循环 `update_capture_panel` / 推理与显示链 |
+| 4 | 真透明输出 / 额外窗 / 直播采集 | 10 | `transparent_capture_window.py` · `output_backends.py` |
+| 5 | 绑定 / 跟随 / 镜像 / 倾斜 | 9 | `layer_runtime.py` → `BindingContext`、绑定求值 |
+| 6 | 终端报错 / 堆栈 / OpenCV-wx 异常 | 9 | 摄像头 `VideoCapture` / DSHOW（`cap.cpp` 报错） |
+| 7 | 布局 / 分割条 / 持久化 | 8 | `workspace/load_preview_ui_state.json` |
 | 8 | 校准 / 动态增强 / 预览朝向 | 7 | 主文件 `preview_calibration_column` |
 | 9 | 摄像头 / 视频源 / DroidCam | 5 | `image_sources/` · 捕获面板源列表 |
 | 10 | THA3 / THA4 模型加载 | 5 | `tha3_engine.py` · `image_sources/` |
@@ -32,10 +32,10 @@
 - [ ] **#1 闪退 / 打不开 / 进程卡死**
 - [ ] **#2 图层系统（L0–L3 / 外挂窗）**
 - [ ] **#3 性能 / 卡顿 / 掉帧**
-- [ ] **#4 终端报错 / 堆栈 / OpenCV-wx 异常**
-- [ ] **#5 真透明输出 / 额外窗 / 直播采集**
-- [ ] **#6 布局 / 分割条 / 持久化**
-- [ ] **#7 绑定 / 跟随 / 镜像 / 倾斜**
+- [ ] **#4 真透明输出 / 额外窗 / 直播采集**
+- [ ] **#5 绑定 / 跟随 / 镜像 / 倾斜**
+- [ ] **#6 终端报错 / 堆栈 / OpenCV-wx 异常**
+- [ ] **#7 布局 / 分割条 / 持久化**
 - [ ] **#8 校准 / 动态增强 / 预览朝向**
 - [ ] **#9 摄像头 / 视频源 / DroidCam**
 - [ ] **#10 THA3 / THA4 模型加载**
@@ -44,7 +44,7 @@
 
 ## Top 10 明细
 
-### #1 · 闪退 / 打不开 / 进程卡死（15 次）
+### #1 · 闪退 / 打不开 / 进程卡死（17 次）
 
 **典型现象**
 
@@ -64,7 +64,7 @@
 - [ ] 重入初始化（重载角色/切源）不 double-free Qt/wx 控件
 - [ ] 后台 worker 结果回 UI 必须用 `wx.CallAfter` / 线程安全路径
 
-### #2 · 图层系统（L0–L3 / 外挂窗）（14 次）
+### #2 · 图层系统（L0–L3 / 外挂窗）（16 次）
 
 **典型现象**
 
@@ -86,7 +86,7 @@
 - [ ] L1–L3 拖动/缩放后 `basic_layers/` 与 UI 列表一致
 - [ ] 合成输出与预览对同一 `BindingContext` 求值
 
-### #3 · 性能 / 卡顿 / 掉帧（11 次）
+### #3 · 性能 / 卡顿 / 掉帧（15 次）
 
 **典型现象**
 
@@ -106,27 +106,7 @@
 - [ ] 开透明输出后帧率变化可解释（勿静默对折）
 - [ ] 长时运行 10+ 分钟无内存/句柄泄漏导致的卡顿
 
-### #4 · 终端报错 / 堆栈 / OpenCV-wx 异常（9 次）
-
-**典型现象**
-
-- `cap.cpp` / `VideoCapture::open` 连续 ERROR
-- AttributeError / RuntimeError 堆栈刷屏
-- 报错时功能静默失效
-
-**代码热点**
-
-- 摄像头 `VideoCapture` / DSHOW（`cap.cpp` 报错）
-- wx API 版本差异（如 `wx.BORDER_TOP`）
-- THA 推理链、图层/输出异常未捕获
-
-**回归检查**
-
-- [ ] 摄像头打不开时有 UI 提示，不无限重试刷屏
-- [ ] 新增 wx 常量/控件前确认目标环境 API 存在
-- [ ] 预期可恢复的异常应 catch 并降级，勿拖死主循环
-
-### #5 · 真透明输出 / 额外窗 / 直播采集（9 次）
+### #4 · 真透明输出 / 额外窗 / 直播采集（10 次）
 
 **典型现象**
 
@@ -146,27 +126,7 @@
 - [ ] 第三方采集能稳定抓到目标 HWND（列表刷新后仍有效）
 - [ ] 关透明输出后单窗路径无残留定时器/子进程
 
-### #6 · 布局 / 分割条 / 持久化（8 次）
-
-**典型现象**
-
-- 三栏表述与实装不一致、分割条拖不动
-- 缩放窗口后排版挤成一团或未归位
-- 重启后 sash 比例丢失
-
-**代码热点**
-
-- `workspace/load_preview_ui_state.json`
-- 主文件 `main/animation/right_sidebar_splitter_sash_ratio`
-- 250ms 防抖写盘、窗几何与最小宽度
-
-**回归检查**
-
-- [ ] 拖分割条后 250ms 内写入 state，重启可恢复
-- [ ] 最小窗宽下四边仍可缩放，左右栏不被挤没
-- [ ] 改布局相关键名须兼容旧 state 或迁移
-
-### #7 · 绑定 / 跟随 / 镜像 / 倾斜（7 次）
+### #5 · 绑定 / 跟随 / 镜像 / 倾斜（9 次）
 
 **典型现象**
 
@@ -185,6 +145,46 @@
 - [ ] 改绑定只影响目标图层，不污染其他层默认变换
 - [ ] 预览拖动与输出合成使用同一交互状态
 - [ ] 头/身/层 N 绑定切换后无累积旋转漂移
+
+### #6 · 终端报错 / 堆栈 / OpenCV-wx 异常（9 次）
+
+**典型现象**
+
+- `cap.cpp` / `VideoCapture::open` 连续 ERROR
+- AttributeError / RuntimeError 堆栈刷屏
+- 报错时功能静默失效
+
+**代码热点**
+
+- 摄像头 `VideoCapture` / DSHOW（`cap.cpp` 报错）
+- wx API 版本差异（如 `wx.BORDER_TOP`）
+- THA 推理链、图层/输出异常未捕获
+
+**回归检查**
+
+- [ ] 摄像头打不开时有 UI 提示，不无限重试刷屏
+- [ ] 新增 wx 常量/控件前确认目标环境 API 存在
+- [ ] 预期可恢复的异常应 catch 并降级，勿拖死主循环
+
+### #7 · 布局 / 分割条 / 持久化（8 次）
+
+**典型现象**
+
+- 三栏表述与实装不一致、分割条拖不动
+- 缩放窗口后排版挤成一团或未归位
+- 重启后 sash 比例丢失
+
+**代码热点**
+
+- `workspace/load_preview_ui_state.json`
+- 主文件 `main/animation/right_sidebar_splitter_sash_ratio`
+- 250ms 防抖写盘、窗几何与最小宽度
+
+**回归检查**
+
+- [ ] 拖分割条后 250ms 内写入 state，重启可恢复
+- [ ] 最小窗宽下四边仍可缩放，左右栏不被挤没
+- [ ] 改布局相关键名须兼容旧 state 或迁移
 
 ### #8 · 校准 / 动态增强 / 预览朝向（7 次）
 
@@ -252,7 +252,7 @@
 
 | 排名 | 主题 | 次数 |
 |------|------|------|
-| 11 | 窗口 / 屏幕捕获 | 3 |
+| 11 | 窗口 / 屏幕捕获 | 4 |
 | 12 | CodeGraph / record 元问题 | 2 |
 | 13 | DEPLOY / 启动脚本 | 2 |
 | 14 | UI 控件生命周期 | 2 |

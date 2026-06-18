@@ -289,6 +289,7 @@ class MediaPipeFacePoseConverter00Args:
                  head_z_offset=0.0,
                  tilt_compensation_deg: float = 0.0,
                  breathing_frequency: float = 20.0,
+                 breathing_amplitude_gain: float = 1.0,
                  enable_breathing: bool = True,
                  enable_reactive_breathing: bool = False,
                  reactive_breathing_threshold: float = 0.35,
@@ -332,6 +333,7 @@ class MediaPipeFacePoseConverter00Args:
         self.head_x_offset = head_x_offset
         self.tilt_compensation_deg = tilt_compensation_deg
         self.breathing_frequency = breathing_frequency
+        self.breathing_amplitude_gain = breathing_amplitude_gain
         self.enable_breathing = bool(enable_breathing)
         self.enable_reactive_breathing = enable_reactive_breathing
         self.reactive_breathing_threshold = reactive_breathing_threshold
@@ -391,6 +393,9 @@ class MediaPipeFacePoseConverter00Args:
 
     def set_breathing_frequency(self, new_value: float):
         self.breathing_frequency = max(0.0, new_value)
+
+    def set_breathing_amplitude_gain(self, new_value: float):
+        self.breathing_amplitude_gain = clamp(float(new_value), 1.0, 3.0)
 
     def set_enable_breathing(self, new_value: bool):
         self.enable_breathing = bool(new_value)
@@ -532,6 +537,7 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
         args = self.args
         return {
             "breathing_frequency": args.breathing_frequency,
+            "breathing_amplitude_gain": args.breathing_amplitude_gain,
             "enable_breathing": args.enable_breathing,
             "enable_reactive_breathing": args.enable_reactive_breathing,
             "reactive_breathing_threshold": args.reactive_breathing_threshold,
@@ -572,6 +578,8 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
         args.set_audio_input_source(source if source in ["mic", "loopback"] else "mic")
         if "breathing_frequency" in data:
             args.set_breathing_frequency(float(data["breathing_frequency"]))
+        if "breathing_amplitude_gain" in data:
+            args.set_breathing_amplitude_gain(float(data["breathing_amplitude_gain"]))
         if "enable_breathing" in data:
             args.set_enable_breathing(bool(data["enable_breathing"]))
         if "enable_reactive_breathing" in data:
@@ -634,6 +642,8 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
         args = self.args
         if hasattr(self, "breathing_frequency_slider"):
             self.breathing_frequency_slider.SetValue(args.breathing_frequency)
+        if hasattr(self, "breathing_amplitude_gain_slider"):
+            self.breathing_amplitude_gain_slider.SetValue(args.breathing_amplitude_gain)
         if hasattr(self, "enable_breathing_checkbox"):
             self.enable_breathing_checkbox.SetValue(args.enable_breathing)
         if hasattr(self, "enable_reactive_breathing_checkbox"):
@@ -808,6 +818,18 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
                 slider_max=60.0,
                 persist_on_change=True)
 
+            self.breathing_amplitude_gain_slider = self.create_spin_control(
+                self.breathing_panel,
+                slider_label("呼吸幅度增益", "Breathing Amplitude Gain", "倍 1~3", "× 1~3"),
+                self.args.breathing_amplitude_gain,
+                self.args.set_breathing_amplitude_gain,
+                reasonable_min=1.0,
+                reasonable_max=3.0,
+                increment=0.1,
+                slider_min=1.0,
+                slider_max=3.0,
+                persist_on_change=True)
+
             self.enable_reactive_breathing_checkbox = wx.CheckBox(
                 self.breathing_panel,
                 label="启用动作加速呼吸 / Enable Reactive Breathing")
@@ -857,7 +879,7 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
                 slider_max=5.00,
                 persist_on_change=True)
 
-            self.breathing_gauge = wx.Gauge(self.breathing_panel, style=wx.GA_HORIZONTAL, range=1000)
+            self.breathing_gauge = wx.Gauge(self.breathing_panel, style=wx.GA_HORIZONTAL, range=3000)
             breathing_panel_sizer.Add(self.breathing_gauge, 0, wx.EXPAND | wx.TOP, 4)
 
             self.breathing_status_text = wx.StaticText(self.breathing_panel, label="")
@@ -1151,6 +1173,8 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
             self.restart_breathing_cycle_button.Enable(breathing_enabled)
         if hasattr(self, "breathing_frequency_slider"):
             self.breathing_frequency_slider.Enable(breathing_enabled)
+        if hasattr(self, "breathing_amplitude_gain_slider"):
+            self.breathing_amplitude_gain_slider.Enable(breathing_enabled)
         if hasattr(self, "enable_reactive_breathing_checkbox"):
             self.enable_reactive_breathing_checkbox.Enable(breathing_enabled)
         if hasattr(self, "breathing_gauge"):
@@ -1939,10 +1963,12 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
             value = (-math.cos(2 * math.pi * self.breathing_cycle_position) + 1.0) / 2.0
         self.last_breathing_update_time = now
         self.current_breathing_frequency = frequency
-        pose[self.breathing_index] = value
+        amplitude_gain = clamp(self.args.breathing_amplitude_gain, 1.0, 3.0)
+        output_value = value * amplitude_gain
+        pose[self.breathing_index] = output_value
 
         if self.panel is not None and _wx_widget_alive(getattr(self, "breathing_gauge", None)):
-            _safe_set_gauge_value(self.breathing_gauge, int(1000 * value))
+            _safe_set_gauge_value(self.breathing_gauge, int(1000 * output_value))
             self.refresh_breathing_status_text()
 
         return pose
