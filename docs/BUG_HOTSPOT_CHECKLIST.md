@@ -1,22 +1,22 @@
 # Bug 热点回归清单（新功能防复发）
 
-> **用途**：每次**添加或修改产品功能**前，Agent/开发者须对照 **§Top 10** 逐项自检，避免踩历史高频故障区。
+> **用途**：每次**添加或修改产品功能**前，须对照 **§Top 10 全部条目**逐项自检（不按历史频次跳过）。
 > **数据源**：`e:\record\labeled_prompt.md` 中 `问题修复` 标签（按主题聚合频次）。
-> **生成时间**：2026-06-19T00:15:45.923527+10:00
-> **问题修复样本量**：109 条
+> **生成时间**：2026-06-20T02:04:50.599553+10:00
+> **问题修复样本量**：126 条
 > **自动更新**：每次 `git push` 成功后由 `post-push` hook 刷新；`sync_develop_to_fork.ps1` 同步前也会刷新。
 > **手动重建**：`python e:\record\_build_bug_feedback_index.py` 或 `scripts\maint\refresh_bug_hotspot_checklist.ps1`
 > **详细索引**：`e:\record\bug_feedback_index.json` · 用语分析 `e:\record\bug_feedback_vocab.md`
 
 ---
 
-## Top 10 速查（按历史反馈频次）
+## Top 10 速查（按历史反馈频次，仅作分组索引）
 
 | 排名 | 主题 | 次数 | 核心代码区 |
 |------|------|------|------------|
-| 1 | 闪退 / 打不开 / 进程卡死 | 17 | `character_model_mediapipe_puppeteer_load_preview.py` 初始化与 `OnInit` |
-| 2 | 图层系统（L0–L3 / 外挂窗） | 16 | `face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/layer_runtime.py` |
-| 3 | 性能 / 卡顿 / 掉帧 | 15 | 主循环 `update_capture_panel` / 推理与显示链 |
+| 1 | 闪退 / 打不开 / 进程卡死 | 18 | `character_model_mediapipe_puppeteer_load_preview.py` 初始化与 `OnInit` |
+| 2 | 性能 / 卡顿 / 掉帧 | 18 | 主循环 `update_capture_panel` / 推理与显示链 |
+| 3 | 图层系统（L0–L3 / 外挂窗） | 17 | `face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/layer_runtime.py` |
 | 4 | 真透明输出 / 额外窗 / 直播采集 | 10 | `transparent_capture_window.py` · `output_backends.py` |
 | 5 | 绑定 / 跟随 / 镜像 / 倾斜 | 9 | `layer_runtime.py` → `BindingContext`、绑定求值 |
 | 6 | 终端报错 / 堆栈 / OpenCV-wx 异常 | 9 | 摄像头 `VideoCapture` / DSHOW（`cap.cpp` 报错） |
@@ -25,13 +25,13 @@
 | 9 | 摄像头 / 视频源 / DroidCam | 5 | `image_sources/` · 捕获面板源列表 |
 | 10 | THA3 / THA4 模型加载 | 5 | `tha3_engine.py` · `image_sources/` |
 
-### Top 10 勾选（每次加功能必填）
+### Top 10 勾选（每次加功能须全勾，禁止按排名跳过）
 
-完成实现后，在 PR/交接说明中注明「已对照 Top10」或列出未测项：
+完成实现后，在 PR/交接说明中列出全部 Top10 自检结果（通过 / 未测 / N/A）：
 
 - [ ] **#1 闪退 / 打不开 / 进程卡死**
-- [ ] **#2 图层系统（L0–L3 / 外挂窗）**
-- [ ] **#3 性能 / 卡顿 / 掉帧**
+- [ ] **#2 性能 / 卡顿 / 掉帧**
+- [ ] **#3 图层系统（L0–L3 / 外挂窗）**
 - [ ] **#4 真透明输出 / 额外窗 / 直播采集**
 - [ ] **#5 绑定 / 跟随 / 镜像 / 倾斜**
 - [ ] **#6 终端报错 / 堆栈 / OpenCV-wx 异常**
@@ -44,7 +44,7 @@
 
 ## Top 10 明细
 
-### #1 · 闪退 / 打不开 / 进程卡死（17 次）
+### #1 · 闪退 / 打不开 / 进程卡死（18 次）
 
 **典型现象**
 
@@ -64,7 +64,27 @@
 - [ ] 重入初始化（重载角色/切源）不 double-free Qt/wx 控件
 - [ ] 后台 worker 结果回 UI 必须用 `wx.CallAfter` / 线程安全路径
 
-### #2 · 图层系统（L0–L3 / 外挂窗）（16 次）
+### #2 · 性能 / 卡顿 / 掉帧（18 次）
+
+**典型现象**
+
+- 周期性 UI 冻结（曾见捕获定时器阻塞）
+- 帧率减半、终端持续报错拖慢主循环
+- 屏幕捕获每隔一段时间卡死
+
+**代码热点**
+
+- 主循环 `update_capture_panel` / 推理与显示链
+- `window_capture.py` · `_window_capture_worker`（勿在 UI 线程 `PrintWindow`）
+- 双窗输出、透明窗刷新、MediaPipe worker
+
+**回归检查**
+
+- [ ] 窗口/屏幕捕获在 UI 线程仅读缓存帧，重操作在 worker
+- [ ] 开透明输出后帧率变化可解释（勿静默对折）
+- [ ] 长时运行 10+ 分钟无内存/句柄泄漏导致的卡顿
+
+### #3 · 图层系统（L0–L3 / 外挂窗）（17 次）
 
 **典型现象**
 
@@ -85,26 +105,8 @@
 - [ ] 未启用无限图层时，图层代码路径不应影响主捕获/推理
 - [ ] L1–L3 拖动/缩放后 `basic_layers/` 与 UI 列表一致
 - [ ] 合成输出与预览对同一 `BindingContext` 求值
-
-### #3 · 性能 / 卡顿 / 掉帧（15 次）
-
-**典型现象**
-
-- 周期性 UI 冻结（曾见捕获定时器阻塞）
-- 帧率减半、终端持续报错拖慢主循环
-- 屏幕捕获每隔一段时间卡死
-
-**代码热点**
-
-- 主循环 `update_capture_panel` / 推理与显示链
-- `window_capture.py` · `_window_capture_worker`（勿在 UI 线程 `PrintWindow`）
-- 双窗输出、透明窗刷新、MediaPipe worker
-
-**回归检查**
-
-- [ ] 窗口/屏幕捕获在 UI 线程仅读缓存帧，重操作在 worker
-- [ ] 开透明输出后帧率变化可解释（勿静默对折）
-- [ ] 长时运行 10+ 分钟无内存/句柄泄漏导致的卡顿
+- [ ] 同帧内改图层显隐/删层/换 host 后，orbit 缓存与绘制计划一致（无半拍错位）
+- [ ] 删 host 或解除 aux 征用后，follower 与 aux 槽可见性/轨道 UI 与状态一致
 
 ### #4 · 真透明输出 / 额外窗 / 直播采集（10 次）
 
@@ -261,7 +263,7 @@
 
 ## Agent 自动对照约定
 
-1. 用户提出 **新功能 / 改功能 / f-xxx 条目 / 接入某模块** 时，先 Read 本文件 §Top 10。
-2. 改动落点与上表「代码热点」有交集时，对应 **回归检查** 全做。
-3. 完成前在回复中列出命中的 Top10 序号与自检结果（通过 / 未测 / N/A）。
+1. 用户提出 **新功能 / 改功能 / f-xxx 条目 / 接入某模块** 时，先 Read 本文件 §Top 10 **全部**条目。
+2. 改动落点与上表「代码热点」有交集时，对应 **回归检查** 全做（不因历史排名低而省略）。
+3. 完成前在回复中列出 **全部** Top10 序号与自检结果（通过 / 未测 / N/A）。
 4. `labeled_prompt.md` 新增 `问题修复` 后，排行在下次 **git push** 或 **sync_develop_to_fork** 时自动刷新。

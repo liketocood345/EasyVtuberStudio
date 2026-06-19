@@ -930,8 +930,10 @@ class LayerDetailDock(wx.Panel):
         orbit_sat_sizer.Add(self.orbit_satellite_hint, 0, wx.ALL, 4)
 
         host_row = wx.BoxSizer(wx.HORIZONTAL)
+        self.orbit_satellite_host_label = wx.StaticText(
+            self.orbit_satellite_panel, label="目标图层 / Host layer")
         host_row.Add(
-            wx.StaticText(self.orbit_satellite_panel, label="目标图层 / Host layer"),
+            self.orbit_satellite_host_label,
             0,
             wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
             6)
@@ -944,10 +946,11 @@ class LayerDetailDock(wx.Panel):
         orbit_sat_sizer.Add(host_row, 0, wx.EXPAND | wx.ALL, 4)
 
         count_row = wx.BoxSizer(wx.HORIZONTAL)
+        self.orbit_satellite_count_label = wx.StaticText(
+            self.orbit_satellite_panel,
+            label="环上总数 / Bodies on ring")
         count_row.Add(
-            wx.StaticText(
-                self.orbit_satellite_panel,
-                label="环上总数 / Bodies on ring"),
+            self.orbit_satellite_count_label,
             0,
             wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
             6)
@@ -960,10 +963,11 @@ class LayerDetailDock(wx.Panel):
             f"含目标图层，最多 {MAX_ORBIT_SATELLITES_PER_HOST + 1}（目标+{MAX_ORBIT_SATELLITES_PER_HOST} 跟随）"
             f" / Includes host; max {MAX_ORBIT_SATELLITES_PER_HOST + 1} bodies")
         count_row.Add(self.orbit_satellite_count_spin, 0, wx.RIGHT, 8)
+        self.orbit_satellite_index_label = wx.StaticText(
+            self.orbit_satellite_panel,
+            label="本层序号 / This index")
         count_row.Add(
-            wx.StaticText(
-                self.orbit_satellite_panel,
-                label="本层序号 / This index"),
+            self.orbit_satellite_index_label,
             0,
             wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
             6)
@@ -1207,6 +1211,7 @@ class BasicLayerWindow(wx.Frame):
         self._hotkey_row_widgets: list[dict] = []
         self._hotkey_capture_row: Optional[int] = None
         self._hotkey_ui_syncing = False
+        self._detail_dock_resync_timer: Optional[wx.CallLater] = None
         primary = main_frame.basic_layers_state.selected_slot_id
         if primary is not None:
             self._selected_slot_ids = {primary}
@@ -1807,6 +1812,28 @@ class BasicLayerWindow(wx.Frame):
         self._binding_targets = targets
         return targets
 
+    def _schedule_detail_dock_resync(self, delay_ms: int = 300) -> None:
+        timer = self._detail_dock_resync_timer
+        if timer is not None:
+            timer.Stop()
+        self._detail_dock_resync_timer = wx.CallLater(
+            delay_ms, self._on_detail_dock_resync)
+
+    def _on_detail_dock_resync(self) -> None:
+        self._detail_dock_resync_timer = None
+        self._refresh_detail_dock()
+
+    def _set_orbit_satellite_panel_follow_style(self, follow_enabled: bool) -> None:
+        dock = self.detail_dock
+        if follow_enabled:
+            gray = wx.Colour(140, 140, 140)
+        else:
+            gray = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT)
+        dock.orbit_satellite_hint.SetForegroundColour(wx.Colour(90, 90, 90))
+        dock.orbit_satellite_host_label.SetForegroundColour(gray)
+        dock.orbit_satellite_count_label.SetForegroundColour(gray)
+        dock.orbit_satellite_index_label.SetForegroundColour(gray)
+
     def _refresh_detail_dock(self) -> None:
         state = self.main_frame.basic_layers_state
         dock = self.detail_dock
@@ -1970,14 +1997,17 @@ class BasicLayerWindow(wx.Frame):
             host_index = host_targets.index(layer.orbit_host_slot_id)
         except ValueError:
             host_index = 0
+            if follow_enabled and layer.orbit_host_slot_id is not None:
+                self._schedule_detail_dock_resync(300)
         dock.orbit_host_choice.SetSelection(host_index)
         dock.orbit_satellite_count_spin.SetRange(
             ORBIT_SATELLITE_COUNT_MIN, ORBIT_SATELLITE_COUNT_MAX)
         dock.orbit_satellite_count_spin.SetValue(sat_count)
         dock.orbit_satellite_index_spin.SetRange(1, max(1, sat_count - 1))
         dock.orbit_satellite_index_spin.SetValue(sat_index)
-        dock.orbit_satellite_panel.Enable(follow_enabled)
+        dock.orbit_satellite_panel.Enable(True)
         dock.orbit_satellite_panel.Show(follow_enabled)
+        self._set_orbit_satellite_panel_follow_style(follow_enabled)
         track_locked = follow_enabled
         dock.orbit_radius_slider.Enable(not track_locked)
         dock.orbit_tilt_slider.Enable(not track_locked)
