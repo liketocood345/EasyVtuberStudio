@@ -2,8 +2,8 @@
 
 > **用途**：每次**添加或修改产品功能**前，须对照 **§Top 10 全部条目**逐项自检（不按历史频次跳过）。
 > **数据源**：`e:\record\labeled_prompt.md` 中 `问题修复` 标签（按主题聚合频次）。
-> **生成时间**：2026-06-20T02:04:50.599553+10:00
-> **问题修复样本量**：126 条
+> **生成时间**：2026-06-20T18:33:27.669840+10:00
+> **问题修复样本量**：135 条
 > **自动更新**：每次 `git push` 成功后由 `post-push` hook 刷新；`sync_develop_to_fork.ps1` 同步前也会刷新。
 > **手动重建**：`python e:\record\_build_bug_feedback_index.py` 或 `scripts\maint\refresh_bug_hotspot_checklist.ps1`
 > **详细索引**：`e:\record\bug_feedback_index.json` · 用语分析 `e:\record\bug_feedback_vocab.md`
@@ -14,7 +14,7 @@
 
 | 排名 | 主题 | 次数 | 核心代码区 |
 |------|------|------|------------|
-| 1 | 闪退 / 打不开 / 进程卡死 | 18 | `character_model_mediapipe_puppeteer_load_preview.py` 初始化与 `OnInit` |
+| 1 | 闪退 / 打不开 / 进程卡死 | 20 | `character_model_mediapipe_puppeteer_load_preview.py` 初始化与 `OnInit` |
 | 2 | 性能 / 卡顿 / 掉帧 | 18 | 主循环 `update_capture_panel` / 推理与显示链 |
 | 3 | 图层系统（L0–L3 / 外挂窗） | 17 | `face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/layer_runtime.py` |
 | 4 | 真透明输出 / 额外窗 / 直播采集 | 10 | `transparent_capture_window.py` · `output_backends.py` |
@@ -44,7 +44,7 @@
 
 ## Top 10 明细
 
-### #1 · 闪退 / 打不开 / 进程卡死（18 次）
+### #1 · 闪退 / 打不开 / 进程卡死（20 次）
 
 **典型现象**
 
@@ -254,7 +254,7 @@
 
 | 排名 | 主题 | 次数 |
 |------|------|------|
-| 11 | 窗口 / 屏幕捕获 | 4 |
+| 11 | 窗口 / 屏幕捕获 | 5 |
 | 12 | CodeGraph / record 元问题 | 2 |
 | 13 | DEPLOY / 启动脚本 | 2 |
 | 14 | UI 控件生命周期 | 2 |
