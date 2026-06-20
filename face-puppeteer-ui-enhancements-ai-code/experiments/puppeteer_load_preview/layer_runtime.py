@@ -579,7 +579,6 @@ def sanitize_layer_references(state: BasicLayersState) -> None:
             freed = find_layer_slot(state, int(prev_aux_id))
             if (
                     freed is not None
-                    and layer_orbits_with_host(freed)
                     and orbit_aux_owner(state, int(prev_aux_id)) is None):
                 freed.visible = True
         host_id = layer.orbit_host_slot_id
@@ -642,13 +641,18 @@ def normalize_orbit_aux_slot_id(
 def cleanup_layer_references(state: BasicLayersState, removed_slot_id: int) -> None:
     """Clear cross-layer pointers after ``remove_layer``."""
     bind_target = f"{BINDING_LAYER_PREFIX}{removed_slot_id}"
+    host_followers_detached = False
     for layer in state.layers:
         if layer.orbit_aux_slot_id == removed_slot_id:
             layer.orbit_aux_slot_id = None
         if layer.orbit_host_slot_id == removed_slot_id:
+            layer.orbit_follow_last_sync_time_s = -1.0
             layer.orbit_host_slot_id = None
+            host_followers_detached = True
         if normalize_binding_target(layer.binding_parent) == bind_target:
             layer.binding_parent = None
+    if host_followers_detached:
+        sanitize_layer_references(state)
 
 
 def _parse_follow_rotation_same(data: dict) -> bool:
@@ -663,6 +667,22 @@ def _parse_follow_rotation_reverse(data: dict) -> bool:
     if "binding_follow_rotation_reverse" in data:
         return bool(data.get("binding_follow_rotation_reverse"))
     return False
+
+
+def _safe_int(value: object, default: int) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_optional_int(value: object) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -1016,12 +1036,18 @@ class BasicLayerSlot:
         occlusion = str(data.get("occlusion", OCCLUSION_BEHIND))
         if occlusion not in (OCCLUSION_BEHIND, OCCLUSION_FRONT):
             occlusion = OCCLUSION_BEHIND
+        sat_count_raw = _safe_int(
+            data.get("orbit_satellite_count", DEFAULT_ORBIT_SATELLITE_COUNT),
+            DEFAULT_ORBIT_SATELLITE_COUNT)
+        sat_index_raw = _safe_int(
+            data.get("orbit_satellite_index", DEFAULT_ORBIT_SATELLITE_INDEX),
+            DEFAULT_ORBIT_SATELLITE_INDEX)
         return cls(
             slot_id=slot_id,
             enabled=bool(data.get("enabled", True)),
             visible=bool(data.get("visible", True)),
             asset_path=data.get("asset_path") if data.get("asset_path") else None,
-            z_order=int(data.get("z_order", slot_id)),
+            z_order=_safe_int(data.get("z_order", slot_id), slot_id),
             occlusion=occlusion,
             transform=LayerTransform.from_dict(data.get("transform")),
             binding_parent=normalize_binding_target(data.get("binding_parent")),
@@ -1067,19 +1093,11 @@ class BasicLayerSlot:
                 float(data.get("orbit_near_scale", DEFAULT_ORBIT_NEAR_SCALE))),
             orbit_far_scale=clamp_orbit_scale(
                 float(data.get("orbit_far_scale", DEFAULT_ORBIT_FAR_SCALE))),
-            orbit_aux_slot_id=(
-                int(data["orbit_aux_slot_id"])
-                if data.get("orbit_aux_slot_id") is not None
-                else None),
-            orbit_host_slot_id=(
-                int(data["orbit_host_slot_id"])
-                if data.get("orbit_host_slot_id") is not None
-                else None),
+            orbit_aux_slot_id=_safe_optional_int(data.get("orbit_aux_slot_id")),
+            orbit_host_slot_id=_safe_optional_int(data.get("orbit_host_slot_id")),
             orbit_satellite_index=clamp_orbit_satellite_index(
-                int(data.get("orbit_satellite_index", DEFAULT_ORBIT_SATELLITE_INDEX)),
-                int(data.get("orbit_satellite_count", DEFAULT_ORBIT_SATELLITE_COUNT))),
-            orbit_satellite_count=clamp_orbit_satellite_count(
-                int(data.get("orbit_satellite_count", DEFAULT_ORBIT_SATELLITE_COUNT))),
+                sat_index_raw, sat_count_raw),
+            orbit_satellite_count=clamp_orbit_satellite_count(sat_count_raw),
             hotkey_bindings=layer_hotkey_bindings_from_list(data.get("hotkey_bindings")),
         )
 
@@ -1397,6 +1415,12 @@ def normalize_orbit_host_slot_id(
 def resolve_orbit_host_layer(
         state: BasicLayersState,
         layer: BasicLayerSlot) -> Optional[BasicLayerSlot]:
+    """Resolve a follower's circular-orbit host layer.
+
+    Central gate for orbit-follow: motion, edit chrome, save sync, and UI labels
+    all depend on this predicate chain. Change with care — run smoke_layer_runtime
+    and manual host/follower edits before merging.
+    """
     if not layer_orbits_with_host(layer):
         return None
     host_id = layer.orbit_host_slot_id
@@ -1673,6 +1697,7 @@ def compute_orbit_motion_state(
     host = resolve_orbit_host_layer(state, layer)
     if host is None:
         return compute_orbit_state(layer, time_s)
+    maybe_sync_orbit_follow_from_host(layer, host, time_s)
     offset = orbit_satellite_phase_offset_rad(
         layer.orbit_satellite_index, layer.orbit_satellite_count)
     radius = clamp_orbit_radius(host.orbit_radius)
@@ -3748,10 +3773,11 @@ def save_basic_layers_state(
         state: BasicLayersState,
         ui_state_file_path: str,
         relativize_path: Callable[[Optional[str]], Optional[str]]) -> None:
+    save_sync_time = time.time()
     for layer in state.layers:
         host = resolve_orbit_host_layer(state, layer)
         if host is not None:
-            sync_orbit_follow_kinematics_from_host(layer, host, 0.0)
+            sync_orbit_follow_kinematics_from_host(layer, host, save_sync_time)
     sanitize_layer_references(state)
     directory = get_basic_layers_directory(ui_state_file_path)
     os.makedirs(directory, exist_ok=True)

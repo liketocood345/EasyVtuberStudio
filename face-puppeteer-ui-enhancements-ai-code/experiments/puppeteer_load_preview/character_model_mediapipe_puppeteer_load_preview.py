@@ -1007,6 +1007,7 @@ class MainFrame(wx.Frame):
     CAPTURE_IDLE_INTERVAL_MS = 400
     DISPLAY_PRESENT_INTERVAL_MS = 30
     DISPLAY_PRESENT_CAP_HZ = 30
+    INFER_WORKER_STUCK_TIMEOUT_SEC = 12.0
     OUTPUT_FPS_AVG_FRAME_COUNT = 5
     OUTPUT_FPS_UPDATE_INTERVAL_SEC = 1.0
     OUTPUT_FPS_STALE_SEC = 1.5
@@ -1147,6 +1148,9 @@ class MainFrame(wx.Frame):
         self._infer_lock = threading.Lock()
         self._pending_infer_pose: Optional[List[float]] = None
         self._infer_worker_active = False
+        self._infer_worker_generation = 0
+        self._infer_worker_started_mono = 0.0
+        self._infer_stuck_heal_logged = False
         # MediaPipe face detection runs on a dedicated worker thread (latest-wins)
         # so the heavy detect_for_video call never blocks the wx UI/render thread.
         self._mediapipe_lock = threading.Lock()
@@ -3196,18 +3200,24 @@ class MainFrame(wx.Frame):
             self._pending_infer_pose = list(pose_list)
             if self._infer_worker_active:
                 return
+            self._infer_worker_generation += 1
+            generation = self._infer_worker_generation
             self._infer_worker_active = True
+            self._infer_worker_started_mono = time.monotonic()
         threading.Thread(
             target=self._async_pose_infer_worker,
+            args=(generation,),
             daemon=True,
             name="tha4-pose-infer").start()
 
-    def _async_pose_infer_worker(self) -> None:
+    def _async_pose_infer_worker(self, generation: int) -> None:
         last_pose: Optional[List[float]] = None
         last_wx_image: Optional[wx.Image] = None
         try:
             while not self._is_closing:
                 with self._infer_lock:
+                    if generation != self._infer_worker_generation:
+                        break
                     pose = self._pending_infer_pose
                     self._pending_infer_pose = None
                 if pose is None:
@@ -3224,20 +3234,100 @@ class MainFrame(wx.Frame):
                             file=sys.stderr)
                     last_wx_image = None
                 with self._infer_lock:
+                    if generation != self._infer_worker_generation:
+                        break
                     if self._pending_infer_pose is None:
                         break
         finally:
             with self._infer_lock:
-                self._infer_worker_active = False
+                if generation == self._infer_worker_generation:
+                    self._infer_worker_active = False
         if (
                 not self._is_closing
+                and generation == self._infer_worker_generation
                 and last_pose is not None
                 and last_wx_image is not None):
             wx.CallAfter(self._finish_async_pose_infer, last_pose, last_wx_image)
 
+    def _layer_motion_output_active(self) -> bool:
+        return (
+            self.is_layer_blend_enabled()
+            and basic_layers_state_has_active_motion(self.basic_layers_state))
+
+    def _resolve_output_wx_image_for_present(self) -> Optional[wx.Image]:
+        if self.last_output_wx_image is not None:
+            return self.last_output_wx_image
+        cache = getattr(self.output_enhancement, "keyframe_cache", None)
+        if cache is None:
+            return None
+        bitmap = cache.bitmap
+        if bitmap is None:
+            return None
+        try:
+            if hasattr(bitmap, "IsOk") and not bitmap.IsOk():
+                return None
+            return bitmap.ConvertToImage()
+        except Exception:
+            return None
+
+    def _output_has_presentable_keyframe(self) -> bool:
+        return self._resolve_output_wx_image_for_present() is not None
+
+    def _clear_present_compose_dedupe(self) -> None:
+        self._last_compose_signature = None
+        self._last_cached_affine_present_time_ns = None
+
+    def _infer_worker_stuck(self) -> bool:
+        if not self._infer_worker_active:
+            return False
+        started = float(getattr(self, "_infer_worker_started_mono", 0.0))
+        if started <= 0.0:
+            return False
+        return (
+            time.monotonic() - started
+            >= MainFrame.INFER_WORKER_STUCK_TIMEOUT_SEC)
+
+    def _reset_infer_worker_runtime(self) -> None:
+        with self._infer_lock:
+            self._infer_worker_generation += 1
+            self._infer_worker_active = False
+            self._infer_worker_started_mono = 0.0
+        self._capture_async_active = False
+        self._clear_present_compose_dedupe()
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+    def _schedule_infer_recovery_pose(self) -> None:
+        if self.mediapipe_face_pose is None:
+            return
+        try:
+            current_pose = self._resolve_mocap_pose_for_render(self.mediapipe_face_pose)
+        except Exception:
+            return
+        self.schedule_async_pose_infer(
+            self.resolve_scheduled_infer_pose(current_pose))
+
+    def _maybe_heal_stuck_infer_worker(self) -> bool:
+        """Abandon a hung THA infer thread and reopen the async infer gate."""
+        if not self._infer_worker_stuck():
+            return False
+        if not getattr(self, "_infer_stuck_heal_logged", False):
+            self._infer_stuck_heal_logged = True
+            print(
+                "THA infer worker stuck; resetting async infer gate "
+                f"(>{MainFrame.INFER_WORKER_STUCK_TIMEOUT_SEC:.0f}s).",
+                file=sys.stderr)
+        self._reset_infer_worker_runtime()
+        self._schedule_infer_recovery_pose()
+        return True
+
     def _finish_async_pose_infer(self, pose_list: List[float], wx_image: Optional[wx.Image]) -> None:
         if self._is_closing or wx_image is None:
             return
+        self._infer_stuck_heal_logged = False
         self._note_pose_present_time()
         self.last_pose = pose_list
         self.last_output_wx_image = wx_image
@@ -10009,11 +10099,12 @@ class MainFrame(wx.Frame):
             banner_text: Optional[str] = None,
             *,
             push_capture: bool = False):
-        if self.last_output_wx_image is None:
+        wx_image = self._resolve_output_wx_image_for_present()
+        if wx_image is None:
             return
         use_fast_affine = not self.is_layer_blend_enabled()
         self.draw_result_wx_image(
-            self.last_output_wx_image,
+            wx_image,
             banner_text,
             fast_affine_only=use_fast_affine)
         if push_capture:
@@ -10329,25 +10420,33 @@ class MainFrame(wx.Frame):
 
 
     def _present_smooth_output_frame(self) -> None:
-        if not self.is_model_loaded() or self.last_output_wx_image is None:
+        if not self.is_model_loaded():
             return
-        if self._cached_affine_visual_unchanged():
+        if not self._output_has_presentable_keyframe():
+            if self._layer_motion_output_active():
+                self._maybe_heal_stuck_infer_worker()
             return
-        if not self.should_refresh_cached_affine():
+        infer_stuck = self._infer_worker_stuck()
+        if self._cached_affine_visual_unchanged() and not infer_stuck:
+            if not self.should_refresh_cached_affine():
+                return
+        elif not infer_stuck and not self.should_refresh_cached_affine():
             return
         self.draw_cached_result_image(self.last_banner_text)
         self._maybe_schedule_transparent_capture_update()
 
     def on_display_timer(self, event: Optional[wx.Event] = None):
         self.poll_layer_gif_playback_side_effects()
+        self._maybe_heal_stuck_infer_worker()
         if self.is_model_loaded():
             self.update_display_transform_state()
         motion_active = (
-            self.is_layer_blend_enabled()
-            and basic_layers_state_has_active_motion(self.basic_layers_state)
-            and self.last_output_wx_image is not None)
+            self._layer_motion_output_active()
+            and self._output_has_presentable_keyframe())
         if motion_active:
             # Single full composite per tick (avoids duplicate draw when affine also changed).
+            if self._infer_worker_stuck():
+                self._clear_present_compose_dedupe()
             self.draw_cached_result_image(self.last_banner_text)
             self._maybe_schedule_transparent_capture_update()
         else:
@@ -10433,7 +10532,7 @@ class MainFrame(wx.Frame):
             self._last_cached_affine_present_time_ns = None
             with self._infer_lock:
                 self._pending_infer_pose = None
-                self._infer_worker_active = False
+            self._reset_infer_worker_runtime()
             self._input_frame_times = []
             self._input_fps = 0.0
             self._inference_complete_times = []
