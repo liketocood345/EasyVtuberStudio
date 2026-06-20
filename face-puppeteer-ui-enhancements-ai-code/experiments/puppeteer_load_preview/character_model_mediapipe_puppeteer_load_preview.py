@@ -1299,7 +1299,6 @@ class MainFrame(wx.Frame):
             (time.perf_counter() - first_present_t0) * 1000.0)
         wx.CallAfter(self.ensure_application_windows_visible)
         self.schedule_refresh_controls_scrolling()
-        wx.CallLater(1200, self.autoconnect_video_source_on_startup)
         wx.CallAfter(self._ensure_tha3_assets_on_startup)
         wx.CallAfter(self.sync_layer_hotkey_registry)
         self._defer_heavy_ui_refresh = False
@@ -1315,9 +1314,6 @@ class MainFrame(wx.Frame):
         if ensure_tha3_assets_available(self, self.tha3_model_variant):
             return
         switch_image_source(self, IMAGE_SOURCE_THA4, autoload_asset=True)
-
-    def try_startup_auto_connect_camera(self):
-        self.autoconnect_video_source_on_startup()
 
     def get_default_pose_list(self) -> List[float]:
         if self._default_pose_list is None:
@@ -7026,28 +7022,9 @@ class MainFrame(wx.Frame):
         if choices:
             self.video_source_choice.SetSelection(0)
         self.update_video_source_status_text(
-            "默认优先加载上次窗口捕获；无可用窗口时回退摄像头。"
-            " / Prefer last window capture source, fallback to camera.")
+            "加载模型或 THA3 立绘后自动连源（窗口捕获优先）；启动时不自动连接。"
+            " / Auto-connect after Load model or THA3 portrait; not on startup.")
         self.update_last_window_capture_text()
-        wx.CallAfter(self.autoconnect_video_source_on_startup)
-
-    def autoconnect_video_source_on_startup(self):
-        """Connect saved window/camera without requiring a manual dropdown click."""
-        if self.is_capture_source_active():
-            return
-        if self._video_enumeration_in_progress:
-            wx.CallLater(500, self.autoconnect_video_source_on_startup)
-            return
-        hwnd, title = self.get_saved_window_capture()
-        if hwnd:
-            if self.video_source_choice is not None:
-                label = self.format_window_capture_label(title)
-                if label in self.video_source_choice_map:
-                    self.video_source_choice.SetStringSelection(label)
-            self.set_video_capture_window(hwnd, title)
-            if self.is_capture_source_active():
-                return
-        self.connect_default_video_source()
 
     def setup_hover_help_bindings(self):
         if self.controls_frame is None:
@@ -8021,9 +7998,8 @@ class MainFrame(wx.Frame):
             return
 
         self.video_source_kind = "window"
-        warmup_frame = window_capture.capture_window_client_bgr(self._window_capture_hwnd)
-        if warmup_frame is not None:
-            self._last_good_webcam_bgr_frame = warmup_frame
+        # Grab runs on the background worker only; never block the wx UI thread here.
+        self._ensure_window_capture_worker()
         self.video_capture_status_message = None
         self.update_video_source_status_text(
             f"窗口捕获 / Window: {self._window_capture_title}")
@@ -8799,7 +8775,6 @@ class MainFrame(wx.Frame):
         event.Skip()
 
     def load_tha3_character_png(self, event: wx.Event):
-        self.refresh_and_autoload_video_source()
         from tha3_assets_prompt import ensure_tha3_assets_available
 
         if not ensure_tha3_assets_available(self, self.tha3_model_variant):
@@ -8822,11 +8797,11 @@ class MainFrame(wx.Frame):
             if self.active_image_source.load_asset(self, png_path):
                 self.update_load_model_buttons()
                 self.save_persistent_ui_state()
+                self.refresh_and_autoload_video_source()
         file_dialog.Destroy()
         event.Skip()
 
     def load_last_tha3_character_png(self, event: wx.Event):
-        self.refresh_and_autoload_video_source()
         from tha3_assets_prompt import ensure_tha3_assets_available
 
         if not ensure_tha3_assets_available(self, self.tha3_model_variant):
@@ -8853,8 +8828,9 @@ class MainFrame(wx.Frame):
         self.last_tha3_character_png = resolved_path
         if self.get_image_source_mode() != IMAGE_SOURCE_THA3:
             switch_image_source(self, IMAGE_SOURCE_THA3)
-        self.active_image_source.load_asset(self, resolved_path)
-        self.update_load_model_buttons()
+        if self.active_image_source.load_asset(self, resolved_path):
+            self.update_load_model_buttons()
+            self.refresh_and_autoload_video_source()
         event.Skip()
 
     def get_dialog_parent(self) -> wx.Window:
@@ -10592,10 +10568,10 @@ class MainFrame(wx.Frame):
         if getattr(self, "output_frame", None) is not None and self.output_frame:
             self.output_frame.result_image_panel.Update()
         self.refresh_basic_layer_window_if_visible()
+        self.refresh_and_autoload_video_source()
         return True
 
     def load_model(self, event: wx.Event):
-        self.refresh_and_autoload_video_source()
         dir_name = self.get_default_character_models_dir()
         if not os.path.isdir(dir_name):
             dir_name = ""
@@ -10612,7 +10588,6 @@ class MainFrame(wx.Frame):
         file_dialog.Destroy()
 
     def load_last_model(self, event: wx.Event):
-        self.refresh_and_autoload_video_source()
         if not self.last_loaded_model_path:
             return
         resolved_path = self.resolve_character_model_path(self.last_loaded_model_path)

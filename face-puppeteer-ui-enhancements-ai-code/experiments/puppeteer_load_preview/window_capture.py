@@ -30,6 +30,10 @@ _dpi_awareness_set = False
 _prototypes_initialized = False
 _capture_method_cache: dict[int, int] = {}
 
+# Thumb mean luma thresholds (see smoke_window_capture: black < 2, bright > 4).
+_USABLE_FRAME_LUMA_MIN = 2.0
+_GOOD_FRAME_LUMA_MIN = 4.0
+
 
 def _init_win32_prototypes() -> None:
     global _prototypes_initialized
