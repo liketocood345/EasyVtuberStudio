@@ -19,7 +19,7 @@
 
 ### THA3 立绘 PNG（若使用 THA3 模式）
 
-THA3 与 THA4 Student 不同：**不需要蒸馏训练**，一张合规 PNG 即可面捕驱动；但须先安装 DEPLOY 档位 **[3] tha3_models**（约 2 GB 推理权重）。详见 [THA3_INTEGRATION.md](../face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/THA3_INTEGRATION.md)。
+THA3 与 THA4 Student 不同：**不需要蒸馏训练**，一张合规 PNG 即可面捕驱动；但须先安装 DEPLOY 档位 **[4] tha3_models**（约 2 GB 推理权重）。详见 [THA3_INTEGRATION.md](../face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/THA3_INTEGRATION.md)。
 
 **立绘文件要求**（依据 [THA3 官方规范](https://github.com/pkhungurn/talking-head-anime-3-demo/blob/master/README.md#contraints-on-input-images)）：
 
@@ -74,7 +74,7 @@ no background elements, no other characters, no props, no text, no watermark, 51
 | 脸变形严重 | 头不在规定区域、侧脸或大俯仰 |
 | 手/臂乱形 | 手靠近头部或姿势复杂 |
 | 背景色边 | 背景 Alpha 未清零，或使用无透明的 JPG |
-| 加载失败 | 未安装 **[3] tha3_models** |
+| 加载失败 | 未安装 **[4] tha3_models** |
 
 与 **THA4 Student** 对比：Student 需 `character.png` + 五官 mask + `character_model.yaml` 并跑蒸馏；THA3 仅须上述单张 PNG + 档位 [3] 权重。
 
@@ -87,10 +87,10 @@ no background elements, no other characters, no props, no text, no watermark, 51
 **不包含**（需运行 `DEPLOY.bat` 安装对应档位）：
 
 - Python + PyTorch 最小运行时（档位 **[1] basic_run** → `workspace/student_venv`）
-- 摄像头面捕完整环境（档位 **[2] face_puppeteer**）
-- THA3 立绘权重（档位 **[3] tha3_models**）
-- THA4 训练 Teacher 权重（档位 **[4] tha4_training**）
-- NN 超分 / RIFE / onnxruntime（档位 **[5] output_enhancement**，可选；**ONNX 权重从 HF Bucket 下载**，见下文）
+- 摄像头面捕：**[2] openseeface**（OpenSeeFace）或 **[3] face_puppeteer**（MediaPipe），二选一即可
+- THA3 立绘权重（档位 **[4] tha3_models**）
+- THA4 训练 Teacher 权重（档位 **[5] tha4_training**）
+- NN 超分 / RIFE / onnxruntime（档位 **[6] output_enhancement**；**ONNX 从 HF Bucket 下载**，见下文）
 
 ### 获取方式（二选一）
 
@@ -105,13 +105,13 @@ no background elements, no other characters, no props, no text, no watermark, 51
 python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtuberStudio D:\EasyVtuberStudio
 ```
 
-进入同步目录后同样运行 **`DEPLOY.bat`**。本桶已含 `data/ezvtb_nn/`，装档位 **[5]** 时通常无需再下载 ONNX。
+进入同步目录后同样运行 **`DEPLOY.bat`**。本桶已含 `data/ezvtb_nn/` 与 `addons/openseeface/`，装档位 **[6]** 时通常无需再下载 ONNX；装 **[2]** 时通常无需再下载 facetracker。
 
 ---
 
 ### 大文件与 HF Bucket（瘦包用户）
 
-GitHub ZIP **不含** `data/ezvtb_nn/*.onnx`。安装档位 **[5] output_enhancement** 时，DEPLOY **首选**从公开 Bucket 拉取（失败时回退 Google Drive 导入脚本）。
+GitHub ZIP **不含** `data/ezvtb_nn/*.onnx`。安装档位 **[6] output_enhancement** 时，DEPLOY **首选**从公开 Bucket 拉取（失败时回退 Google Drive 导入脚本）。
 
 | 资源 | Bucket 路径 |
 |------|-------------|

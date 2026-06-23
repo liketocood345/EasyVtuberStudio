@@ -35,7 +35,7 @@ python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtu
 2. 双击 **`DEPLOY.bat`**，按提示选择安装档位（首次建议前四档直接 Enter，只装 **[1] basic_run**）。  
 3. 双击 **`EasyVtuberStudio.exe`** 启动。
 
-本桶已包含 **`data/ezvtb_nn/`**（NN 超分 / RIFE 权重）。安装档位 **[5] output_enhancement** 时无需再从网上拉取 ONNX。
+本桶已包含 **`data/ezvtb_nn/`**（NN 超分 / RIFE 权重）与 **`addons/openseeface/`**（OpenSeeFace facetracker + models）。安装档位 **[6] output_enhancement** 时通常无需再拉 ONNX；安装 **[2] openseeface** 时通常无需再下载 facetracker。
 
 ### 方式 B：从 GitHub 瘦包 + 自动补全
 
@@ -53,7 +53,7 @@ python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtu
 ```text
 EasyVtuberStudio/          ← 同步到本地的根目录
 ├── EasyVtuberStudio.exe     # 主程序
-├── DEPLOY.bat               # 五档安装（basic / 面捕 / THA3 / THA4 训练 / NN 后处理）
+├── DEPLOY.bat               # 六档安装（basic / OSF / MediaPipe / THA3 / THA4 训练 / NN 后处理）
 ├── RESET_ADDON.bat
 ├── data/
 │   ├── character_models/    # 示例 THA4 Student（bai）
@@ -67,22 +67,26 @@ EasyVtuberStudio/          ← 同步到本地的根目录
 | 路径 | 说明 |
 |------|------|
 | `data/ezvtb_nn/` | 后处理 NN 权重（本桶已内置；GitHub 瘦包不含 ONNX） |
+| `addons/openseeface/` | OpenSeeFace 面捕（本桶已内置；GitHub 瘦包不含） |
 | `data/character_models/` | 自带示例角色，可立即 Load Other 试用 |
-| `addons/` | 初始为空；由 `DEPLOY.bat` 安装可选包到此处 |
+| `addons/face_puppeteer/` 等 | 其余可选包仍由 `DEPLOY.bat` 安装 |
 
-**仍需 DEPLOY 安装的**：Python 运行时（档位 [1]/[2]）、THA3/THA4 可选权重等——与 GitHub 版相同，见 `DEPLOY.bat` 五档菜单。
+**仍需 DEPLOY 安装的**：Python 运行时（档位 [1]）、MediaPipe 面捕（[3]）、THA3/THA4 训练权重等——与 GitHub 版相同，见 `DEPLOY.bat` 六档菜单。
 
 ---
 
-## DEPLOY 五档（摘要）
+## DEPLOY 六档（摘要）
 
 | 档位 | 默认 | 内容 |
 |------|------|------|
 | **[1] basic_run** | Y | Mouse + THA4 Student 最小运行时 |
-| **[2] face_puppeteer** | N | 摄像头面捕 + MediaPipe |
-| **[3] tha3_models** | N | THA3 立绘权重（~2 GB，联网下载） |
-| **[4] tha4_training** | N | THA4 训练 Teacher 权重 |
-| **[5] output_enhancement** | N | NN 超分 / RIFE（本桶已带 ONNX，主要装 pip 包） |
+| **[2] openseeface** | N | OpenSeeFace 摄像头面捕（本桶已带二进制） |
+| **[3] face_puppeteer** | N | MediaPipe 摄像头 / 窗口捕获 |
+| **[4] tha3_models** | N | THA3 立绘权重（~2 GB，联网下载） |
+| **[5] tha4_training** | N | THA4 训练 Teacher 权重 |
+| **[6] output_enhancement** | N | NN 超分 / RIFE（本桶已带 ONNX，主要装 pip 包） |
+
+摄像头面捕：安装 **[2]** 或 **[3]** 任一即可。
 
 ---
 

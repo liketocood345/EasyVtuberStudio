@@ -10,7 +10,7 @@
 
 | 文档 | 说明 |
 |------|------|
-| [DEPLOY.md](DEPLOY.md) | **首次部署**：GitHub ZIP 或 HF Bucket → DEPLOY 五档 → 第一次正常启动 |
+| [DEPLOY.md](DEPLOY.md) | **首次部署**：GitHub ZIP 或 HF Bucket → DEPLOY 六档 → 第一次正常启动 |
 | [HF_BUCKET_MIRROR.md](HF_BUCKET_MIRROR.md) | **HF Bucket** 完整发行与维护者同步 |
 | [ADDONS_LAYOUT.md](ADDONS_LAYOUT.md) | 可选包目录、junction、`addons/` 与 DEPLOY 档位 |
 | [PREP_PUSH.md](PREP_PUSH.md) | **维护者**：fork push 前检查清单 |

@@ -1,6 +1,6 @@
 [首次部署（GitHub ZIP 下载后） / First-time Deploy](docs/DEPLOY.md)
 
-**便携版（推荐最终用户）：** [GitHub Download ZIP](https://github.com/liketocood345/EasyVtuberStudio)（瘦包）或 [HF Bucket 完整目录](https://huggingface.co/buckets/liketocode789/EasyVtuberStudio) → **`DEPLOY.bat`**（**五档** Y/N）→ **`EasyVtuberStudio.exe`**。详见 [docs/DEPLOY.md](docs/DEPLOY.md)。
+**便携版（推荐最终用户）：** [GitHub Download ZIP](https://github.com/liketocood345/EasyVtuberStudio)（瘦包）或 [HF Bucket 完整目录](https://huggingface.co/buckets/liketocode789/EasyVtuberStudio) → **`DEPLOY.bat`**（**六档**数字选择，Enter = 仅 [1]）→ **`EasyVtuberStudio.exe`**。详见 [docs/DEPLOY.md](docs/DEPLOY.md)。
 
 **本仓库 = GitHub 发布总库（CORE 刚解压态）**；本地全装研发在 `E:\easyvtuberstudio-develop`（三模块 `addons/*` 实体文件，不入本 ZIP）。见 [docs/HANDOVER.md](docs/HANDOVER.md) §0.1 · [docs/ADDONS_LAYOUT.md](docs/ADDONS_LAYOUT.md) · 推送前 [docs/PREP_PUSH.md](docs/PREP_PUSH.md)。
 
@@ -62,12 +62,12 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 
 ## 相对 THA4 原版做了什么（简要）
 
-在官方 `character_model_mediapipe_puppeteer` 基础上，做了一套 **MediaPipe 面捕 + 可调显示变换 + 更好用的 wx 调参界面**，主入口为实验脚本 `character_model_mediapipe_puppeteer_load_preview.py`。
+在官方 `character_model_mediapipe_puppeteer` 基础上，扩展为 **多路面捕 + THA3/THA4 双图像源 + 真透 ULW 单输出窗 + 内置图层与可选后处理**，主入口 `character_model_mediapipe_puppeteer_load_preview.py`（根目录 **`EasyVtuberStudio.exe`**）。
 
-### 1. 界面与窗口
+### 1. 界面与输出
 
 - **默认完整调参窗**启动（`startup_show_full_controls`）；可选 **精简小窗**（3 快捷按钮）与完整窗来回切换
-- 角色输出独立无边框窗口，可拖动画布，几何与状态可持久化
+- **单一分层输出窗（ULW，标题 `easyvtuberstudio_output`）**：真透档 per-pixel alpha 桌面叠加；纯色/图片/黑键背景合成进同一窗；图层选中、手柄编辑、空白拖窗在 ULW 完成（真透档隐藏 wx `OutputFrame`）
 - 控件分栏：模型传入 / 输出动态增强 / 后处理；预览行含立绘+摄像头+**右侧校准列**；竖滑块、分割条比例记忆（250ms 防抖写盘）
 
 ### 2. 显示与跟踪
@@ -80,45 +80,52 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 ### 3. 模型与持久化
 
 - 加载后即显示默认姿态；`Load Last` / `Load Other`
-- `workspace/load_preview_ui_state.json` 保存开关、滑块、输出窗、嘴部/显示变换等
+- `workspace/load_preview_ui_state.json` 保存开关、滑块、输出窗、嘴部/显示变换、面捕模式等
 
 ### 4. 呼吸与嘴部（`mediapipe_face_pose_converter_00.py`）
 
-- 呼吸控件与反应式呼吸
+- 呼吸控件与反应式呼吸（含幅度增益滑块）
 - 嘴部：面捕 / 音频驱动切换，设备选择与 OBS 风格电平条
 
-### 5. 面捕输入模式
+### 5. 面捕输入模式（Model Input）
 
-- **Face capture (MediaPipe)**：摄像头 / 窗口捕获 / 视频文件（默认）
-- **Mouse + Audio (EasyVtuber)**：无摄像头；**全屏鼠标**驱动头转与眼球，**麦克风**驱动口型；程序化眨眼 + 内建呼吸
-- 模式在 Model Input 列切换，写入 `workspace/load_preview_ui_state.json`（`mocap_input_mode`）
-- 实现：`experiments/puppeteer_load_preview/mouse_mocap_driver.py`；自检 `smoke_mouse_mocap.py`
+| 模式 | 说明 | DEPLOY 档位 |
+|------|------|-------------|
+| **OpenSeeFace** | `facetracker.exe` 独立采摄像头，UDP 驱动 THA；左侧预览镜像 **OpenSeeFace Visualization** 窗口 | **[2] openseeface** |
+| **Face capture (MediaPipe)** | 摄像头 / **窗口捕获** / 视频文件（EVS 抓帧 + MediaPipe） | **[3] face_puppeteer** |
+| **Mouse + Audio (EasyVtuber)** | 无摄像头；全屏鼠标驱动头转与眼球，麦克风驱动口型；程序化眨眼 + 内建呼吸 | **[1] basic_run** 即可 |
+
+模式写入 `workspace/load_preview_ui_state.json`（`mocap_input_mode`）。实现：`openseeface_mocap_driver.py`、`openseeface_runtime.py`、`mouse_mocap_driver.py`；自检 `smoke_openseeface_mocap.py`、`smoke_mouse_mocap.py`。
 
 ### 6. 摄像头与视频源
 
-- **窗口捕获**：从 DroidCam 等客户端预览窗抓帧（OBS 式）；与摄像头共用下拉源，记忆上次窗口；**加载模型后**自动连接时窗口捕获优先
-- 设备下拉、DirectShow 枚举、多索引/多后端探测
-- DroidCam 虚拟摄像头仍可用；后台打开；支持视频/图片文件源
+- **窗口捕获**：后台 worker 抓取目标窗（DroidCam 预览、OBS 等）；与摄像头共用下拉源；**加载模型后**自动连接时窗口捕获优先
+- 设备下拉、DirectShow 枚举、多索引/多后端探测；支持视频/图片文件源
 
 ### 7. 内置图层系统
 
-- **启用图层混合**：弹出五层独立编辑窗，在内置 OutputFrame 合成（透明 PNG）
-- **图层快捷键（f-062 子集）**：🟠 **半损坏·待修** — 每层可录全局热键（显隐 / 按住 / GIF 播放）；须同时勾选「启用图层快捷键」（默认关）。设置与注册仍不稳定，见 `docs/TROUBLESHOOTING_QA.md` Q16b–Q16d
-- **启动无限图层系统**：占位开关（L2 尚未实现）
+- **启用图层混合**：弹出多槽位 `BasicLayerWindow`，在内置预览区编辑
+- **无限图层系统（L2）**：动态增删槽位；**简单摇摆**、**圆周运动**、**环绕跟随（orbit host）**；绑定可随躯干倾斜（Lean shift/rotate）
+- 合成经 `draw_result_wx_image()` → present 管线交付 **ULW**（`layer_runtime.py`、`numpy_layer_compositor.py`）
 - ~~向外挂图层系统输出 / bridge~~ 已移除（2026-05-30）
 
-### 8. 其它交互
+### 8. 输出增强（可选）
+
+- 后处理链：NN 超分、RIFE 帧插值、TensorRT 等（默认全关 = 恒等，挂于 compose 之后）
+- 安装 **DEPLOY [6] output_enhancement**；ONNX 权重从 HF Bucket `data/ezvtb_nn/` 拉取（完整桶已内置）
+
+### 9. 其它交互
 
 - 滑块悬停约 1 秒后才可用滚轮微调（高亮 + 提示）
-- 预览行右侧：**标定朝向**、**输出动态增强校准**及周期自动校准；精简窗保留 3 快捷校准按钮；已去掉「点任意控件置顶输出窗」（避免控件失效）
+- 预览行右侧：**标定朝向**、**输出动态增强校准**及周期自动校准；精简窗保留 3 快捷校准按钮
 
-### 9. 附带内容
+### 10. 附带内容与文档
 
-- `data/character_models/baiten_from_project_forlon9/bai_450k/`：示例白腾（代号：九星独行角色） student 模型（yaml + 图）
-- 文档：`docs/HANDOVER.md`、`docs/HARDWARE_REQUIREMENTS.md`、`docs/TROUBLESHOOTING_QA.md`、`docs/DOC_INDEX.md` 等
-- `his/`：按时间归档的历史快照；`archive_to_his.ps1` 留档
+- `data/character_models/baiten_from_project_forlon9/bai_450k/`：示例白腾 student 模型
+- 文档：`docs/HANDOVER.md`、`docs/TROUBLESHOOTING_QA.md`、`docs/DOC_INDEX.md`、`docs/CHANGELOG.md` 等
+- `his/`：按时间归档的历史快照
 
-更细的条目见 `face-puppeteer-ui-enhancements-ai-code/CHANGELOG.md`。
+**发布版说明（2026-06-24）：** 已去除长跑 debug 脚手架（`debug-3353ed.log` 等 NDJSON 埋点）；保留 ULW 独立线程投递、输出停滞自愈、infer worker stuck 愈合等生产修复。详见 [docs/CHANGELOG.md](docs/CHANGELOG.md) §2026-06-24。
 
 “这不是我的选择，但是我选择的。”他总是如是说道。
 
@@ -129,7 +136,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 ```
 <REPO_ROOT>\
 ├── README.md                 ← 本文件（GitHub 首页）
-├── DEPLOY.bat                ← 五档安装（basic / face / THA3 / THA4 训练 / NN 后处理）
+├── DEPLOY.bat                ← 六档安装（basic / OSF / MediaPipe / THA3 / THA4 训练 / NN 后处理）
 ├── RESET_ADDON.bat           ← 卸载单个可选包
 ├── EasyVtuberStudio.exe      ← 主入口（双击启动）
 ├── addons/                   ← 可选包（初始仅 README）
@@ -172,10 +179,8 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 
 | 提交 / 日期 | 说明 |
 |-------------|------|
-| `2026-06-16` | **图层快捷键（f-062）** 初版合入（显隐/按住/GIF）；标 **🟠 半损坏·待修**（设置/注册/性能已知问题，见 Q16b–Q16d） |
-| `2026-06-15` | **图层圆周运动**（轨道编辑、辅助槽 z 序、L2 槽位增删）；**鼠标三区校准**与 ix-025 三条校准界限（周期 = 自动点对应按钮）；**窗口捕获**长时卡顿优化；`CODEBASE_MAP` / BUG 热点清单与 git hooks；DEPLOY 增补 THA3 **AI 生成立绘**中英混合提示词 |
-| `3a32f04` · 2026-06-13 | **透明 ULW 真 alpha 输出**、wx-free 合成与显示帧率修复；图层**绑定随躯干倾斜**（Lean shift / rotate 双增益）；任务栏统一 exe 图标、三窗同启；背景下拉四档重构 |
-| `3213b0e` · PR #8 | DEPLOY：**THA3 立绘 PNG** 规格表与构图示意 |
-| `952b32b` · PR #6 | 图层**简单摇摆**运动；图层窗立绘行刷新修复 |
-| `f81363b` · 2026-06-04 | **Mouse + Audio** 布局补全；三栏分割持久化；校准控件迁至预览行右侧 |
-| `v1.0` | 便携 **DEPLOY 四档**、Mouse + Audio 面捕、文档与 GitHub 首发 [EasyVtuberStudio](https://github.com/liketocood345/EasyVtuberStudio) |
+| `2026-06-24` | **发布版去除 debug 脚手架**（NDJSON / longrun 诊断）；**OpenSeeFace** 面捕（DEPLOY [2]）；OSF 眨眼/单眼 wink 管线；ULW 线程投递与长跑卡顿缓解 |
+| `2026-06-15` | **图层圆周运动**（轨道编辑、辅助槽 z 序、L2 槽位增删）；**鼠标三区校准**与 ix-025；**窗口捕获**长时卡顿优化；`CODEBASE_MAP` / BUG 热点清单 |
+| `3a32f04` · 2026-06-13 | **透明 ULW 真 alpha 输出**、wx-free 合成；图层**绑定随躯干倾斜**；背景下拉四档重构 |
+| `f81363b` · 2026-06-04 | **Mouse + Audio** 布局补全；三栏分割持久化 |
+| `v1.0` | 便携 **DEPLOY**、Mouse + Audio 面捕、GitHub 首发 [EasyVtuberStudio](https://github.com/liketocood345/EasyVtuberStudio) |

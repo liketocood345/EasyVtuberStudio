@@ -45,4 +45,4 @@ scripts\launch\run_load_preview_puppeteer.bat
 |----|------|
 | develop → fork | `scripts\maint\sync_develop_to_fork.ps1` |
 
-（下文功能说明与历史段落保留，路径以 `docs/HANDOVER.md` 为准。）
+（下文功能说明以 [HANDOVER.md](HANDOVER.md) 与 [../README.md](../README.md) §「相对 THA4 原版做了什么」为准；历史段落可能过时。）

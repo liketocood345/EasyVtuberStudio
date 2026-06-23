@@ -116,14 +116,15 @@ flowchart TB
 
 | 类型 | 路径 | 说明 |
 |------|------|------|
-| **主 UI** | `experiments/puppeteer_load_preview/character_model_mediapipe_puppeteer_load_preview.py` | `MainFrame` + `OutputFrame` + `ControlsFrame`；日常开发主入口 |
+| **主 UI** | `experiments/puppeteer_load_preview/character_model_mediapipe_puppeteer_load_preview.py` | `MainFrame` + ULW `TransparentCaptureWindow` + `ControlsFrame`；日常开发主入口 |
+| **OpenSeeFace** | `openseeface_mocap_driver.py`、`openseeface_runtime.py` | UDP 面捕、pacer、眼部 motion 管线 |
 | **启动器** | `packaging/launcher/launch_face_puppeteer.py` | 打包 exe 调用的 Python 入口 |
-| **训练入口** | `packaging/launcher/launch_tha4train.py` | DEPLOY [4] THA4 训练工具 |
+| **训练入口** | `packaging/launcher/launch_tha4train.py` | DEPLOY [5] THA4 训练工具 |
 | **批处理** | `scripts/launch/run_load_preview_puppeteer.bat` | develop 一键启动（见 HANDOVER） |
 | **探测** | `packaging/probe_mouse_student_runtime.py` | Mouse+Student 最小路径探测 |
 | **探测** | `scripts/probe_cameras.py` | 摄像头枚举 |
 | **图像源工厂** | `image_sources/factory.py` → `create_image_source` | THA4 Student / THA3 并列切换 |
-| **冒烟测试** | `smoke_*.py`（9 个） | 图层、鼠标面捕、透明窗、numpy 合成等局部回归 |
+| **冒烟测试** | `smoke_*.py`（含 OSF / 图层 / 鼠标面捕 / 透明窗等） | 局部回归 |
 
 ---
 

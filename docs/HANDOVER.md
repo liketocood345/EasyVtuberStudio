@@ -60,7 +60,9 @@ scripts\launch\run_load_preview_puppeteer.bat
 | 主 UI / 合成 | `face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/character_model_mediapipe_puppeteer_load_preview.py` |
 | 图层模块 | `.../layer_runtime.py`、`.../basic_layer_window.py` |
 | 面捕 / 呼吸 / 嘴部 | `face-puppeteer-ui-enhancements-ai-code/talking-head-anime-4-demo/src/tha4/mocap/mediapipe_face_pose_converter_00.py` |
+| **OpenSeeFace** | `.../openseeface_mocap_driver.py`、`openseeface_runtime.py`、`openseeface_packet.py` |
 | 鼠标+音频面捕 | `.../experiments/puppeteer_load_preview/mouse_mocap_driver.py` |
+| **ULW 真透输出** | `.../transparent_capture_window.py` |
 | UI 状态 | `workspace/load_preview_ui_state.json` |
 | 五层持久化 | `workspace/basic_layers/` |
 | THA3 依赖与资产 | 仓库根 `deps/tha3/`、`deps/pip/` |
@@ -87,34 +89,36 @@ scripts\launch\run_load_preview_puppeteer.bat
 | [camfix/CAMERA_CHANGES_SUMMARY.md](camfix/CAMERA_CHANGES_SUMMARY.md) | 摄像头/DroidCam 改动摘要 |
 | [../README.md](../README.md) | Fork 总览、双环境策略 |
 
-### 0.5 当前进度（2026-05-29）
+### 0.5 当前进度（2026-06-24）
 
-**已完成**
+**已完成（面向发布 / 日常开发）**
 
-- **默认完整调参窗**启动 + 可选精简小窗（§5–6）
-- THA3 / THA4 Student 双图像源（§8）
-- 双 pip 环境、**窗口捕获**、**输出动态增强校准**
-- **L1 五层图层（基础）**：
-  - `layer_runtime.py`：`basic_layers_state`、`BindingContext`、绑定求值（`character:body` / `character:head` / `layer:N`）、合成、`basic_layers/` 持久化
-  - `layer_interaction.py`：预览/输出共用点击、拖动、缩放手柄、方向键微调
-  - `basic_layer_window.py`：勾选 **启用图层混合** 后弹出独立六预览窗口（5 层 + 原图）
-  - 透明 **PNG** 素材；`behind_character` / `in_front_of_character` 遮挡
-  - 立绘预览区与输出窗：点选、拖动、手柄缩放；与输出共用 `LayerGeometryResolver` + `BindingContext`
-  - **内置 OutputFrame 始终可见**
-  - 自动化：`smoke_layer_runtime.py`（绑定求值回归）
-- **Mouse + Audio 面捕（EasyVtuber 风格）**：无摄像头；全屏鼠标驱动头/眼，麦克风口型，程序化眨眼 + converter 内建呼吸；`mocap_input_mode` 持久化于 `load_preview_ui_state.json`；`smoke_mouse_mocap.py`
-- **已移除** 向外挂图层系统输出 / `external_layer_output_bridge`（2026-05-30）
-- **占位开关**：**启动无限图层系统**（仅持久化，L2 未实现）
+- **默认完整调参窗** + 可选精简小窗；**ULW 单输出窗**（真透 + 四档背景合成进同一分层窗）
+- **三种面捕**：OpenSeeFace（DEPLOY [2]）· MediaPipe / 窗口捕获（[3]）· Mouse + Audio（[1] 即可）
+- THA3 / THA4 Student 双图像源；**输出动态增强校准**；窗口捕获 **后台 worker**
+- **图层 L2**：动态槽位增删；简单摇摆、圆周运动、环绕跟随（orbit host）；绑定随躯干倾斜
+- **输出增强**（f-055）：SR / RIFE / TRT 可选链，默认恒等；DEPLOY [6]
+- **长跑稳定性**：ULW 独立线程投递；`output_stall_watch_timer` 输出停滞自愈；infer worker stuck 愈合
+- **2026-06-24 发布版**：已去除 `longrun_freeze_debug` 等 NDJSON 诊断脚手架（不再默认写 `debug-3353ed.log`）
 
-**下一步（勿跳层）**
+**自检脚本（develop / main，`face-puppeteer-ui-enhancements-ai-code` 下）**
+
+| 领域 | 脚本 |
+|------|------|
+| 图层 | `smoke_layer_runtime.py` |
+| 鼠标面捕 | `smoke_mouse_mocap.py` |
+| OpenSeeFace | `smoke_openseeface_mocap.py`、`smoke_openseeface_preview.py` |
+| 窗口捕获 | `smoke_window_capture.py` |
+| 后处理 | `smoke_output_enhancement.py` |
+
+**仍在推进 / 范围外**
 
 | 优先级 | 说明 |
 |--------|------|
-| 中 | L1 手动验收（加载 PNG → 绑定 body/head → 预览=输出 → 重启恢复） |
-| 低 | **L2** 实现「无限图层系统」开关对应功能 |
-| 低 | **L3** GIF/视频/抠图/透视等 |
+| 中 | L2/L3 手动长测（GIF/视频图层、复杂绑定链） |
+| 低 | 外挂 bridge 已永久移除；见 `plans/EXTERNAL_LAYER_INTERFACE.md` |
 
-**L1 范围外（尚未做）：** GIF、视频源、单色抠图、图层组、L3 多层绑定链与环路校验。
+历史 §0.5（2026-05-29）中「L2 占位」「OutputFrame 始终可见」等描述已过时；以本节与 [CHANGELOG.md](CHANGELOG.md) 为准。
 
 ### 0.6 UI 弹窗安全（高危）
 
@@ -131,11 +135,11 @@ scripts\launch\run_load_preview_puppeteer.bat
 
 ## 1) 项目目标
 
-在官方 THA4 `character_model_mediapipe_puppeteer` 基础上，**EasyVtuberStudio** 提供 **MediaPipe 面捕 + 可调显示变换 + wx 调参 UI**（EasyVtuberStudio 风格，借鉴 EasyVtuber），主入口：
+在官方 THA4 `character_model_mediapipe_puppeteer` 基础上，**EasyVtuberStudio** 提供 **OpenSeeFace / MediaPipe / Mouse+Audio 多路面捕 + 可调显示变换 + wx 调参 UI + ULW 真透单输出窗 + 内置图层与可选后处理**，主入口：
 
-`character_model_mediapipe_puppeteer_load_preview.py`
+`character_model_mediapipe_puppeteer_load_preview.py`（`EasyVtuberStudio.exe`）
 
-能力概要：默认完整调参窗、可选精简小窗、独立无边框输出窗、呼吸/嘴部（面捕或音频）、**Mouse + Audio 无摄像头面捕**、非线性缩放曲线、倾斜/镜像后处理、**内置**五层图层混合、THA3/THA4 双图像源。
+能力概要：默认完整调参窗、可选精简小窗、**ULW 分层输出窗**、呼吸/嘴部（面捕或音频）、THA3/THA4 双图像源、图层 L2（动态槽位 / 运动 / 绑定）。
 
 ### Mouse + Audio mocap（无摄像头）
 
@@ -187,7 +191,7 @@ E:\easyvtuberstudio-main\
 |------|------|
 | §5 | 完整调参窗 + 可选精简小窗 |
 | §6 | 关键类名与变量 |
-| §7 | 内置图层系统（五层混合 + 无限层占位开关） |
+| §7 | 内置图层系统（L2 动态槽位 + ULW 合成） |
 | §8 | THA3 / THA4 Student 双图像源 |
 | §9 | 已知限制与推荐后续 |
 | §10 | 快速验收步骤 |
@@ -234,7 +238,7 @@ E:\easyvtuberstudio-main\
 | 简单摇摆运动 | 图层详情 **运动 → 简单摇摆**：支点编辑、幅度、速度（度/秒）、全程匀速/到两侧放缓 |
 | 圆周运动 | **运动 → 圆周运动**：轨道/绑定点编辑、近远缩放、前后槽征用；见手册 ix 条目与 `CUSTOM_FUNCTION_INDEX.md` |
 
-合成在 `draw_result_wx_image()` 内完成，输出至内置 `OutputFrame`。**已无**向外挂进程写 bridge 文件。
+合成在 `draw_result_wx_image()` → `_compose_present_rgba` 完成，**真透档交付 ULW**（`transparent_capture_window.py`）；非真透背景仍可用 wx `OutputFrame`。**已无**向外挂进程写 bridge 文件。
 
 历史：`external_layer_output_bridge.py` 与 `external_layer_output/` 已于 2026-05-30 移除。见 [plans/EXTERNAL_LAYER_INTERFACE.md](plans/EXTERNAL_LAYER_INTERFACE.md)。
 

@@ -157,7 +157,7 @@ Release/
 |------|------|
 | THA3 ort + THA4 torch 同包过大 | 首期 **全功能单包**；若 >2GB 再拆 `THA4LoadPreview-THA3.exe` / `-Full.exe` |
 | protobuf / mediapipe 冲突 | 沿用 `deps/pip/repair_mediapipe_protobuf.bat` 逻辑，写入 spec 前检查 |
-| debug 埋点 `debug-3353ed.log` | release spec 用 **develop 干净分支** 或 `#ifdef RELEASE` 剥离 |
+| debug 埋点 `debug-3353ed.log` | **已完成（2026-06-24）**：发布版已剥离 `longrun_freeze_debug` / NDJSON 脚手架；见 `CHANGELOG.md` §2026-06-24 |
 
 ---
 
