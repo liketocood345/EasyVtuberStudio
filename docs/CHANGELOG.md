@@ -10,6 +10,18 @@
 
 ---
 
+## 2026-06-24
+
+### 发布 · 去除 debug 脚手架
+
+| # | 改动 |
+|---|------|
+| D1 | **移除长跑诊断脚手架**：删除 `longrun_freeze_debug.py` / `longrun_watchdog.py` 及主程序内 NDJSON 埋点（`debug-3353ed.log`、perf/startup 计时、pulse/watchdog 子进程） |
+| D2 | **保留生产修复**：ULW 独立线程投递、输出停滞自愈（`output_stall_watch_timer`）、infer worker stuck 愈合逻辑不变 |
+| D3 | 发布版错误仅写 **stderr**，不再默认落盘诊断日志 |
+
+---
+
 ## 2026-06-19
 
 ### 呼吸 · 立绘按钮

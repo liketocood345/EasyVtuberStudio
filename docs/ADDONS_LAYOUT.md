@@ -7,11 +7,12 @@ The GitHub **CORE** ZIP is slim: application code, `EasyVtuberStudio.exe`, and t
 ```text
 EasyVtuberStudio/
 ├── EasyVtuberStudio.exe
-├── DEPLOY.bat              # five Y/N tiers: basic / face / THA3 / THA4 train / output_enhancement
+├── DEPLOY.bat              # six tiers: enter numbers (e.g. 1, 2, 136)
 ├── RESET_ADDON.bat         # remove one add-on + reconcile
 ├── data/character_models/  # CORE (bai student)
 ├── deps/tha3/              # THA3 code only in ZIP
 ├── addons/                 # optional packs (physical files)
+│   ├── openseeface/Binary/facetracker.exe + models/
 │   ├── face_puppeteer/venv + mediapipe/
 │   ├── tha3_models/
 │   ├── tha4_training/tha4 + pose_dataset.pt
@@ -31,15 +32,18 @@ EasyVtuberStudio/
 
 Run `packaging/reconcile_portable_layout.ps1` after manual deletes or migration.
 
-## DEPLOY tiers (Y/N; Enter = default)
+## DEPLOY tiers (enter numbers; Enter = [1] only)
 
-| Tier | Default Enter | Installs | Approx size |
-|------|---------------|----------|-------------|
-| **basic_run** | **Y** | `workspace/student_venv` (torch + wx) | ~2–4 GB |
-| face_puppeteer | N | `addons/face_puppeteer` + MediaPipe | ~3–4 GB |
-| tha3_models | N | THA3 portrait weights | ~2 GB |
-| tha4_training | N | teacher + pose dataset | ~1.5–3 GB |
-| **output_enhancement** | N | onnxruntime + NN SR/RIFE data layout | ~0.8 GB+ |
+| Tier | Default (empty input) | Installs | Approx size |
+|------|----------------------|----------|-------------|
+| **[1] basic_run** | **yes** | `workspace/student_venv` (torch + wx) | ~2–4 GB |
+| **[2] openseeface** | no | `addons/openseeface` (facetracker + models) | ~0.2 GB |
+| **[3] face_puppeteer** | no | `addons/face_puppeteer` + MediaPipe | ~3–4 GB |
+| **[4] tha3_models** | no | THA3 portrait weights | ~2 GB |
+| **[5] tha4_training** | no | teacher + pose dataset | ~1.5–3 GB |
+| **[6] output_enhancement** | no | onnxruntime + NN SR/RIFE data layout | ~0.8 GB+ |
+
+Camera face capture: install **[2] openseeface** **or** **[3] face_puppeteer** (either is enough).
 
 `EasyVtuberStudio.exe` starts when **basic_run** (or face runtime / system Python with torch+wx) is already satisfied; otherwise it directs the user to **DEPLOY.bat** (no silent auto-install).
 

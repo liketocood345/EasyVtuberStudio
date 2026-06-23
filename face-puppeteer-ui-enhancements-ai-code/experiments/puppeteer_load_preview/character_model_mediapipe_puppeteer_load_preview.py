@@ -14,7 +14,7 @@ import json
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, List
+from typing import Any, Callable, Optional, List
 import PIL.Image
 
 _EXPERIMENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -50,6 +50,7 @@ MOUTH_INFER_CAP_HZ_LABELS = (
 MOUTH_INFER_CAP_HZ_DEFAULT = 10
 MOUTH_POSE_QUANT_STEP = 0.05
 POSE_PARAM_EPS = 1e-4
+OSF_POSE_PARAM_EPS = 0.004
 
 from tha3_paths import get_demo_src_path, find_repo_root, get_demo_root
 
@@ -109,6 +110,7 @@ from mouse_mocap_driver import (
     MOCAP_INPUT_MODE_LABELS,
     MOCAP_INPUT_MODE_MEDIAPIPE,
     MOCAP_INPUT_MODE_MOUSE_AUDIO,
+    MOCAP_INPUT_MODE_OPENSEEFACE,
     MOCAP_INPUT_MODE_VALUES,
     MOUSE_BLINK_INTERVAL_MAX_SEC,
     MOUSE_BLINK_INTERVAL_MIN_SEC,
@@ -195,7 +197,36 @@ from tha3_paths import (
     resolve_bundled_bai_model_paths,
     to_repo_relative,
 )
-from portable_paths import face_capture_assets_ready, get_portable_root, resolve_mediapipe_task_path
+from portable_paths import (
+    face_capture_assets_ready,
+    face_capture_ready_for_mode,
+    get_portable_root,
+    mediapipe_capture_ready,
+    openseeface_capture_ready,
+    resolve_mediapipe_task_path,
+)
+from openseeface_mocap_driver import (
+    OSF_CALIBRATION_WARMUP_PACKETS,
+    OSF_CAPTURE_HEIGHT_DEFAULT,
+    OSF_CAPTURE_SIZE_PRESETS,
+    OSF_CAPTURE_WIDTH_DEFAULT,
+    OSF_DEFAULT_FPS,
+    OSF_DEFAULT_UDP_PORT,
+    OSF_VISUALIZE_DEFAULT,
+    OpenSeeFaceInputPacer,
+    clamp_osf_capture_height,
+    clamp_osf_capture_width,
+    clamp_osf_fps,
+    clamp_osf_visualize_level,
+    normalize_osf_camera_label,
+    osf_capture_preset_index_for_size,
+    osf_capture_size_from_preset_index,
+)
+from openseeface_runtime import (
+    OpenSeeFaceRuntime,
+    facetracker_camera_in_use,
+    list_openseeface_cameras,
+)
 from ui_dialog_guard import show_rate_limited_message
 from ui_switch_guard import block_events, is_blocked, restore_choice, run_guarded_switch, snapshot_choice
 from ui_alignment_monitor import AlignmentProbe, UiAlignmentMonitor
@@ -252,162 +283,6 @@ from numpy_edit_chrome import (
     render_selection_chrome_rgba,
 )
 from output_backends import resolve_output_backend
-
-_PERF_LOG_PATH = r"e:\debug-3353ed.log"
-_perf_window: dict = {
-    "present_ms": 0.0,
-    "capture_ms": 0.0,
-    "frames": 0,
-    "fast_present": 0,
-    "slow_present": 0,
-    "last_log_mono": 0.0,
-    "stages": {},
-}
-
-
-def _perf_record(
-        *,
-        present_ms: float = 0.0,
-        capture_ms: float = 0.0,
-        fast_present: bool = False,
-        stages: Optional[dict] = None) -> None:
-    # #region agent log
-    _perf_window["present_ms"] += present_ms
-    _perf_window["capture_ms"] += capture_ms
-    _perf_window["frames"] += 1
-    if fast_present:
-        _perf_window["fast_present"] += 1
-    else:
-        _perf_window["slow_present"] += 1
-    if stages:
-        stage_acc = _perf_window["stages"]
-        for name, value in stages.items():
-            stage_acc[name] = stage_acc.get(name, 0.0) + value
-    now = time.monotonic()
-    if now - _perf_window["last_log_mono"] < 1.0:
-        return
-    frames = max(1, _perf_window["frames"])
-    try:
-        import json
-        stage_avg = {
-            name: round(total / frames, 2)
-            for name, total in _perf_window["stages"].items()
-        }
-        with open(_PERF_LOG_PATH, "a", encoding="utf-8") as log_file:
-            log_file.write(json.dumps({
-                "sessionId": "3353ed",
-                "runId": "perf",
-                "hypothesisId": "PERF",
-                "location": "character_model_mediapipe_puppeteer_load_preview.py:_perf_record",
-                "message": "present/capture timing window",
-                "data": {
-                    "frames": frames,
-                    "avg_present_ms": round(_perf_window["present_ms"] / frames, 2),
-                    "avg_capture_ms": round(_perf_window["capture_ms"] / frames, 2),
-                    "fast_present": _perf_window["fast_present"],
-                    "slow_present": _perf_window["slow_present"],
-                    "capture_decoupled": True,
-                    "stage_ms": stage_avg,
-                },
-                "timestamp": int(time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    _perf_window.update({
-        "present_ms": 0.0,
-        "capture_ms": 0.0,
-        "frames": 0,
-        "fast_present": 0,
-        "slow_present": 0,
-        "last_log_mono": now,
-        "stages": {},
-    })
-    # #endregion
-
-
-def _startup_record(phase: str, ms: float, **extra) -> None:
-    """Log startup-phase duration (f-057: budget = main UI shell ready; excludes model/mocap/layers)."""
-    # #region agent log
-    try:
-        import json
-        data = {"ms": round(float(ms), 1)}
-        data.update(extra)
-        with open(_PERF_LOG_PATH, "a", encoding="utf-8") as log_file:
-            log_file.write(json.dumps({
-                "sessionId": "3353ed",
-                "runId": "startup",
-                "hypothesisId": "STARTUP",
-                "location": "character_model_mediapipe_puppeteer_load_preview.py:startup",
-                "message": phase,
-                "data": data,
-                "timestamp": int(time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
-
-
-_seen_err_keys: set = set()
-
-
-def _err_record(
-        hypothesis_id: str,
-        location: str,
-        exc_or_msg,
-        *,
-        data: Optional[dict] = None) -> None:
-    # #region agent log
-    message = str(exc_or_msg)
-    tb_text = ""
-    if isinstance(exc_or_msg, BaseException):
-        message = repr(exc_or_msg)
-        tb_text = traceback.format_exc()
-    dedupe_key = (location, message)
-    if dedupe_key in _seen_err_keys:
-        return
-    _seen_err_keys.add(dedupe_key)
-    payload_data = dict(data or {})
-    if tb_text:
-        payload_data["traceback"] = tb_text[:2000]
-    try:
-        import json
-        with open(_PERF_LOG_PATH, "a", encoding="utf-8") as log_file:
-            log_file.write(json.dumps({
-                "sessionId": "3353ed",
-                "runId": "err",
-                "hypothesisId": hypothesis_id,
-                "location": location,
-                "message": message,
-                "data": payload_data,
-                "timestamp": int(time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    print(f"ERR[{hypothesis_id}] {location}: {message}", file=sys.stderr)
-    # #endregion
-
-
-def _install_debug_excepthook() -> None:
-    # #region agent log
-    if getattr(_install_debug_excepthook, "_installed", False):
-        return
-    _install_debug_excepthook._installed = True
-    previous_hook = sys.excepthook
-
-    def _debug_excepthook(exc_type, exc_value, exc_tb):
-        if exc_value is not None:
-            _err_record(
-                "H-UNCAUGHT",
-                f"{getattr(exc_type, '__name__', 'Exception')}",
-                exc_value,
-                data={
-                    "traceback": "".join(
-                        traceback.format_exception(exc_type, exc_value, exc_tb))[:2000],
-                })
-        previous_hook(exc_type, exc_value, exc_tb)
-
-    sys.excepthook = _debug_excepthook
-    # #endregion
 
 
 try:
@@ -968,6 +843,8 @@ class MainFrame(wx.Frame):
     IMAGE_SIZE = 512
     SOURCE_PREVIEW_SIZE = 192
     WEBCAM_PREVIEW_SIZE = 192
+    WEBCAM_PREVIEW_MIN_SIZE = 96
+    PREVIEW_INPUT_SPLITTER_MIN_PANE = 96
     MAX_CAMERA_PROBE_INDEX = 19
     VIDEO_SOURCE_COLUMN_MIN_WIDTH = 260
     PREVIEW_CALIBRATION_COLUMN_MIN_WIDTH = 220
@@ -1008,6 +885,8 @@ class MainFrame(wx.Frame):
     DISPLAY_PRESENT_INTERVAL_MS = 30
     DISPLAY_PRESENT_CAP_HZ = 30
     INFER_WORKER_STUCK_TIMEOUT_SEC = 12.0
+    OUTPUT_STALL_SAMPLE_INTERVAL_SEC = 30.0
+    OUTPUT_STALL_FINGERPRINT_EDGE = 64
     OUTPUT_FPS_AVG_FRAME_COUNT = 5
     OUTPUT_FPS_UPDATE_INTERVAL_SEC = 1.0
     OUTPUT_FPS_STALE_SEC = 1.5
@@ -1071,6 +950,11 @@ class MainFrame(wx.Frame):
         self._window_capture_frame_serial = 0
         self._last_mediapipe_capture_serial = -1
         self._window_capture_worker_active = False
+        self._camera_capture_lock = threading.Lock()
+        self._camera_capture_latest_frame = None
+        self._camera_worker_frame_serial = 0
+        self._camera_capture_worker_active = False
+        self._last_camera_index: Optional[int] = None
         self._last_good_webcam_bgr_frame = None
         self._capture_frame_serial = 0
         self._last_mediapipe_process_time = 0.0
@@ -1121,9 +1005,30 @@ class MainFrame(wx.Frame):
         self.last_face_detected_time: Optional[float] = None
         self.mocap_input_mode = MOCAP_INPUT_MODE_MOUSE_AUDIO
         self._mouth_input_mode_before_mouse_audio: Optional[str] = None
+        self.persistent_ui_state = self.load_persistent_ui_state()
         self._mouse_mocap_config = MouseMocapConfig()
         self._face_landmarker_init_failed = False
+        self._face_landmarker_init_in_progress = False
         self._mouse_mocap_fallback_done = False
+        self._osf_camera_index = 0
+        self._osf_camera_label = ""
+        self._osf_camera_reconnect_after_enum = False
+        self._osf_udp_port = OSF_DEFAULT_UDP_PORT
+        self._osf_visualize_level = OSF_VISUALIZE_DEFAULT
+        self._osf_fps = OSF_DEFAULT_FPS
+        self._osf_capture_width = OSF_CAPTURE_WIDTH_DEFAULT
+        self._osf_capture_height = OSF_CAPTURE_HEIGHT_DEFAULT
+        self._osf_camera_enum_in_progress = False
+        self._osf_runtime_error = ""
+        self._osf_runtime = OpenSeeFaceRuntime(
+            capture_interval_sec=self.CAPTURE_PROCESS_INTERVAL_MS / 1000.0)
+        self._osf_started_mono = 0.0
+        self._osf_input_pacer = OpenSeeFaceInputPacer(target_fps=self._osf_fps)
+        self._osf_pace_keyframe_committed = False
+        self._osf_pose_converter_calibrated = False
+        self._enable_osf_forward_recenter_pan = bool(
+            self.persistent_ui_state.get("osf_forward_recenter_pan", True))
+        self._startup_mocap_bootstrap_done = False
         self._last_mouse_mocap_nx = 0.0
         self._last_mouse_mocap_ny = 0.0
         self.last_mouse_calibration_time: Optional[float] = None
@@ -1151,6 +1056,9 @@ class MainFrame(wx.Frame):
         self._infer_worker_generation = 0
         self._infer_worker_started_mono = 0.0
         self._infer_stuck_heal_logged = False
+        self._output_stall_last_fingerprint: Optional[bytes] = None
+        self._output_stall_heal_pending = False
+        self._output_stall_heal_logged = False
         # MediaPipe face detection runs on a dedicated worker thread (latest-wins)
         # so the heavy detect_for_video call never blocks the wx UI/render thread.
         self._mediapipe_lock = threading.Lock()
@@ -1170,6 +1078,7 @@ class MainFrame(wx.Frame):
         self._live_main_splitter_ratio: Optional[float] = None
         self._live_animation_splitter_ratio: Optional[float] = None
         self._live_right_sidebar_splitter_ratio: Optional[float] = None
+        self._live_preview_input_splitter_ratio: Optional[float] = None
         self._controls_fixed_client_width: Optional[int] = None
         self._scroll_refresh_pending = False
         self._dynamic_output_layout_pending = False
@@ -1193,15 +1102,37 @@ class MainFrame(wx.Frame):
         self.last_loaded_model_path: Optional[str] = None
         self.full_controls_expanded = False
         self.controls_frame: Optional[ControlsFrame] = None
-        self.persistent_ui_state = self.load_persistent_ui_state()
         self.apply_bundled_default_model_paths_if_missing()
         self._seed_live_splitter_ratios_from_persistent()
         self.mocap_input_mode = normalize_mocap_input_mode(
             self.persistent_ui_state.get("mocap_input_mode", MOCAP_INPUT_MODE_MOUSE_AUDIO))
+        portable_root = get_portable_root()
+        try:
+            self._osf_camera_index = int(self.persistent_ui_state.get("osf_camera_index", 0))
+        except (TypeError, ValueError):
+            self._osf_camera_index = 0
+        self._osf_camera_label = str(self.persistent_ui_state.get("osf_camera_label", "") or "").strip()
+        try:
+            self._osf_udp_port = int(self.persistent_ui_state.get("osf_udp_port", OSF_DEFAULT_UDP_PORT))
+        except (TypeError, ValueError):
+            self._osf_udp_port = OSF_DEFAULT_UDP_PORT
+        self._osf_visualize_level = clamp_osf_visualize_level(
+            self.persistent_ui_state.get("osf_visualize_level", OSF_VISUALIZE_DEFAULT))
+        self._osf_fps = clamp_osf_fps(
+            self.persistent_ui_state.get("osf_fps", OSF_DEFAULT_FPS))
+        self._osf_capture_width = clamp_osf_capture_width(
+            self.persistent_ui_state.get("osf_capture_width", OSF_CAPTURE_WIDTH_DEFAULT))
+        self._osf_capture_height = clamp_osf_capture_height(
+            self.persistent_ui_state.get("osf_capture_height", OSF_CAPTURE_HEIGHT_DEFAULT))
         if (self.mocap_input_mode != MOCAP_INPUT_MODE_MOUSE_AUDIO
-                and not face_capture_assets_ready(get_portable_root())):
-            self.mocap_input_mode = MOCAP_INPUT_MODE_MOUSE_AUDIO
-            self.persistent_ui_state["mocap_input_mode"] = MOCAP_INPUT_MODE_MOUSE_AUDIO
+                and not face_capture_ready_for_mode(self.mocap_input_mode, portable_root)):
+            if openseeface_capture_ready(portable_root):
+                self.mocap_input_mode = MOCAP_INPUT_MODE_OPENSEEFACE
+            elif mediapipe_capture_ready(portable_root):
+                self.mocap_input_mode = MOCAP_INPUT_MODE_MEDIAPIPE
+            else:
+                self.mocap_input_mode = MOCAP_INPUT_MODE_MOUSE_AUDIO
+            self.persistent_ui_state["mocap_input_mode"] = self.mocap_input_mode
         self._load_mouse_mocap_settings_from_persistent(self.persistent_ui_state)
         self.basic_layers_state = load_basic_layers_state(
             self.get_ui_state_file_path(),
@@ -1281,9 +1212,6 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MOVE, self.on_compact_geometry_changed)
 
         self.update_source_image_bitmap()
-        _startup_record(
-            "MainFrame.__init__ (constructor, before MainLoop)",
-            (time.perf_counter() - self._startup_init_t0) * 1000.0)
         wx.CallAfter(self.startup_show_full_controls)
 
     def startup_show_full_controls(self):
@@ -1291,20 +1219,11 @@ class MainFrame(wx.Frame):
             return
         self._startup_full_controls_shown = True
         startup_t0 = time.perf_counter()
-        self.show_full_controls_window()
-        first_present_t0 = time.perf_counter()
-        self.update_result_image_bitmap()
-        _startup_record(
-            "first present+infer (update_result_image_bitmap)",
-            (time.perf_counter() - first_present_t0) * 1000.0)
-        wx.CallAfter(self.ensure_application_windows_visible)
+        self.show_full_controls_window(defer_ulw_sync=True, skip_state_reload=True)
         self.schedule_refresh_controls_scrolling()
         wx.CallAfter(self._ensure_tha3_assets_on_startup)
         wx.CallAfter(self.sync_layer_hotkey_registry)
         self._defer_heavy_ui_refresh = False
-        _startup_record(
-            "startup_show_full_controls (UI ready)",
-            (time.perf_counter() - startup_t0) * 1000.0)
 
     def _ensure_tha3_assets_on_startup(self):
         if self.get_image_source_mode() != IMAGE_SOURCE_THA3:
@@ -1329,6 +1248,89 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_TIMER, self.on_infer_tick, id=self.animation_timer.GetId())
         self.ui_anim_timer = wx.Timer(self, wx.ID_ANY)
         self.Bind(wx.EVT_TIMER, self.on_ui_anim_timer, id=self.ui_anim_timer.GetId())
+        self.output_stall_watch_timer = wx.Timer(self, wx.ID_ANY)
+        self.Bind(
+            wx.EVT_TIMER,
+            self.on_output_stall_watch_timer,
+            id=self.output_stall_watch_timer.GetId())
+
+
+    def _clear_output_stall_watch_state(self) -> None:
+        self._output_stall_last_fingerprint = None
+        self._output_stall_heal_pending = False
+
+    def _output_present_fingerprint(self) -> Optional[bytes]:
+        """Downscaled RGBA thumb for long-run output stall detection."""
+        if not self.is_model_loaded():
+            return None
+        rgba = getattr(self, "_cached_present_rgba", None)
+        if rgba is None:
+            wx_image = self._resolve_output_wx_image_for_present()
+            if wx_image is None:
+                return None
+            rgba = capture_wx_image_to_rgba_array(wx_image)
+        if rgba is None:
+            return None
+        try:
+            height, width = rgba.shape[:2]
+            edge = MainFrame.OUTPUT_STALL_FINGERPRINT_EDGE
+            if height < 2 or width < 2:
+                return rgba.tobytes()
+            thumb = cv2.resize(
+                rgba,
+                (edge, edge),
+                interpolation=cv2.INTER_AREA)
+            return bytes(thumb)
+        except Exception:
+            return None
+
+    def on_output_stall_watch_timer(self, event: Optional[wx.Event] = None) -> None:
+        if getattr(self, "_is_closing", False):
+            return
+        if getattr(self, "_output_stall_heal_pending", False):
+            return
+        if not self.is_model_loaded():
+            self._clear_output_stall_watch_state()
+            return
+        fingerprint = self._output_present_fingerprint()
+        if fingerprint is None:
+            return
+        last = self._output_stall_last_fingerprint
+        if last is not None and fingerprint == last:
+            self._output_stall_heal_pending = True
+            wx.CallAfter(self._heal_output_stall_by_reload)
+            return
+        self._output_stall_last_fingerprint = fingerprint
+
+    def _heal_output_stall_by_reload(self) -> None:
+        try:
+            if getattr(self, "_is_closing", False):
+                return
+            if not getattr(self, "_output_stall_heal_logged", False):
+                self._output_stall_heal_logged = True
+                print(
+                    "Output stalled (identical present for "
+                    f"{MainFrame.OUTPUT_STALL_SAMPLE_INTERVAL_SEC:.0f}s); "
+                    "reloading model or portrait...",
+                    file=sys.stderr)
+            self._maybe_heal_stuck_infer_worker()
+            self._reset_infer_worker_runtime()
+            if self.get_image_source_mode() == IMAGE_SOURCE_THA3:
+                path = self.resolve_tha3_character_png_path()
+                if path and os.path.isfile(path):
+                    if self.active_image_source.load_asset(self, path):
+                        self.update_load_model_buttons()
+                        self.save_persistent_ui_state()
+                        self.refresh_and_autoload_video_source()
+                    return
+            if self.last_loaded_model_path:
+                resolved = self.resolve_character_model_path(self.last_loaded_model_path)
+                if resolved and os.path.isfile(resolved):
+                    if self.get_image_source_mode() != IMAGE_SOURCE_THA4:
+                        switch_image_source(self, IMAGE_SOURCE_THA4, autoload_asset=False)
+                    self.load_model_from_path(resolved)
+        finally:
+            self._clear_output_stall_watch_state()
 
     def initialize_headless_control_state(self):
         self.enable_auto_transform_checkbox = ValueState(True)
@@ -2107,6 +2109,8 @@ class MainFrame(wx.Frame):
         if hasattr(self, "active_image_source"):
             self.active_image_source.stop(self)
         self.release_video_capture()
+        if getattr(self, "_osf_runtime", None) is not None:
+            self._osf_runtime.stop()
         if hasattr(self.pose_converter, "shutdown"):
             self.pose_converter.shutdown()
         self.animation_timer.Stop()
@@ -2432,6 +2436,7 @@ class MainFrame(wx.Frame):
         else:
             wx.CallAfter(self._retry_controls_column_layout_once)
         self.bind_animation_area_mousewheel()
+        wx.CallAfter(self._startup_mocap_input_bootstrap)
 
     def refresh_model_input_column_scroll(self) -> None:
         scroll = getattr(self, "model_input_column", None)
@@ -2580,6 +2585,10 @@ class MainFrame(wx.Frame):
         if right_splitter is not None and right_splitter.IsSplit():
             extent = self._splitter_extent(right_splitter)
             self._live_right_sidebar_splitter_ratio = float(right_splitter.GetSashPosition()) / float(extent)
+        preview_splitter = getattr(self, "preview_input_splitter", None)
+        if preview_splitter is not None and preview_splitter.IsSplit():
+            extent = self._splitter_extent(preview_splitter)
+            self._live_preview_input_splitter_ratio = float(preview_splitter.GetSashPosition()) / float(extent)
 
     def _controls_splitter_layout_readable(self) -> bool:
         controls_window = self.get_controls_window()
@@ -2595,6 +2604,7 @@ class MainFrame(wx.Frame):
             ("main_splitter_sash_ratio", "_live_main_splitter_ratio"),
             ("animation_splitter_sash_ratio", "_live_animation_splitter_ratio"),
             ("right_sidebar_splitter_sash_ratio", "_live_right_sidebar_splitter_ratio"),
+            ("preview_input_splitter_sash_ratio", "_live_preview_input_splitter_ratio"),
         )
         for ratio_key, live_attr in ratio_seed:
             ratio = self._resolve_persisted_splitter_sash_ratio(ratio_key)
@@ -2606,6 +2616,7 @@ class MainFrame(wx.Frame):
             ("main_splitter", "main_splitter_sash", "main_splitter_sash_ratio", "_live_main_splitter_ratio"),
             ("animation_splitter", "animation_splitter_sash", "animation_splitter_sash_ratio", "_live_animation_splitter_ratio"),
             ("right_sidebar_splitter", "right_sidebar_splitter_sash", "right_sidebar_splitter_sash_ratio", "_live_right_sidebar_splitter_ratio"),
+            ("preview_input_splitter", "preview_input_splitter_sash", "preview_input_splitter_sash_ratio", "_live_preview_input_splitter_ratio"),
         )
         for splitter_attr, sash_key, ratio_key, live_attr in entries:
             ratio = getattr(self, live_attr, None)
@@ -2621,6 +2632,7 @@ class MainFrame(wx.Frame):
             ("main_splitter", "main_splitter_sash", "main_splitter_sash_ratio", "_live_main_splitter_ratio"),
             ("animation_splitter", "animation_splitter_sash", "animation_splitter_sash_ratio", "_live_animation_splitter_ratio"),
             ("right_sidebar_splitter", "right_sidebar_splitter_sash", "right_sidebar_splitter_sash_ratio", "_live_right_sidebar_splitter_ratio"),
+            ("preview_input_splitter", "preview_input_splitter_sash", "preview_input_splitter_sash_ratio", "_live_preview_input_splitter_ratio"),
         )
         if self._controls_splitter_layout_readable():
             for splitter_attr, sash_key, ratio_key, _live_attr in entries:
@@ -2776,6 +2788,16 @@ class MainFrame(wx.Frame):
                 right_sash = self._splitter_sash_from_ratio(
                     self.right_sidebar_splitter, right_ratio)
                 self.apply_splitter_sash(self.right_sidebar_splitter, right_sash)
+            if hasattr(self, "preview_input_splitter") and self.preview_input_splitter.IsSplit():
+                preview_ratio = self._resolve_layout_splitter_ratio(
+                    "preview_input_splitter_sash_ratio",
+                    "preview_input_splitter_sash",
+                    self.preview_input_splitter,
+                    self._live_preview_input_splitter_ratio,
+                    0.45)
+                preview_sash = self._splitter_sash_from_ratio(
+                    self.preview_input_splitter, preview_ratio)
+                self.apply_splitter_sash(self.preview_input_splitter, preview_sash)
         finally:
             self._applying_persisted_controls_layout_depth -= 1
         self._capture_splitter_ratios()
@@ -3119,9 +3141,14 @@ class MainFrame(wx.Frame):
         """Prefer unified infer throttling (any pose change + effective cap)."""
         return True
 
-    def _pose_any_changed(self, last_pose: List[float], current_pose: List[float]) -> bool:
+    def _pose_any_changed(
+            self,
+            last_pose: List[float],
+            current_pose: List[float],
+            *,
+            epsilon: float = POSE_PARAM_EPS) -> bool:
         for previous, current in zip(last_pose, current_pose):
-            if abs(previous - current) > POSE_PARAM_EPS:
+            if abs(previous - current) > epsilon:
                 return True
         return False
 
@@ -3161,6 +3188,8 @@ class MainFrame(wx.Frame):
 
     def get_effective_infer_cap_hz(self) -> int:
         base = self.get_mouth_infer_cap_hz()
+        if self.is_openseeface_mocap_mode():
+            base = max(base, int(self._osf_fps), MainFrame.MIN_OUT_PRESENT_HZ)
         if is_pose_interpolation_active(self.get_output_frame_interpolation_multiplier()):
             return pose_interp_effective_cap_hz(
                 base, self.get_output_frame_interpolation_multiplier())
@@ -3169,6 +3198,16 @@ class MainFrame(wx.Frame):
     def should_infer_pose(self, last_pose: Optional[List[float]], current_pose: List[float]) -> bool:
         if last_pose is None:
             return True
+        if self.is_openseeface_mocap_mode():
+            if bool(getattr(self, "_osf_pace_keyframe_committed", False)):
+                return True
+            if self._pose_non_mouth_changed(last_pose, current_pose):
+                return True
+            now_ns = time.time_ns()
+            interval_ns = int(1e9 / max(1, int(self._osf_fps)))
+            if self._last_pose_infer_time_ns is None:
+                return True
+            return now_ns - self._last_pose_infer_time_ns >= interval_ns
         reference_pose = self.output_enhancement.pose_interpolation.reference_pose_for_change_detection(
             last_pose, self.get_output_frame_interpolation_multiplier())
         if self.is_smooth_display_priority():
@@ -3189,13 +3228,13 @@ class MainFrame(wx.Frame):
             return True
         return now_ns - self._last_pose_infer_time_ns >= min_interval_ns
 
-    def schedule_async_pose_infer(self, pose_list: List[float]) -> None:
+    def schedule_async_pose_infer(self, pose_list: List[float]) -> bool:
         if self._is_closing or self.poser is None or self.torch_source_image is None:
-            return
+            return False
         with self._infer_lock:
             self._pending_infer_pose = list(pose_list)
             if self._infer_worker_active:
-                return
+                return True
             self._infer_worker_generation += 1
             generation = self._infer_worker_generation
             self._infer_worker_active = True
@@ -3205,6 +3244,7 @@ class MainFrame(wx.Frame):
             args=(generation,),
             daemon=True,
             name="tha4-pose-infer").start()
+        return True
 
     def _async_pose_infer_worker(self, generation: int) -> None:
         last_pose: Optional[List[float]] = None
@@ -3238,6 +3278,7 @@ class MainFrame(wx.Frame):
             with self._infer_lock:
                 if generation == self._infer_worker_generation:
                     self._infer_worker_active = False
+                    self._infer_worker_started_mono = 0.0
         if (
                 not self._is_closing
                 and generation == self._infer_worker_generation
@@ -3290,6 +3331,7 @@ class MainFrame(wx.Frame):
             self._infer_worker_started_mono = 0.0
         self._capture_async_active = False
         self._clear_present_compose_dedupe()
+        self._clear_output_stall_watch_state()
         if torch.cuda.is_available():
             try:
                 torch.cuda.empty_cache()
@@ -3324,6 +3366,7 @@ class MainFrame(wx.Frame):
         if self._is_closing or wx_image is None:
             return
         self._infer_stuck_heal_logged = False
+        self._output_stall_heal_logged = False
         self._note_pose_present_time()
         self.last_pose = pose_list
         self.last_output_wx_image = wx_image
@@ -3352,10 +3395,15 @@ class MainFrame(wx.Frame):
         self._last_capture_present_time_ns = time.time_ns()
 
     def _advance_pose_interpolation_after_infer(self, inferred_pose: List[float]) -> None:
+        if self.is_openseeface_mocap_mode():
+            self.output_enhancement.pose_interpolation.seed_after_real_infer(inferred_pose)
+            return
         self.output_enhancement.pose_interpolation.advance_after_infer(
             inferred_pose, self.get_output_frame_interpolation_multiplier())
 
     def resolve_scheduled_infer_pose(self, current_pose: List[float]) -> List[float]:
+        if self.is_openseeface_mocap_mode():
+            return list(current_pose)
         return self.output_enhancement.pose_interpolation.resolve_infer_pose(
             current_pose, self.get_output_frame_interpolation_multiplier())
 
@@ -4414,6 +4462,8 @@ class MainFrame(wx.Frame):
                     on_edit_end=self._overlay_edit_end,
                     on_key_nudge=self._overlay_key_nudge,
                     on_deactivate=self._overlay_deactivated,
+                    schedule_on_main=self._schedule_on_wx_thread,
+                    run_on_main_sync=self._run_on_wx_thread_sync,
                 )
             except Exception:
                 self.transparent_capture_window = None
@@ -4445,6 +4495,26 @@ class MainFrame(wx.Frame):
                 self.uniconize_window(output_frame)
         except RuntimeError:
             pass
+
+    def _schedule_on_wx_thread(self, fn: Callable[[], None]) -> None:
+        wx.CallAfter(fn)
+
+    def _run_on_wx_thread_sync(self, fn: Callable[[], Any], timeout: float = 0.25) -> Any:
+        result_box: list[Any] = []
+        done = threading.Event()
+
+        def _wrapper() -> None:
+            try:
+                result_box.append(fn())
+            except Exception:
+                result_box.append(False)
+            finally:
+                done.set()
+
+        wx.CallAfter(_wrapper)
+        done.wait(timeout)
+        return result_box[0] if result_box else False
+
 
     def _overlay_canvas_size(self) -> tuple[int, int]:
         return self.get_output_canvas_size()
@@ -4512,7 +4582,6 @@ class MainFrame(wx.Frame):
                     and cached.shape[1] == canvas_width):
                 capture_window.update_frame_rgba(cached, frame_signature=signature)
                 self._on_ulw_frame_delivered()
-                _perf_record(capture_ms=(time.perf_counter() - capture_t0) * 1000.0)
                 return
             # Single-composite source of truth: reuse the exact RGBA the present
             # path produced this frame (no wx readback, no second composite).
@@ -4534,10 +4603,8 @@ class MainFrame(wx.Frame):
                 daemon=True,
                 name="capture-premultiply").start()
         except Exception as exc:
-            _err_record(
-                "H-CAP",
-                "character_model_mediapipe_puppeteer_load_preview.py:_push_transparent_capture_from_cache",
-                exc)
+            print(
+                "ERR capture push:", exc, file=sys.stderr)
             self._capture_async_active = False
 
     def _async_premultiply_and_deliver(
@@ -4549,12 +4616,25 @@ class MainFrame(wx.Frame):
             premultiplied_bgra = _straight_rgba_to_premultiplied_bgra(rgba)
         except Exception:
             premultiplied_bgra = None
-        wx.CallAfter(
-            self._deliver_capture_premultiplied,
-            signature,
-            rgba,
-            premultiplied_bgra,
-            capture_t0)
+        capture_window = getattr(self, "transparent_capture_window", None)
+        if capture_window is not None and capture_window.is_valid():
+            try:
+                capture_window.update_frame_rgba(
+                    rgba,
+                    frame_signature=signature,
+                    premultiplied_bgra=premultiplied_bgra)
+            except Exception as exc:
+                print(f"ERR ULW deliver: {exc!r}", file=sys.stderr)
+        wx.CallAfter(self._finish_ulw_delivery, capture_t0)
+
+    def _finish_ulw_delivery(self, capture_t0: float) -> None:
+        self._capture_async_active = False
+        if self._is_closing or not self.is_ulw_output_enabled():
+            return
+        try:
+            self._on_ulw_frame_delivered()
+        except Exception as exc:
+            print(f"ERR: {exc!r}", file=sys.stderr)
 
     def _deliver_capture_premultiplied(
             self,
@@ -4573,13 +4653,9 @@ class MainFrame(wx.Frame):
                 rgba,
                 frame_signature=signature,
                 premultiplied_bgra=premultiplied_bgra)
-            self._on_ulw_frame_delivered()
-            _perf_record(capture_ms=(time.perf_counter() - capture_t0) * 1000.0)
+            self._finish_ulw_delivery(capture_t0)
         except Exception as exc:
-            _err_record(
-                "H-CAP",
-                "character_model_mediapipe_puppeteer_load_preview.py:_deliver_capture_premultiplied",
-                exc)
+            print(f"ERR: {exc!r}", file=sys.stderr)
 
     def _maybe_schedule_transparent_capture_update(self, *, immediate: bool = False) -> None:
         if not self.is_ulw_output_enabled():
@@ -4868,7 +4944,10 @@ class MainFrame(wx.Frame):
 
             # --- Layer window THIRD (only when layer blend is enabled) ---
             if self.is_layer_blend_enabled():
-                self.show_basic_layer_window()
+                if defer_ulw_sync:
+                    wx.CallAfter(self.show_basic_layer_window)
+                else:
+                    self.show_basic_layer_window()
 
             self.Show(False)
             self.bring_controls_frame_to_front()
@@ -4878,9 +4957,6 @@ class MainFrame(wx.Frame):
                 self.full_controls_expanded = False
                 self.Show(True)
                 self.Raise()
-            _startup_record(
-                "ensure_application_windows_visible (show output->controls->layer)",
-                (time.perf_counter() - ensure_start) * 1000.0)
             return
 
         min_compact_size = wx.Size(self.COMPACT_MIN_CLIENT_WIDTH, self.COMPACT_MIN_CLIENT_HEIGHT)
@@ -5171,6 +5247,11 @@ class MainFrame(wx.Frame):
                 self.schedule_dynamic_output_layout_refresh()
             if splitter is getattr(self, "right_sidebar_splitter", None):
                 self.schedule_postprocess_layout_refresh()
+            if splitter is getattr(self, "preview_input_splitter", None):
+                if hasattr(self, "webcam_capture_panel"):
+                    self.webcam_capture_panel.Refresh(False)
+                if self.is_openseeface_mocap_mode():
+                    wx.CallAfter(self._sync_openseeface_preview_window)
             self.schedule_window_geometry_save()
         event.Skip()
 
@@ -5395,6 +5476,14 @@ class MainFrame(wx.Frame):
             "last_loaded_model_path": self.last_loaded_model_path,
             "mouth_settings": persistent_mouth_settings,
             "mocap_input_mode": self.mocap_input_mode,
+            "osf_camera_index": int(self._osf_camera_index),
+            "osf_camera_label": str(self._osf_camera_label or ""),
+            "osf_udp_port": int(self._osf_udp_port),
+            "osf_visualize_level": int(self._osf_visualize_level),
+            "osf_fps": int(self._osf_fps),
+            "osf_capture_width": int(self._osf_capture_width),
+            "osf_capture_height": int(self._osf_capture_height),
+            "osf_forward_recenter_pan": bool(self._enable_osf_forward_recenter_pan),
             "mouse_blink_interval_sec": self._mouse_mocap_config.blink_interval_sec,
             "mouse_center_zone": self._mouse_mocap_config.center_zone.to_dict(),
             "mouse_horizontal_tilt_mix": self._mouse_mocap_config.horizontal_tilt_mix,
@@ -6156,9 +6245,92 @@ class MainFrame(wx.Frame):
         video_source_sizer.Add(self.video_source_status_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
 
         parent_sizer.Add(self.video_source_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+
+        self.osf_input_title = wx.StaticText(
+            parent,
+            label="OpenSeeFace 输入 / OpenSeeFace Input",
+            style=wx.ALIGN_CENTER)
+        parent_sizer.Add(self.osf_input_title, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 4)
+
+        self.osf_input_panel = wx.Panel(parent, style=wx.SIMPLE_BORDER)
+        osf_input_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.osf_input_panel.SetSizer(osf_input_sizer)
+        self.osf_input_panel.SetAutoLayout(1)
+
+        osf_camera_row = wx.BoxSizer(wx.HORIZONTAL)
+        osf_camera_row.Add(
+            wx.StaticText(self.osf_input_panel, label="摄像头 / Camera"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            4)
+        self.osf_camera_choice = wx.Choice(self.osf_input_panel, choices=[])
+        self.osf_camera_choice.SetMinSize(wx.Size(MainFrame.VIDEO_SOURCE_COLUMN_MIN_WIDTH - 24, -1))
+        saved_osf_label = str(self._osf_camera_label or "").strip()
+        if saved_osf_label:
+            self.osf_camera_choice.Append(f"{self._osf_camera_index}: {saved_osf_label}")
+        else:
+            self.osf_camera_choice.Append(f"{self._osf_camera_index}: (load model to refresh)")
+        self.osf_camera_choice.SetSelection(0)
+        self.osf_camera_choice.Bind(wx.EVT_CHOICE, self.on_osf_camera_choice_changed)
+        osf_camera_row.Add(self.osf_camera_choice, 1, wx.EXPAND)
+        osf_input_sizer.Add(osf_camera_row, 0, wx.EXPAND | wx.ALL, 6)
+
+        osf_fps_row = wx.BoxSizer(wx.HORIZONTAL)
+        osf_fps_row.Add(
+            wx.StaticText(self.osf_input_panel, label="帧率 FPS"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            4)
+        self.osf_fps_spin = wx.SpinCtrl(
+            self.osf_input_panel,
+            min=1,
+            max=60,
+            initial=self._osf_fps)
+        self.osf_fps_spin.Bind(wx.EVT_SPINCTRL, self.on_osf_capture_setting_changed)
+        osf_fps_row.Add(self.osf_fps_spin, 0, wx.ALIGN_CENTER_VERTICAL)
+        osf_input_sizer.Add(osf_fps_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+        osf_size_row = wx.BoxSizer(wx.HORIZONTAL)
+        osf_size_row.Add(
+            wx.StaticText(self.osf_input_panel, label="源尺寸 / Size"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            4)
+        osf_size_labels = [label for label, _w, _h in OSF_CAPTURE_SIZE_PRESETS]
+        self.osf_size_choice = wx.Choice(self.osf_input_panel, choices=osf_size_labels)
+        self.osf_size_choice.SetSelection(
+            osf_capture_preset_index_for_size(self._osf_capture_width, self._osf_capture_height))
+        self.osf_size_choice.Bind(wx.EVT_CHOICE, self.on_osf_capture_setting_changed)
+        osf_size_row.Add(self.osf_size_choice, 1, wx.EXPAND)
+        osf_input_sizer.Add(osf_size_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+        self.osf_refresh_cameras_button = wx.Button(
+            self.osf_input_panel,
+            label="刷新摄像头 / Refresh Cameras")
+        self.osf_refresh_cameras_button.Bind(wx.EVT_BUTTON, self.on_osf_refresh_cameras_clicked)
+        osf_input_sizer.Add(self.osf_refresh_cameras_button, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+        self.osf_status_text = wx.StaticText(
+            self.osf_input_panel,
+            label="OpenSeeFace 未启动 / Not running",
+            style=wx.ST_ELLIPSIZE_END)
+        osf_input_sizer.Add(self.osf_status_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
+
+        self.osf_forward_recenter_checkbox = wx.CheckBox(
+            self.osf_input_panel,
+            label="正视时回正位移 / Recenter pan when head faces forward")
+        self.osf_forward_recenter_checkbox.SetValue(self._enable_osf_forward_recenter_pan)
+        self.osf_forward_recenter_checkbox.Bind(
+            wx.EVT_CHECKBOX, self.on_osf_forward_recenter_changed)
+        osf_input_sizer.Add(
+            self.osf_forward_recenter_checkbox,
+            0,
+            wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
+            6)
+
+        parent_sizer.Add(self.osf_input_panel, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 4)
+
         self._init_video_source_choices_with_window()
-        wx.CallAfter(self.apply_persistent_mocap_input_mode)
-        wx.CallAfter(self.apply_mouse_mocap_controls_from_persistent)
 
     def on_mocap_input_mode_changed(self, event: wx.Event):
         if not hasattr(self, "mocap_input_mode_choice"):
@@ -6195,9 +6367,11 @@ class MainFrame(wx.Frame):
     def ensure_face_landmarker(self, *, show_dialog: bool = False) -> bool:
         if self._face_landmarker_init_failed:
             return False
+        if self._face_landmarker_init_in_progress:
+            return False
         if self.face_landmarker is not None:
             return True
-        if not face_capture_assets_ready(get_portable_root()):
+        if not mediapipe_capture_ready(get_portable_root()):
             self._face_landmarker_init_failed = True
             self._fallback_to_mouse_mocap_once(reason="face_puppeteer add-on not installed")
             return False
@@ -6210,7 +6384,7 @@ class MainFrame(wx.Frame):
                 show_rate_limited_message(
                     self.get_dialog_parent(),
                     "无法初始化 MediaPipe 面捕：\n%s\n\n"
-                    "请运行 DEPLOY.bat -> [2] face_puppeteer，或继续使用 Mouse + Audio 模式。" % exc,
+                    "请运行 DEPLOY.bat -> [3] face_puppeteer，或继续使用 Mouse + Audio 模式。" % exc,
                     "MediaPipe unavailable",
                     style=wx.OK | wx.ICON_WARNING,
                     dialog_key="face_landmarker_init_failed")
@@ -6220,22 +6394,116 @@ class MainFrame(wx.Frame):
             self._fallback_to_mouse_mocap_once(reason=str(exc))
             return False
 
-    def apply_persistent_mocap_input_mode(self):
+    def _resolve_persistent_mocap_input_mode(self) -> str:
         saved_mode = normalize_mocap_input_mode(
             self.persistent_ui_state.get("mocap_input_mode", self.mocap_input_mode))
-        if saved_mode != MOCAP_INPUT_MODE_MOUSE_AUDIO and not face_capture_assets_ready(get_portable_root()):
-            saved_mode = MOCAP_INPUT_MODE_MOUSE_AUDIO
+        portable_root = get_portable_root()
+        if saved_mode != MOCAP_INPUT_MODE_MOUSE_AUDIO and not face_capture_ready_for_mode(
+                saved_mode, portable_root):
+            if openseeface_capture_ready(portable_root):
+                saved_mode = MOCAP_INPUT_MODE_OPENSEEFACE
+            elif mediapipe_capture_ready(portable_root):
+                saved_mode = MOCAP_INPUT_MODE_MEDIAPIPE
+            else:
+                saved_mode = MOCAP_INPUT_MODE_MOUSE_AUDIO
+        return saved_mode
+
+    def _startup_mocap_input_bootstrap(self) -> None:
+        """Restore mocap UI prefs; face capture starts only after a model/portrait load."""
+        if getattr(self, "_startup_mocap_bootstrap_done", False):
+            return
+        self._startup_mocap_bootstrap_done = True
+        self.apply_mouse_mocap_controls_from_persistent()
+        self.apply_osf_controls_from_persistent()
+        self.refresh_mocap_input_mode_ui()
+
+    def _prepare_face_mocap_converter_state(self) -> None:
+        if self.is_mouse_audio_mocap_mode():
+            return
+        self.pose_converter.args.set_mouth_input_mode("face")
+        if hasattr(self.pose_converter, "mouth_input_mode_choice"):
+            self.pose_converter.mouth_input_mode_choice.SetSelection(0)
+
+    def _activate_mocap_capture_after_model_load(self) -> None:
+        """Enumerate cameras and start face capture only after a character asset is loaded."""
+        mode = normalize_mocap_input_mode(self.mocap_input_mode)
+        if mode == MOCAP_INPUT_MODE_OPENSEEFACE:
+            if not openseeface_capture_ready(get_portable_root()):
+                return
+            self._prepare_face_mocap_converter_state()
+            self.refresh_osf_camera_choices_async(reconnect_after=True)
+            return
+        if mode == MOCAP_INPUT_MODE_MEDIAPIPE:
+            if not mediapipe_capture_ready(get_portable_root()):
+                return
+            self._prepare_face_mocap_converter_state()
+            if self.face_landmarker is None and not self._face_landmarker_init_failed:
+                wx.CallAfter(self._init_face_landmarker_async)
+            self.refresh_and_autoload_video_source()
+            return
+        self.refresh_and_autoload_video_source()
+
+    def _init_face_landmarker_async(self) -> None:
+        if self.mocap_input_mode != MOCAP_INPUT_MODE_MEDIAPIPE:
+            return
+        if self.face_landmarker is not None or self._face_landmarker_init_failed:
+            return
+        if self._face_landmarker_init_in_progress:
+            return
+        if not mediapipe_capture_ready(get_portable_root()):
+            self._face_landmarker_init_failed = True
+            self._fallback_to_mouse_mocap_once(reason="face_puppeteer add-on not installed")
+            return
+        self._face_landmarker_init_in_progress = True
+
+        def worker() -> None:
+            landmarker = None
+            error: Optional[Exception] = None
+            try:
+                landmarker = create_face_landmarker()
+            except Exception as exc:
+                error = exc
+            wx.CallAfter(self._finish_face_landmarker_async_init, landmarker, error)
+
+        threading.Thread(target=worker, daemon=True, name="mp-landmarker-init").start()
+
+    def _finish_face_landmarker_async_init(
+            self,
+            landmarker,
+            error: Optional[Exception]) -> None:
+        self._face_landmarker_init_in_progress = False
+        if self.mocap_input_mode != MOCAP_INPUT_MODE_MEDIAPIPE:
+            return
+        if error is not None or landmarker is None:
+            self._face_landmarker_init_failed = True
+            if not getattr(self, "_face_landmarker_error_logged", False):
+                self._face_landmarker_error_logged = True
+                print(
+                    f"MediaPipe face landmarker unavailable: {error}",
+                    file=sys.stderr)
+            self._fallback_to_mouse_mocap_once(reason=str(error or "MediaPipe init failed"))
+            return
+        self.face_landmarker = landmarker
+        self.schedule_active_capture_timer()
+
+    def apply_persistent_mocap_input_mode(self):
+        saved_mode = self._resolve_persistent_mocap_input_mode()
         self.set_mocap_input_mode(saved_mode, persist=False, from_user=False)
 
     def is_mouse_audio_mocap_mode(self) -> bool:
         return self.mocap_input_mode == MOCAP_INPUT_MODE_MOUSE_AUDIO
+
+    def is_openseeface_mocap_mode(self) -> bool:
+        return self.mocap_input_mode == MOCAP_INPUT_MODE_OPENSEEFACE
 
     def set_mocap_input_mode(
             self,
             mode: str,
             *,
             persist: bool = True,
-            from_user: bool = False) -> bool:
+            from_user: bool = False,
+            start_osf_runtime: bool = True,
+            defer_face_landmarker: bool = False) -> bool:
         mode = normalize_mocap_input_mode(mode)
         previous_mode = self.mocap_input_mode
         if mode == previous_mode:
@@ -6243,20 +6511,53 @@ class MainFrame(wx.Frame):
             return True
 
         if mode == MOCAP_INPUT_MODE_MEDIAPIPE:
-            if not face_capture_assets_ready(get_portable_root()):
+            if not mediapipe_capture_ready(get_portable_root()):
                 if from_user:
                     show_rate_limited_message(
                         self.get_dialog_parent(),
-                        "摄像头面捕需要 face_puppeteer 可选包（MediaPipe + .task）。\n\n"
-                        "请运行 DEPLOY.bat 选择 [2] face_puppeteer，或继续使用 Mouse + Audio 模式。\n\n"
-                        "Face capture requires the face_puppeteer add-on.\n"
-                        "Run DEPLOY.bat option [2], or stay on Mouse + Audio.",
+                        "摄像头面捕 (MediaPipe) 需要 face_puppeteer 可选包。\n\n"
+                        "请运行 DEPLOY.bat 选择 [3] face_puppeteer，或改用 OpenSeeFace [2]。\n\n"
+                        "MediaPipe face capture requires the face_puppeteer add-on.\n"
+                        "Run DEPLOY.bat option [3], or use OpenSeeFace [2].",
                         "Face capture add-on required",
                         style=wx.OK | wx.ICON_INFORMATION,
                         dialog_key="face_capture_addon_required")
                 return False
-            if not self.ensure_face_landmarker(show_dialog=from_user):
+            if not defer_face_landmarker:
+                if not self.ensure_face_landmarker(show_dialog=from_user):
+                    return False
+
+        if mode == MOCAP_INPUT_MODE_OPENSEEFACE:
+            if not openseeface_capture_ready(get_portable_root()):
+                if from_user:
+                    show_rate_limited_message(
+                        self.get_dialog_parent(),
+                        "OpenSeeFace 面捕需要 openseeface 可选包（facetracker.exe）。\n\n"
+                        "请运行 DEPLOY.bat 选择 [2] openseeface，或改用 MediaPipe [3]。\n\n"
+                        "OpenSeeFace requires the openseeface add-on.\n"
+                        "Run DEPLOY.bat option [2], or use MediaPipe [3].",
+                        "OpenSeeFace add-on required",
+                        style=wx.OK | wx.ICON_INFORMATION,
+                        dialog_key="openseeface_addon_required")
                 return False
+
+        if previous_mode == MOCAP_INPUT_MODE_OPENSEEFACE:
+            self._stop_openseeface_runtime()
+        if previous_mode == MOCAP_INPUT_MODE_MEDIAPIPE or mode == MOCAP_INPUT_MODE_OPENSEEFACE:
+            self._release_video_input_for_openseeface()
+
+        if mode == MOCAP_INPUT_MODE_OPENSEEFACE:
+            self._osf_runtime_error = ""
+            self.pose_converter.args.set_mouth_input_mode("face")
+            if hasattr(self.pose_converter, "mouth_input_mode_choice"):
+                self.pose_converter.mouth_input_mode_choice.SetSelection(0)
+            self.output_enhancement.pose_interpolation.reset()
+            self._osf_input_pacer.reset()
+            self._osf_pace_keyframe_committed = False
+            self._osf_pose_converter_calibrated = False
+            if start_osf_runtime:
+                if not self._start_openseeface_runtime(from_user=from_user):
+                    return False
 
         if mode == MOCAP_INPUT_MODE_MOUSE_AUDIO:
             if from_user or self._mouth_input_mode_before_mouse_audio is None:
@@ -6277,21 +6578,375 @@ class MainFrame(wx.Frame):
 
         self.mocap_input_mode = mode
         self.refresh_mocap_input_mode_ui()
+        if mode in (MOCAP_INPUT_MODE_MEDIAPIPE, MOCAP_INPUT_MODE_OPENSEEFACE):
+            self.schedule_active_capture_timer()
         if persist:
             self.save_persistent_ui_state()
         return True
 
-    def get_mouse_mocap_status_message(self) -> str:
-        if not self.is_mouse_audio_mocap_mode():
-            return "MediaPipe 面捕 / Face capture (camera or window)"
-        audio_status = getattr(self.pose_converter, "audio_status_message", None) or "Audio pending"
-        audio_ready = self.pose_converter.args.mouth_input_mode == "audio"
-        ready_label = "ready" if audio_ready else "inactive"
-        return (
-            f"Mouse+Audio: move mouse anywhere on screen.\n"
-            f"Norm ({self._last_mouse_mocap_nx:+.2f}, {self._last_mouse_mocap_ny:+.2f}) | "
-            f"mouth audio {ready_label}\n{audio_status}"
+    def _release_video_input_for_openseeface(self) -> None:
+        """Release OpenCV camera so facetracker can open the device exclusively."""
+        self.release_video_capture()
+        with self._camera_capture_lock:
+            self._camera_capture_worker_active = False
+            self._camera_capture_latest_frame = None
+
+    def _report_openseeface_runtime_error(self, reason: str) -> None:
+        message = (reason or "OpenSeeFace failed").strip()
+        self._osf_runtime_error = message
+        if hasattr(self, "osf_status_text") and self.osf_status_text is not None:
+            self.set_wrapped_static_text_if_changed(
+                self.osf_status_text,
+                f"OpenSeeFace 错误 / Error:\n{message}")
+        print(f"OpenSeeFace error: {message}", file=sys.stderr)
+
+    def _start_openseeface_runtime(self, *, from_user: bool = False) -> bool:
+        runtime = self._osf_runtime
+        runtime.set_pose_callback(self._on_openseeface_pose_received)
+        started = runtime.start(
+            camera_index=self._osf_camera_index,
+            udp_port=self._osf_udp_port,
+            visualize_level=self._osf_visualize_level,
+            target_fps=self._osf_fps,
+            capture_width=self._osf_capture_width,
+            capture_height=self._osf_capture_height)
+        if not started:
+            error = runtime.status.last_error or "OpenSeeFace failed to start."
+            self._report_openseeface_runtime_error(error)
+            if from_user:
+                show_rate_limited_message(
+                    self.get_dialog_parent(),
+                    runtime.status.last_error or "OpenSeeFace failed to start.",
+                    "OpenSeeFace start failed",
+                    style=wx.OK | wx.ICON_WARNING,
+                    dialog_key="openseeface_start_failed")
+            return False
+        self._osf_runtime_error = ""
+        self._osf_started_mono = time.monotonic()
+        self.schedule_active_capture_timer()
+        wx.CallAfter(self._sync_openseeface_preview_window)
+        return True
+
+    def _stop_openseeface_runtime(self) -> None:
+        self._osf_runtime.stop()
+        self._osf_started_mono = 0.0
+        self._osf_input_pacer.reset()
+        self._osf_pace_keyframe_committed = False
+        self._osf_pose_converter_calibrated = False
+        if hasattr(self, "webcam_capture_panel"):
+            self.webcam_capture_panel.Refresh(False)
+
+    def _calibrate_osf_pose_converter_orientation(self) -> None:
+        if not self.is_openseeface_mocap_mode() or self.mediapipe_face_pose is None:
+            return
+        converter = getattr(self, "pose_converter", None)
+        if converter is None:
+            return
+        if converter.apply_face_orientation_calibration():
+            self._record_ui_change(
+                "OSF 朝向自动标定 / Auto-calibrated OpenSeeFace head orientation")
+
+    def _osf_forward_recenter_pan_enabled(self) -> bool:
+        return self.is_openseeface_mocap_mode() and bool(
+            getattr(self, "_enable_osf_forward_recenter_pan", True))
+
+    def _osf_runtime_head_is_near_forward(self) -> bool:
+        if not self.is_openseeface_mocap_mode():
+            return False
+        return bool(getattr(self._osf_runtime.state, "head_near_forward", False))
+
+    def on_osf_forward_recenter_changed(self, event: wx.Event) -> None:
+        if hasattr(self, "osf_forward_recenter_checkbox"):
+            self._enable_osf_forward_recenter_pan = bool(
+                self.osf_forward_recenter_checkbox.GetValue())
+        self.save_persistent_ui_state()
+        event.Skip()
+
+    def apply_osf_controls_from_persistent(self) -> None:
+        self._enable_osf_forward_recenter_pan = bool(
+            self.persistent_ui_state.get("osf_forward_recenter_pan", True))
+        if hasattr(self, "osf_forward_recenter_checkbox"):
+            self.osf_forward_recenter_checkbox.SetValue(
+                self._enable_osf_forward_recenter_pan)
+
+    def _sync_openseeface_dynamic_enhancement_motion(self) -> None:
+        if not self.is_openseeface_mocap_mode():
+            return
+        screen = getattr(self._osf_runtime.state, "latest_screen_motion", None)
+        if screen is None:
+            return
+        center_x = float(screen.center_x)
+        center_y = float(screen.center_y)
+        if (
+                self._osf_forward_recenter_pan_enabled()
+                and self._osf_runtime_head_is_near_forward()
+                and self.neutral_face_screen_motion is not None):
+            center_x = float(self.neutral_face_screen_motion.center_x)
+            center_y = float(self.neutral_face_screen_motion.center_y)
+        self.latest_face_screen_motion = FaceScreenMotion(
+            center_x=center_x,
+            center_y=center_y,
+            face_size=float(screen.face_size),
         )
+
+    def _calibrate_osf_dynamic_enhancement(
+            self,
+            *,
+            calibration_time: Optional[float] = None) -> bool:
+        if not self.is_openseeface_mocap_mode():
+            return False
+        self._sync_openseeface_dynamic_enhancement_motion()
+        motion = self.latest_face_screen_motion
+        if motion is None:
+            return False
+        time_now = time.time() if calibration_time is None else calibration_time
+        self.update_neutral_output_enhancement(motion)
+        converter = getattr(self, "pose_converter", None)
+        if (
+                converter is not None
+                and self.mediapipe_face_pose is not None
+                and hasattr(converter, "apply_face_orientation_calibration")
+                and converter.apply_face_orientation_calibration()):
+            self.last_direction_calibration_time = time_now
+        if self.mediapipe_face_pose is not None:
+            try:
+                roll_deg = extract_head_roll_degrees(self.mediapipe_face_pose)
+            except (TypeError, ValueError, IndexError):
+                roll_deg = 0.0
+            self.neutral_head_roll_deg = roll_deg
+            self.latest_head_roll_deg = roll_deg
+        self.last_scale_calibration_time = time_now
+        return True
+
+    def _calibrate_osf_after_warmup(self) -> None:
+        if not self.is_openseeface_mocap_mode():
+            return
+        self._calibrate_osf_pose_converter_orientation()
+        self._sync_openseeface_dynamic_enhancement_motion()
+        motion = self.latest_face_screen_motion
+        if motion is not None:
+            self.apply_neutral_calibration(motion)
+            self._record_ui_change(
+                "OSF 动态增强基准 / OpenSeeFace dynamic enhancement baseline")
+
+    def _on_openseeface_pose_received(self, pose: MediaPipeFacePose) -> None:
+        self._osf_input_pacer.push_latest(pose)
+        if self._osf_pose_converter_calibrated:
+            return
+        packets = int(getattr(self._osf_runtime.status, "packets_received", 0))
+        if packets < OSF_CALIBRATION_WARMUP_PACKETS:
+            return
+        self._osf_pose_converter_calibrated = True
+        wx.CallAfter(self._calibrate_osf_after_warmup)
+
+    def _apply_openseeface_paced_pose(self, pose: MediaPipeFacePose) -> None:
+        self.mediapipe_face_pose = pose
+        self.last_face_detected_time = time.time()
+        self._sync_openseeface_dynamic_enhancement_motion()
+        try:
+            self.latest_head_roll_deg = extract_head_roll_degrees(pose)
+        except (TypeError, ValueError, IndexError):
+            pass
+        self._scale_curve_dirty = True
+
+    def _update_openseeface_input_pacing(self) -> None:
+        if not self.is_openseeface_mocap_mode():
+            return
+        self._osf_input_pacer.set_target_fps(self._osf_fps)
+        paced_pose, keyframe_committed = self._osf_input_pacer.update()
+        if paced_pose is None:
+            return
+        self._apply_openseeface_paced_pose(paced_pose)
+        if keyframe_committed:
+            self._osf_pace_keyframe_committed = True
+            self._note_input_fps_tick()
+
+    def _osf_camera_label_from_choice_string(self, choice_label: str) -> str:
+        text = str(choice_label or "").strip()
+        if ":" in text:
+            return text.split(":", 1)[1].strip()
+        return text
+
+    def refresh_osf_camera_choices_async(
+            self,
+            reconnect_after: bool = False,
+            *,
+            stop_runtime_for_probe: bool = True) -> None:
+        if self._osf_camera_enum_in_progress:
+            return
+        choice = getattr(self, "osf_camera_choice", None)
+        if choice is None:
+            return
+        restart_after_enum = bool(reconnect_after)
+        if (
+                stop_runtime_for_probe
+                and self.is_openseeface_mocap_mode()
+                and self._osf_runtime.status.process_running):
+            self._stop_openseeface_runtime()
+            restart_after_enum = True
+        elif facetracker_camera_in_use():
+            return
+        self._osf_camera_reconnect_after_enum = restart_after_enum
+        self._osf_camera_enum_in_progress = True
+        if hasattr(self, "osf_status_text"):
+            self.osf_status_text.SetLabel("枚举摄像头中... / Enumerating cameras...")
+
+        portable_root = get_portable_root()
+
+        def worker() -> None:
+            cameras = list_openseeface_cameras(portable_root)
+            wx.CallAfter(self._apply_osf_camera_choices, cameras)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _maybe_openseeface_runtime_health_check(self) -> None:
+        if not self.is_openseeface_mocap_mode():
+            return
+        status = self._osf_runtime.status
+        if self._osf_started_mono <= 0.0:
+            return
+        elapsed = time.monotonic() - self._osf_started_mono
+        if status.process_running and status.packets_received > 0:
+            return
+        if elapsed < 8.0:
+            return
+        reason = status.last_error or "OpenSeeFace timeout (no UDP / process exit)"
+        if reason != self._osf_runtime_error:
+            self._report_openseeface_runtime_error(reason)
+        if not status.process_running and self._osf_started_mono > 0.0:
+            self._osf_started_mono = 0.0
+
+    def _apply_osf_camera_choices(self, cameras: list) -> None:
+        self._osf_camera_enum_in_progress = False
+        reconnect_after = bool(getattr(self, "_osf_camera_reconnect_after_enum", False))
+        self._osf_camera_reconnect_after_enum = False
+        choice = getattr(self, "osf_camera_choice", None)
+        if choice is None:
+            return
+        previous_index = int(self._osf_camera_index)
+        labels: List[str] = []
+        indices: List[int] = []
+        camera_names: List[str] = []
+        for camera in cameras:
+            labels.append(f"{camera.index}: {camera.label}")
+            indices.append(camera.index)
+            camera_names.append(str(camera.label))
+        if not labels:
+            labels = [f"{self._osf_camera_index}: (manual)"]
+            indices = [self._osf_camera_index]
+            camera_names = [self._osf_camera_label or "(manual)"]
+        choice.Clear()
+        for label in labels:
+            choice.Append(label)
+        selection = 0
+        saved_label = normalize_osf_camera_label(self._osf_camera_label)
+        if saved_label:
+            for idx, camera_name in enumerate(camera_names):
+                if normalize_osf_camera_label(camera_name) == saved_label:
+                    selection = idx
+                    break
+        else:
+            for idx, camera_index in enumerate(indices):
+                if camera_index == self._osf_camera_index:
+                    selection = idx
+                    break
+        if choice.GetCount() > 0:
+            selection = min(selection, choice.GetCount() - 1)
+            choice.SetSelection(selection)
+            self._osf_camera_index = indices[selection]
+            self._osf_camera_label = camera_names[selection]
+        if self.is_openseeface_mocap_mode() and hasattr(self, "osf_status_text"):
+            self.osf_status_text.SetLabel(self.get_openseeface_preview_status_message())
+        if reconnect_after and self.is_openseeface_mocap_mode():
+            self.save_persistent_ui_state()
+            if self._osf_camera_index != previous_index:
+                self._restart_openseeface_runtime_if_active()
+            elif not self._osf_runtime.status.process_running:
+                self._restart_openseeface_runtime_if_active()
+
+    def on_osf_refresh_cameras_clicked(self, event: wx.Event) -> None:
+        self.refresh_osf_camera_choices_async(reconnect_after=True)
+        event.Skip()
+
+    def on_osf_capture_setting_changed(self, event: wx.Event) -> None:
+        if hasattr(self, "osf_fps_spin"):
+            self._osf_fps = clamp_osf_fps(self.osf_fps_spin.GetValue())
+            self.osf_fps_spin.SetValue(self._osf_fps)
+        if hasattr(self, "osf_size_choice"):
+            preset_index = self.osf_size_choice.GetSelection()
+            if preset_index < 0:
+                preset_index = osf_capture_preset_index_for_size(
+                    self._osf_capture_width, self._osf_capture_height)
+            width, height = osf_capture_size_from_preset_index(preset_index)
+            self._osf_capture_width = width
+            self._osf_capture_height = height
+            self.osf_size_choice.SetSelection(
+                osf_capture_preset_index_for_size(width, height))
+        self.save_persistent_ui_state()
+        self._restart_openseeface_runtime_if_active()
+        event.Skip()
+
+    def _restart_openseeface_runtime_if_active(self) -> None:
+        if not self.is_openseeface_mocap_mode():
+            return
+        self._release_video_input_for_openseeface()
+        self._stop_openseeface_runtime()
+        if not self._start_openseeface_runtime(from_user=False):
+            self.refresh_mocap_input_mode_ui()
+
+    def on_osf_camera_choice_changed(self, event: wx.Event) -> None:
+        choice = getattr(self, "osf_camera_choice", None)
+        if choice is None:
+            event.Skip()
+            return
+        label = choice.GetStringSelection()
+        try:
+            self._osf_camera_index = int(label.split(":", 1)[0].strip())
+        except (TypeError, ValueError, IndexError):
+            pass
+        self._osf_camera_label = self._osf_camera_label_from_choice_string(label)
+        self.save_persistent_ui_state()
+        if self.is_openseeface_mocap_mode():
+            self._restart_openseeface_runtime_if_active()
+        event.Skip()
+
+    def get_mocap_input_mode_status_message(self) -> str:
+        if self.is_mouse_audio_mocap_mode():
+            audio_status = getattr(self.pose_converter, "audio_status_message", None) or "Audio pending"
+            audio_ready = self.pose_converter.args.mouth_input_mode == "audio"
+            ready_label = "ready" if audio_ready else "inactive"
+            return (
+                f"Mouse+Audio: move mouse anywhere on screen.\n"
+                f"Norm ({self._last_mouse_mocap_nx:+.2f}, {self._last_mouse_mocap_ny:+.2f}) | "
+                f"mouth audio {ready_label}\n{audio_status}"
+            )
+        if self.is_openseeface_mocap_mode():
+            status = self._osf_runtime.status
+            udp = "connected" if status.udp_connected else "waiting"
+            preview = status.preview_status or ("docked" if status.preview_available else "waiting window")
+            error_line = ""
+            if self._osf_runtime_error:
+                error_line = f"\nError: {self._osf_runtime_error}"
+            return (
+                f"OpenSeeFace: UDP {udp}, packets {status.packets_received}, "
+                f"{self._osf_fps} fps, {self._osf_capture_width}×{self._osf_capture_height}\n"
+                f"Preview: {preview}{error_line}"
+            )
+        return "MediaPipe 面捕 / Face capture (camera or window)"
+
+    def get_openseeface_preview_status_message(self) -> str:
+        status = self._osf_runtime.status
+        if status.preview_available:
+            return self.get_mocap_input_mode_status_message()
+        if status.preview_status:
+            return status.preview_status + "\n(OpenSeeFace 预览已对齐到左侧预览区)"
+        return (
+            "等待 OpenSeeFace 预览窗口...\n"
+            "Waiting for OpenSeeFace Visualization window..."
+        )
+
+    def get_mouse_mocap_status_message(self) -> str:
+        return self.get_mocap_input_mode_status_message()
 
     def _load_mouse_mocap_settings_from_persistent(self, data: Optional[dict] = None) -> None:
         if data is None:
@@ -6339,8 +6994,9 @@ class MainFrame(wx.Frame):
 
     def _apply_mouse_only_controls_visibility(self) -> None:
         mouse_mode = self.is_mouse_audio_mocap_mode()
+        mediapipe_mode = self.mocap_input_mode == MOCAP_INPUT_MODE_MEDIAPIPE
+        osf_mode = self.is_openseeface_mocap_mode()
         parent_sizer = getattr(self, "model_input_column_sizer", None)
-        show_video = not mouse_mode
 
         def _show_widget(widget: Optional[wx.Window], show: bool) -> None:
             if widget is None or parent_sizer is None:
@@ -6351,9 +7007,11 @@ class MainFrame(wx.Frame):
                 pass
 
         _show_widget(getattr(self, "mouse_only_controls_panel", None), mouse_mode)
-        _show_widget(getattr(self, "video_source_section_separator", None), show_video)
-        _show_widget(getattr(self, "video_source_title", None), show_video)
-        _show_widget(getattr(self, "video_source_panel", None), show_video)
+        _show_widget(getattr(self, "video_source_section_separator", None), mediapipe_mode)
+        _show_widget(getattr(self, "video_source_title", None), mediapipe_mode)
+        _show_widget(getattr(self, "video_source_panel", None), mediapipe_mode)
+        _show_widget(getattr(self, "osf_input_title", None), osf_mode)
+        _show_widget(getattr(self, "osf_input_panel", None), osf_mode)
         parent = getattr(self, "model_input_column", None)
         if parent is not None:
             try:
@@ -6464,11 +7122,14 @@ class MainFrame(wx.Frame):
             self,
             *,
             calibration_time: Optional[float] = None) -> bool:
-        """Path B manual body: camera = neutral pan/scale; mouse = ix-023 (includes path A at gaze neutral)."""
+        """Path B manual body: camera = neutral pan/scale; mouse = ix-023; OSF = face translation."""
         if self.is_mouse_audio_mocap_mode():
             return self._calibrate_mouse_dynamic_enhancement_ix023(
                 self._last_mouse_mocap_nx,
                 self._last_mouse_mocap_ny,
+                calibration_time=calibration_time)
+        if self.is_openseeface_mocap_mode():
+            return self._calibrate_osf_dynamic_enhancement(
                 calibration_time=calibration_time)
         if self.latest_face_screen_motion is None:
             return False
@@ -6566,7 +7227,12 @@ class MainFrame(wx.Frame):
         if hasattr(self, "mocap_input_mode_status_text") and self.mocap_input_mode_status_text is not None:
             self.set_wrapped_static_text_if_changed(
                 self.mocap_input_mode_status_text,
-                self.get_mouse_mocap_status_message())
+                self.get_mocap_input_mode_status_message())
+        if hasattr(self, "osf_status_text") and self.osf_status_text is not None:
+            if self.is_openseeface_mocap_mode():
+                self.set_wrapped_static_text_if_changed(
+                    self.osf_status_text,
+                    self.get_mocap_input_mode_status_message())
         self._apply_mouse_only_controls_visibility()
 
     def update_mouse_mocap_face_pose(self, time_now: float) -> None:
@@ -6762,9 +7428,6 @@ class MainFrame(wx.Frame):
                 self.webcam_capture_panel.Refresh(False)
         finally:
             self._controls_build_in_progress = False
-            _startup_record(
-                "create_controls_frame (build full controls UI)",
-                (time.perf_counter() - controls_build_t0) * 1000.0)
             self._wire_ui_change_logging()
             self._refresh_ui_change_history_display()
 
@@ -6783,7 +7446,15 @@ class MainFrame(wx.Frame):
 
         previews_row = wx.BoxSizer(wx.HORIZONTAL)
 
-        self.source_preview_column = wx.Panel(self.capture_panel)
+        self.preview_input_splitter = wx.SplitterWindow(
+            self.capture_panel,
+            style=wx.SP_LIVE_UPDATE | wx.SP_3D | wx.SP_BORDER)
+        self.preview_input_splitter.SetMinimumPaneSize(MainFrame.PREVIEW_INPUT_SPLITTER_MIN_PANE)
+        self.preview_input_splitter.SetSashGravity(0.45)
+        self.preview_input_splitter.Bind(
+            wx.EVT_SPLITTER_SASH_POS_CHANGED, self.on_column_splitter_changed)
+
+        self.source_preview_column = wx.Panel(self.preview_input_splitter)
         source_preview_sizer = wx.BoxSizer(wx.VERTICAL)
         self.source_preview_column.SetSizer(source_preview_sizer)
         self.source_preview_column.SetAutoLayout(1)
@@ -6818,11 +7489,7 @@ class MainFrame(wx.Frame):
             label="帧率 / FPS\n输入 In --\n推理 Inf --\n显示 Out --")
         source_preview_sizer.Add(self.fps_text, wx.SizerFlags(0).Expand().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 5))
 
-        previews_row.Add(self.source_preview_column, wx.SizerFlags(0).Border(wx.ALL, 5))
-
-        self.webcam_container = wx.Panel(
-            self.capture_panel,
-            size=(MainFrame.WEBCAM_PREVIEW_SIZE, MainFrame.WEBCAM_PREVIEW_SIZE + 128))
+        self.webcam_container = wx.Panel(self.preview_input_splitter)
         webcam_container_sizer = wx.BoxSizer(wx.VERTICAL)
         self.webcam_container.SetSizer(webcam_container_sizer)
         self.webcam_container.SetAutoLayout(1)
@@ -6830,10 +7497,9 @@ class MainFrame(wx.Frame):
 
         self.webcam_capture_panel = wx.Panel(
             self.webcam_container,
-            size=(MainFrame.WEBCAM_PREVIEW_SIZE, MainFrame.WEBCAM_PREVIEW_SIZE),
             style=wx.SIMPLE_BORDER)
         self.webcam_capture_panel.SetMinSize(
-            wx.Size(MainFrame.WEBCAM_PREVIEW_SIZE, MainFrame.WEBCAM_PREVIEW_SIZE))
+            wx.Size(MainFrame.WEBCAM_PREVIEW_MIN_SIZE, MainFrame.WEBCAM_PREVIEW_MIN_SIZE))
         self.webcam_capture_panel.SetBackgroundColour(MainFrame.PREVIEW_IDLE_BACKGROUND)
         self.webcam_capture_panel.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.webcam_capture_panel.SetDoubleBuffered(True)
@@ -6849,18 +7515,32 @@ class MainFrame(wx.Frame):
             style=wx.ALIGN_CENTER)
         webcam_container_sizer.Add(
             self.webcam_preview_caption_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
-        webcam_container_sizer.Add(self.webcam_capture_panel, wx.SizerFlags(0).FixedMinSize().Border(wx.ALL, 5))
+        webcam_container_sizer.Add(self.webcam_capture_panel, 1, wx.EXPAND | wx.ALL, 5)
         self.ui_change_history_text = wx.StaticText(
             self.webcam_container,
             label="最近改动 / Recent UI\n—\n—\n—")
         webcam_container_sizer.Add(
             self.ui_change_history_text,
             wx.SizerFlags(0).Expand().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 5))
-        previews_row.Add(
-            self.webcam_container,
-            wx.SizerFlags(0).FixedMinSize().Border(wx.ALL, 5))
+
+        if not self.preview_input_splitter.IsSplit():
+            preview_ratio = self._resolve_persisted_splitter_sash_ratio(
+                "preview_input_splitter_sash_ratio")
+            if preview_ratio is not None:
+                preview_sash = self._splitter_sash_from_ratio(
+                    self.preview_input_splitter, preview_ratio)
+            else:
+                preview_sash = self._resolve_persisted_splitter_sash(
+                    "preview_input_splitter_sash",
+                    MainFrame.SOURCE_PREVIEW_SIZE + 52)
+            self.preview_input_splitter.SplitVertically(
+                self.source_preview_column,
+                self.webcam_container,
+                sashPosition=preview_sash)
+
+        previews_row.Add(self.preview_input_splitter, 1, wx.EXPAND | wx.ALL, 5)
         self.create_preview_calibration_controls(self.capture_panel, previews_row)
-        self.capture_panel_sizer.Add(previews_row, 0, wx.EXPAND)
+        self.capture_panel_sizer.Add(previews_row, 1, wx.EXPAND)
 
         self.rotation_labels = {}
         self.rotation_value_labels = {}
@@ -7574,13 +8254,15 @@ class MainFrame(wx.Frame):
         return next_ts
 
     def release_video_capture(self):
-        if getattr(self, "video_capture", None) is not None:
-            try:
-                self.video_capture.release()
-            except Exception:
-                pass
-        self.video_capture = None
-        self.current_video_capture_api = None
+        with self._camera_capture_lock:
+            if getattr(self, "video_capture", None) is not None:
+                try:
+                    self.video_capture.release()
+                except Exception:
+                    pass
+            self.video_capture = None
+            self.current_video_capture_api = None
+            self._camera_capture_latest_frame = None
         self._reset_mediapipe_video_timestamp()
 
     def schedule_active_capture_timer(self):
@@ -7637,6 +8319,16 @@ class MainFrame(wx.Frame):
                     return None
                 return frame.copy()
 
+        if self.video_source_kind == "camera":
+            # VideoCapture.read() can block the camera driver for minutes; keep it
+            # on a background worker (latest-wins) like window capture.
+            self._ensure_camera_capture_worker()
+            with self._camera_capture_lock:
+                frame = self._camera_capture_latest_frame
+                if frame is None:
+                    return None
+                return frame.copy()
+
         if self.video_source_kind == "image":
             if not self._image_file_path:
                 return None
@@ -7645,6 +8337,7 @@ class MainFrame(wx.Frame):
         if self.video_capture is None or not self.video_capture.isOpened():
             return None
 
+        # Video file sources stay on the UI thread (short reads); camera uses worker.
         ok, frame = self.video_capture.read()
         if not ok and self.video_source_kind == "file":
             try:
@@ -7733,6 +8426,67 @@ class MainFrame(wx.Frame):
                 side = min(client.x, client.y)
                 return wx.Size(side, side)
         return wx.Size(MainFrame.WEBCAM_PREVIEW_SIZE, MainFrame.WEBCAM_PREVIEW_SIZE)
+
+    def _get_webcam_preview_viewport_client_rect(self) -> Optional[tuple[int, int, int, int]]:
+        panel = getattr(self, "webcam_capture_panel", None)
+        if panel is None or not panel.IsShownOnScreen():
+            return None
+        client = panel.GetClientSize()
+        if client.x <= 0 or client.y <= 0:
+            return None
+        viewport_side = min(client.x, client.y)
+        draw_x = (client.x - viewport_side) // 2
+        draw_y = (client.y - viewport_side) // 2
+        return draw_x, draw_y, viewport_side, viewport_side
+
+    def _get_webcam_preview_viewport_screen_rect(self) -> Optional[tuple[int, int, int, int]]:
+        panel = getattr(self, "webcam_capture_panel", None)
+        viewport = self._get_webcam_preview_viewport_client_rect()
+        if panel is None or viewport is None:
+            return None
+        offset_x, offset_y, box_w, box_h = viewport
+        screen_origin = panel.ClientToScreen(wx.Point(offset_x, offset_y))
+        return screen_origin.x, screen_origin.y, box_w, box_h
+
+    def _is_openseeface_preview_docked(self) -> bool:
+        return (
+            self.is_openseeface_mocap_mode()
+            and self._osf_runtime.status.preview_available
+            and self._osf_runtime.get_preview_hwnd() is not None)
+
+    def _sync_openseeface_preview_window(self) -> bool:
+        if not self.is_openseeface_mocap_mode():
+            self._osf_runtime.hide_preview_window()
+            return False
+        if not self.is_capture_preview_visible():
+            self._osf_runtime.hide_preview_window()
+            return False
+        panel = getattr(self, "webcam_capture_panel", None)
+        if panel is None:
+            self._osf_runtime.hide_preview_window()
+            return False
+        try:
+            if not panel.IsShownOnScreen():
+                self._osf_runtime.hide_preview_window()
+                return False
+        except RuntimeError:
+            return False
+        viewport = self._get_webcam_preview_viewport_screen_rect()
+        if viewport is None:
+            self._osf_runtime.hide_preview_window()
+            return False
+        screen_x, screen_y, box_w, box_h = viewport
+        try:
+            return self._osf_runtime.sync_preview_window_placement(
+                screen_x=screen_x,
+                screen_y=screen_y,
+                box_width=box_w,
+                box_height=box_h,
+                content_width=self._osf_capture_width,
+                content_height=self._osf_capture_height,
+            )
+        except (OSError, RuntimeError):
+            return False
 
     def _ensure_webcam_capture_bitmap_size(self) -> int:
         target = self._webcam_preview_target_size()
@@ -7918,6 +8672,7 @@ class MainFrame(wx.Frame):
                                  api_preference: Optional[int] = None):
         self.release_video_capture()
         self.video_source_kind = "camera"
+        self._last_camera_index = int(cam_index)
         self._image_file_path = None
         self._last_good_webcam_bgr_frame = None
         self._window_invalid_autoswitch_attempted = False
@@ -7951,6 +8706,7 @@ class MainFrame(wx.Frame):
                     self._last_good_webcam_bgr_frame = warmup_frame
                     self.update_video_source_status_text(
                         f"已连接 / Connected: index {cam_index}, api {backend_api}")
+                    self._ensure_camera_capture_worker()
                     self.schedule_active_capture_timer()
                     self.save_persistent_ui_state()
                     self.update_last_window_capture_text()
@@ -8571,14 +9327,22 @@ class MainFrame(wx.Frame):
         if event.IsShown():
             self._ensure_webcam_capture_bitmap_size()
             self.webcam_capture_panel.Refresh(False)
+            if self.is_openseeface_mocap_mode():
+                self._sync_openseeface_preview_window()
+        elif self.is_openseeface_mocap_mode():
+            self._osf_runtime.hide_preview_window()
         event.Skip()
 
     def on_webcam_capture_panel_size(self, event: wx.SizeEvent) -> None:
         self._ensure_webcam_capture_bitmap_size()
         self.webcam_capture_panel.Refresh(False)
+        if self.is_openseeface_mocap_mode():
+            self._sync_openseeface_preview_window()
         event.Skip()
 
     def paint_webcam_capture_panel(self, event: wx.Event) -> None:
+        if self._is_openseeface_preview_docked():
+            return
         panel = self.webcam_capture_panel
         client = panel.GetClientSize()
         if client.x <= 0 or client.y <= 0:
@@ -8679,10 +9443,6 @@ class MainFrame(wx.Frame):
         if getattr(self, "output_frame", None) is not None:
             self.output_frame.result_image_panel.Refresh(False)
         wx.CallAfter(self._post_show_controls_setup)
-        _startup_record(
-            "show_full_controls_window (build + show all windows)",
-            (time.perf_counter() - show_start_time) * 1000.0,
-            defer_ulw_sync=defer_ulw_sync)
 
     def show_compact_launcher(self):
         if not self._restoring_window_geometry:
@@ -8707,6 +9467,19 @@ class MainFrame(wx.Frame):
             *,
             calibration_time: Optional[float] = None) -> bool:
         """Path A only: converter head orientation; never resets output dynamic enhancement."""
+        if self.is_openseeface_mocap_mode():
+            if self.mediapipe_face_pose is None:
+                self.refresh_auto_transform_status("NO FACE")
+                return False
+            if not self.pose_converter.apply_face_orientation_calibration():
+                self.refresh_auto_transform_status("NO FACE")
+                return False
+            time_now = time.time() if calibration_time is None else calibration_time
+            self.last_direction_calibration_time = time_now
+            self.refresh_auto_transform_status(
+                "READY" if self.enable_auto_transform_checkbox.GetValue() else "OFF")
+            self.save_persistent_ui_state()
+            return True
         if self.latest_face_screen_motion is None:
             self.refresh_auto_transform_status("NO FACE")
             return False
@@ -8797,7 +9570,7 @@ class MainFrame(wx.Frame):
             if self.active_image_source.load_asset(self, png_path):
                 self.update_load_model_buttons()
                 self.save_persistent_ui_state()
-                self.refresh_and_autoload_video_source()
+                self._activate_mocap_capture_after_model_load()
         file_dialog.Destroy()
         event.Skip()
 
@@ -8830,7 +9603,7 @@ class MainFrame(wx.Frame):
             switch_image_source(self, IMAGE_SOURCE_THA3)
         if self.active_image_source.load_asset(self, resolved_path):
             self.update_load_model_buttons()
-            self.refresh_and_autoload_video_source()
+            self._activate_mocap_capture_after_model_load()
         event.Skip()
 
     def get_dialog_parent(self) -> wx.Window:
@@ -8997,8 +9770,8 @@ class MainFrame(wx.Frame):
     def maybe_apply_periodic_direction_calibration(self):
         self.try_apply_auto_forward_gaze_calibration(time.time(), respect_interval=True)
 
-    def maybe_apply_periodic_scale_calibration(self, latest_motion: FaceScreenMotion):
-        """Periodic auto-click of UI-A02/A10 (camera path B only; mouse uses UI-B07)."""
+    def maybe_apply_periodic_scale_calibration(self) -> None:
+        """Periodic auto UI-A02/A10 (camera + OSF); mouse uses UI-B07."""
         if self.is_mouse_audio_mocap_mode():
             return
         if not self.enable_scale_calibration_checkbox.GetValue():
@@ -9205,13 +9978,10 @@ class MainFrame(wx.Frame):
         old_scale = self.display_scale
         old_rotation_deg = self.display_rotation_deg
 
-        # Periodic "Calibrate Forward Gaze" recalibrates the pose_converter head
-        # orientation offsets, which affect rendering regardless of dynamic
-        # enhancement. Run it here, BEFORE the enabled branch, so it keeps
-        # working when auto-transform is OFF (it used to sit only inside the
-        # enabled branch and silently stopped). Its own enable-checkbox +
-        # interval guards live in try_apply_auto_forward_gaze_calibration.
+        # Periodic calibrations run before the enabled branch so they keep working
+        # when auto-transform is OFF (same fix as forward-gaze in f-066).
         self.maybe_apply_periodic_direction_calibration()
+        self.maybe_apply_periodic_scale_calibration()
 
         if not enabled:
             target_offset_x = 0.0
@@ -9225,11 +9995,6 @@ class MainFrame(wx.Frame):
             if latest_motion is not None:
                 if self.neutral_face_screen_motion is None:
                     self.apply_neutral_calibration(latest_motion)
-                else:
-                    # Direction calibration now runs unconditionally above;
-                    # scale calibration stays here (needs neutral + live motion
-                    # and is meaningful only while dynamic enhancement is on).
-                    self.maybe_apply_periodic_scale_calibration(latest_motion)
                 neutral_motion = self.neutral_face_screen_motion
                 target_offset_x = (latest_motion.center_x - neutral_motion.center_x) * self.move_x_gain_spin.GetValue()
                 target_offset_y = (latest_motion.center_y - neutral_motion.center_y) * self.move_y_gain_spin.GetValue()
@@ -9285,7 +10050,24 @@ class MainFrame(wx.Frame):
             self.update_mouse_mocap_face_pose(time_now)
             if self.should_update_capture_preview_ui(time_now):
                 self._last_preview_ui_time = time_now
-                self.draw_capture_status_message(self.get_mouse_mocap_status_message())
+                self.draw_capture_status_message(self.get_mocap_input_mode_status_message())
+            self.schedule_active_capture_timer()
+            return
+
+        if self.is_openseeface_mocap_mode():
+            self._maybe_openseeface_runtime_health_check()
+            self._update_openseeface_input_pacing()
+            preview_docked = False
+            if self._capture_frame_serial % 3 == 0:
+                preview_docked = self._sync_openseeface_preview_window()
+            else:
+                preview_docked = self._is_openseeface_preview_docked()
+            if self.should_update_capture_preview_ui(time_now):
+                self._last_preview_ui_time = time_now
+                if not preview_docked:
+                    self.draw_capture_status_message(self.get_openseeface_preview_status_message())
+            if self._capture_frame_serial % 12 == 0:
+                self.refresh_mocap_input_mode_ui()
             self.schedule_active_capture_timer()
             return
 
@@ -9365,9 +10147,13 @@ class MainFrame(wx.Frame):
                     and self._capture_frame_serial == self._last_mediapipe_capture_serial):
                 self.schedule_active_capture_timer()
                 return
-            if self.face_landmarker is None and not self.ensure_face_landmarker(show_dialog=False):
-                self.schedule_active_capture_timer()
-                return
+            if self.face_landmarker is None:
+                if self._face_landmarker_init_in_progress:
+                    self.schedule_active_capture_timer()
+                    return
+                if not self.ensure_face_landmarker(show_dialog=False):
+                    self.schedule_active_capture_timer()
+                    return
             self._last_mediapipe_process_time = time_now
             self._last_mediapipe_capture_serial = self._capture_frame_serial
             mocap_frame = bgr_frame
@@ -9469,11 +10255,7 @@ class MainFrame(wx.Frame):
                     frame = None
                     if not getattr(self, "_window_capture_read_error", None):
                         self._window_capture_read_error = repr(exc)
-                        _err_record(
-                            "H-WINCAP",
-                            "character_model_mediapipe_puppeteer_load_preview.py:_window_capture_worker",
-                            exc,
-                            data={"hwnd": hwnd})
+                        print(f"ERR: {exc!r}", file=sys.stderr)
                 elapsed = time.perf_counter() - start
                 if elapsed >= MainFrame.WINDOW_CAPTURE_STALL_SEC:
                     window_capture.invalidate_capture_method_cache(hwnd)
@@ -9484,6 +10266,7 @@ class MainFrame(wx.Frame):
                     with self._window_capture_lock:
                         self._window_capture_latest_frame = frame
                         self._window_capture_frame_serial += 1
+                        serial = self._window_capture_frame_serial
                 sleep_for = interval - (time.perf_counter() - start)
                 if sleep_for > 0:
                     time.sleep(sleep_for)
@@ -9492,6 +10275,62 @@ class MainFrame(wx.Frame):
                 self._window_capture_worker_active = False
                 self._window_capture_latest_frame = None
                 self._window_capture_frame_serial = 0
+
+    def _ensure_camera_capture_worker(self) -> None:
+        """Start background camera read loop (latest-wins, off UI thread)."""
+        if self._is_closing or self.video_source_kind != "camera":
+            return
+        with self._camera_capture_lock:
+            if self._camera_capture_worker_active:
+                return
+            capture = self.video_capture
+            if capture is None or not capture.isOpened():
+                return
+            self._camera_capture_worker_active = True
+        threading.Thread(
+            target=self._camera_capture_worker,
+            daemon=True,
+            name="camera-capture").start()
+
+    def _camera_capture_worker(self) -> None:
+        interval = MainFrame.CAPTURE_PROCESS_INTERVAL_MS / 1000.0
+        try:
+            while not self._is_closing and self.video_source_kind == "camera":
+                with self._camera_capture_lock:
+                    capture = self.video_capture
+                if capture is None or not capture.isOpened():
+                    break
+                start = time.perf_counter()
+                try:
+                    ok, frame = capture.read()
+                except Exception as exc:
+                    ok, frame = False, None
+                    if not getattr(self, "_camera_capture_read_error", None):
+                        self._camera_capture_read_error = repr(exc)
+                        print(f"ERR camera read: {exc!r}", file=sys.stderr)
+                elapsed = time.perf_counter() - start
+                if not ok or frame is None:
+                    sleep_for = interval - (time.perf_counter() - start)
+                    if sleep_for > 0:
+                        time.sleep(sleep_for)
+                    continue
+                normalized = self.normalize_bgr_frame(frame)
+                if normalized is None:
+                    sleep_for = interval - (time.perf_counter() - start)
+                    if sleep_for > 0:
+                        time.sleep(sleep_for)
+                    continue
+                with self._camera_capture_lock:
+                    self._camera_capture_latest_frame = normalized
+                    self._camera_worker_frame_serial += 1
+                    serial = self._camera_worker_frame_serial
+                sleep_for = interval - (time.perf_counter() - start)
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
+        finally:
+            with self._camera_capture_lock:
+                self._camera_capture_worker_active = False
+                self._camera_capture_latest_frame = None
 
     def _finish_mediapipe_detect(self, detection_result) -> None:
         if self._is_closing or detection_result is None:
@@ -10248,10 +11087,6 @@ class MainFrame(wx.Frame):
                 self.refresh_output_frame_chrome()
                 self._last_chrome_background_signature = background_signature
             self._notify_output_panel_refresh()
-        _perf_record(
-            present_ms=(time.perf_counter() - present_t0) * 1000.0,
-            fast_present=fast_affine_only,
-            stages=getattr(self, "_last_present_stages", None))
 
     def draw_result_wx_image(
             self,
@@ -10321,6 +11156,9 @@ class MainFrame(wx.Frame):
         if self.poser is None:
             return "no_model"
 
+        if self.is_openseeface_mocap_mode():
+            self._update_openseeface_input_pacing()
+
         if self.mediapipe_face_pose is None:
             return "no_face"
 
@@ -10339,7 +11177,9 @@ class MainFrame(wx.Frame):
 
         if need_infer:
             infer_pose = self.resolve_scheduled_infer_pose(current_pose)
-            self.schedule_async_pose_infer(infer_pose)
+            if self.schedule_async_pose_infer(infer_pose):
+                if self.is_openseeface_mocap_mode():
+                    self._osf_pace_keyframe_committed = False
 
         if self.last_banner_text is not None:
             self.last_banner_text = None
@@ -10541,11 +11381,7 @@ class MainFrame(wx.Frame):
                 latest_face_screen_motion, last_face_detected_time)
             self.refresh_auto_transform_status("READY" if self.enable_auto_transform_checkbox.GetValue() else "OFF")
         except Exception as exc:
-            _err_record(
-                "H-LOAD",
-                "character_model_mediapipe_puppeteer_load_preview.py:load_model_from_path",
-                exc,
-                data={"model_path": resolved_path})
+            print(f"ERR load model: {exc!r}", file=sys.stderr)
             self.refresh_model_loaded_ui_state()
             message_dialog = wx.MessageDialog(
                 self.get_dialog_parent(),
@@ -10559,16 +11395,14 @@ class MainFrame(wx.Frame):
         try:
             self.render_default_pose_load_preview()
         except Exception as exc:
-            _err_record(
-                "H-LOAD",
-                "character_model_mediapipe_puppeteer_load_preview.py:render_default_pose_load_preview",
-                exc)
+            print(f"ERR: {exc!r}", file=sys.stderr)
         if hasattr(self, "source_image_panel"):
             self.source_image_panel.Update()
         if getattr(self, "output_frame", None) is not None and self.output_frame:
             self.output_frame.result_image_panel.Update()
         self.refresh_basic_layer_window_if_visible()
-        self.refresh_and_autoload_video_source()
+        self._clear_output_stall_watch_state()
+        self._activate_mocap_capture_after_model_load()
         return True
 
     def load_model(self, event: wx.Event):
@@ -10660,16 +11494,12 @@ def create_face_landmarker():
 if __name__ == "__main__":
     try:
         _main_t0 = time.perf_counter()
-        _install_debug_excepthook()
         set_windows_app_user_model_id()
         os.environ.setdefault("GLOG_minloglevel", "3")
         os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         print("THA4 Load Preview script:", os.path.abspath(__file__), file=sys.stderr)
         print("Using device:", device, file=sys.stderr)
-        _startup_record(
-            "main (imports done, before MainFrame)",
-            (time.perf_counter() - _main_t0) * 1000.0)
 
         pose_converter = MediaPoseFacePoseConverter00()
 
@@ -10684,6 +11514,8 @@ if __name__ == "__main__":
         main_frame.display_timer.Start(MainFrame.DISPLAY_PRESENT_INTERVAL_MS)
         main_frame.animation_timer.Start(33)
         main_frame.ui_anim_timer.Start(MainFrame.UI_ANIM_REFRESH_INTERVAL_MS)
+        main_frame.output_stall_watch_timer.Start(
+            int(MainFrame.OUTPUT_STALL_SAMPLE_INTERVAL_SEC * 1000))
         app.MainLoop()
     except Exception:
         raise

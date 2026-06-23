@@ -71,7 +71,7 @@
 | **面捕子系统** | MediaPipe 创建、摄像头/窗口捕获连接、`face_puppeteer` 初始化 |
 | **图层系统** | 图层状态还原、资源读盘、首次 compose |
 
-以上可在 UI 就绪后继续，但须 **异步/按需**，不得卡住首屏。验收看 `E:\debug-3353ed.log` 中 `runId=startup`、阶段 **`startup_show_full_controls (UI ready…)`** 的 `ms` ≤ 10000。TRT 编译、NN 权重首次加载等属 **慢任务（≤10min + 进度 ETA）**，与主 UI 10s 为两条独立预算。详见 `e:\record\easyvtuberstudio条目设计手册.md` **`f-057`**。
+以上可在 UI 就绪后继续，但须 **异步/按需**，不得卡住首屏。验收以 **控制窗 + 输出窗可见、控件可点** 为准（主 UI 壳 ≤10s）；不再依赖 `debug-3353ed.log` 埋点。TRT 编译、NN 权重首次加载等属 **慢任务（≤10min + 进度 ETA）**，与主 UI 10s 为两条独立预算。详见 `e:\record\easyvtuberstudio条目设计手册.md` **`f-057`**。
 
 ---
 
@@ -130,30 +130,76 @@
 
 ---
 
-### Q5g：为什么不让我用面捕（摄像头 / MediaPipe）？
+### Q5g：为什么不让我用面捕（摄像头）？
 
 **A：** **摄像头面捕是独立可选模块**，不包含在默认的 **[1] basic_run** 里。
 
 | 模式 | 需要安装 |
 |------|----------|
 | **Mouse + Audio**（鼠标+麦克风口型，无摄像头） | 仅 **[1] basic_run** |
-| **Face capture (MediaPipe)**（摄像头 / 窗口捕获面捕） | 再加 **[2] face_puppeteer** |
+| **Face capture (OpenSeeFace)**（facetracker 独立采摄像头） | **[2] openseeface** |
+| **Face capture (MediaPipe)**（EVS 窗口/摄像头 + MediaPipe） | **[3] face_puppeteer** |
 
-未装 **[2]** 时，软件会提示运行 **`DEPLOY.bat`** 并勾选面捕档，或继续使用 **Mouse + Audio**。这不是 bug，是 CORE 瘦包设计：面捕环境约 **3–4 GB**，需用户自行选择安装。
+**[2] 与 [3] 二选一即可** 使用摄像头面捕。未装对应档位时，软件会提示运行 **`DEPLOY.bat`**，或继续使用 **Mouse + Audio**。
 
 ---
 
-### Q5a：DEPLOY 五档分别装什么？
+### Q5g-osf：OpenSeeFace 模式下左侧预览黑屏？
+
+**A：** OpenSeeFace 面捕由 `facetracker.exe` 自己打开摄像头；左侧小窗通过 **窗口捕获** 镜像 **`OpenSeeFace Visualization`** 窗口（需 `-v≥1`，EVS 默认 `-v 3`）。
+
+1. 确认 **DEPLOY [2] openseeface** 已装且面捕模式为 **OpenSeeFace**  
+2. 若仅有状态文字、无画面：等 15s 内窗口出现；仍无则查看是否被安全软件拦截 `facetracker.exe`  
+3. UDP 面捕与预览独立：UDP 正常时角色仍会动，即使预览暂时黑屏
+
+---
+
+### Q5g-osf-blink：OpenSeeFace 有时眨不上眼 / 快眨眼没反应？
+
+**结论：属实，且为性能与功能的已知取舍，不算 bug。**
+
+**原因（与代码一致）：**
+
+| 因素 | 典型值 | 说明 |
+|------|--------|------|
+| OSF 默认追踪帧率 | **12 fps**（`OSF_DEFAULT_FPS`） | 约每 **83 ms** 一帧 UDP 姿态 |
+| 人眼单次眨眼时长 | 约 **100–250 ms** | 快眨眼闭合峰可能窄于采样间隔 |
+| 输入 pacer | `OpenSeeFaceInputPacer` | 按 `osf_fps` 均匀出帧；`push_latest` 仅保留最新包，中间帧可合并丢失 |
+| 采集定时器 | `CAPTURE_PROCESS_INTERVAL_MS = 66` | 面捕面板约 **15 Hz** 驱动 pacing，与 OSF 帧率共同限制时间分辨率 |
+
+当眨眼快于面捕有效采样率时，闭合峰值可能落在两帧之间，角色侧看不到完整闭眼——这是 **低帧率换低 CPU/稳定** 的预期结果，不是映射错误或程序故障。
+
+**不算 bug 的边界：**
+
+- 偶发、快眨眼漏掉 → **正常取舍**
+- 持续闭眼/慢眨仍无反应 → 查眼皮 AU、瞳孔门控或校准（见眼部动作梳理）；或提高 FPS 后再试
+
+**可缓解（仍属取舍）：**
+
+1. Model Input → OpenSeeFace → **FPS** 提高到 **24–30**（`clamp_osf_fps` 上限 60；越高 CPU 与 facetracker 负载越大）
+2. 需要可靠眨眼展示时，用 **Mouse + Audio** 模式的程序化眨眼，或放慢眨眼幅度/时长
+3. 不要为「必捕每一次快眨」单独加 bug 单——除非在提高 FPS 后仍 **稳定** 复现同一输入无输出
+
+**2026-06-18 补充（单眼 wink 丢失修复）：**
+
+- **根因**：`OSF_EYE_ACTIVE_THRESHOLD` 过高（0.32）使轻 wink 被判为 `open`；`refine_osf_eye_motion_temporal` 曾把非对称闭眼合并为 `blink_both`；pacer 线性插值 + 低 fps 抹掉峰值。  
+- **已修**：先判左右不对称再判双眼；wink 不参与双眼时序合并；眨眼 blendshape **hold**（wink 0.20s / blink 0.11s）；pacer lerp 对 `eyeBlinkLeft/Right` 取 **max**；OSF 推理在眼/头变化时立即触发。  
+- 极快眨仍可能漏（见上表取舍）；**刻意单眼 wink** 应可再现。
+
+---
+
+### Q5a：DEPLOY 六档分别装什么？
 
 **A：**
 
 | 档位 | 内容 |
 |------|------|
 | **[1] basic_run** | `workspace\student_venv`（torch + wx + matplotlib），够 **Mouse + Audio** |
-| **[2] face_puppeteer** | `addons\face_puppeteer\venv` + MediaPipe `.task`，摄像头面捕 |
-| **[3] tha3_models** | THA3 立绘 `.pt` |
-| **[4] tha4_training** | Teacher 权重 + pose 数据集 |
-| **[5] output_enhancement** | onnxruntime + pyanime4k；从 HF Bucket 拉取 `data/ezvtb_nn/` ONNX，复制到 `addons\output_enhancement\ezvtb_data\` |
+| **[2] openseeface** | `addons\openseeface\Binary\facetracker.exe` + models |
+| **[3] face_puppeteer** | `addons\face_puppeteer\venv` + MediaPipe `.task` |
+| **[4] tha3_models** | THA3 立绘 `.pt` |
+| **[5] tha4_training** | Teacher 权重 + pose 数据集 |
+| **[6] output_enhancement** | onnxruntime + pyanime4k；从 HF Bucket 拉取 `data/ezvtb_nn/` ONNX |
 
 详见 [DEPLOY.md](DEPLOY.md)、[ADDONS_LAYOUT.md](ADDONS_LAYOUT.md)。
 

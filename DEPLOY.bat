@@ -27,14 +27,15 @@ echo ============================================================
 echo.
 echo  Repo root: %PORTABLE_ROOT%
 echo.
-echo  Five independent tiers (Y/N each; Enter = default):
+echo  Six tiers - enter numbers when prompted (e.g. 1, 2 6, or 136):
 echo    [1] basic_run           - Mouse + THA4 Student (minimal PyTorch + wx)
-echo    [2] face_puppeteer      - Camera face capture (MediaPipe)
-echo    [3] tha3_models         - THA3 portrait weights
-echo    [4] tha4_training       - THA4 teacher + pose dataset
-echo    [5] output_enhancement  - NN super-res / RIFE / ORT (optional TensorRT)
+echo    [2] openseeface         - OpenSeeFace face capture
+echo    [3] face_puppeteer      - MediaPipe face capture
+echo    [4] tha3_models         - THA3 portrait weights
+echo    [5] tha4_training       - THA4 teacher + pose dataset
+echo    [6] output_enhancement  - NN super-res / RIFE / ORT (optional TensorRT)
 echo.
-echo  Press Enter on every question = install [1] only (recommended first time).
+echo  Press Enter at tier prompt = install [1] only (recommended first time).
 echo  CORE ZIP already includes THA4 Student (bai).
 echo.
 echo  Requires internet. [1] ~2-4 GB; all tiers ~15 GB. May take 10-40 min.
