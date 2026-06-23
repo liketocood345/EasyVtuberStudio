@@ -1,6 +1,6 @@
 # Hugging Face Bucket 大文件镜像与完整发行（维护者）
 
-面向维护者：**liketocode789/EasyVtuberStudio** 桶既是 **完整可下载的 EasyVtuberStudio 项目**（用户 `hf buckets sync` 到本地即可 `DEPLOY.bat`），也是 GitHub CORE 瘦包的 **大文件补充源**（DEPLOY 档位 [5] 等从此拉取 `data/ezvtb_nn/`）。
+面向维护者：**liketocode789/EasyVtuberStudio** 桶既是 **完整可下载的 EasyVtuberStudio 项目**（用户 `hf buckets sync` 到本地即可 `DEPLOY.bat`），也是 GitHub CORE 瘦包的 **大文件补充源**（DEPLOY 档位 [2] `addons/openseeface/`、[5] `data/ezvtb_nn/` 等从此拉取）。
 
 **Bucket 页面：** https://huggingface.co/buckets/liketocode789/EasyVtuberStudio  
 **Bucket ID：** `liketocode789/EasyVtuberStudio`
@@ -13,17 +13,21 @@
 
 | 位置 | 放什么 | 说明 |
 |------|--------|------|
-| **GitHub `main`（CORE ZIP）** | 代码、exe、示例角色、DEPLOY 脚本 | 瘦包；**不含** `data/ezvtb_nn/*.onnx` |
-| **HF Bucket** | **完整项目树**（与 CORE 同步 + 已内置 `data/ezvtb_nn/`） | 用户可 `hf buckets sync` 整目录下载即用；亦供 GitHub 瘦包 DEPLOY 拉取大文件 |
+| **GitHub `main`（CORE ZIP）** | 代码、exe、示例角色、DEPLOY 脚本 | 瘦包；**不含** `data/ezvtb_nn/*.onnx`、`addons/openseeface/` |
+| **HF Bucket** | **完整项目树**（与 CORE 同步 + 已内置 `data/ezvtb_nn/`、`addons/openseeface/`） | 用户可 `hf buckets sync` 整目录下载即用；亦供 GitHub 瘦包 DEPLOY 拉取大文件 |
 | **用户本机 `addons/`** | DEPLOY 安装的可选包 | 不入 Git |
 
-从 CORE 迁出的大文件：**`data/ezvtb_nn/`**（档位 **[5] output_enhancement**，约 270 MB ONNX）。  
+从 CORE 迁出的大文件：
+
+- **`addons/openseeface/`**（档位 **[2] openseeface**，约 210 MB：facetracker + models）
+- **`data/ezvtb_nn/`**（档位 **[5] output_enhancement**，约 270 MB ONNX）
+
 THA3 / THA4 / MediaPipe 仍由 `packaging/fetch_upstream_assets.ps1` 按 `upstream_assets.json` 从既有上游镜像拉取（**非**本 Bucket 主路径）。
 
 **用户下载方式（见 `packaging/hf_bucket_README.md`）：**
 
-- **方式 A**：`hf buckets sync` 整个 Bucket → 本地已有完整目录 + NN 权重  
-- **方式 B**：GitHub ZIP → `DEPLOY.bat` → 档位 [5] 从 Bucket 补全 `data/ezvtb_nn/`
+- **方式 A**：`hf buckets sync` 整个 Bucket → 本地已有完整目录 + OSF + NN 权重  
+- **方式 B**：GitHub ZIP → `DEPLOY.bat` → 档位 [2]/[5] 从 Bucket 补全 `addons/openseeface/`、`data/ezvtb_nn/`
 
 ---
 
@@ -34,6 +38,7 @@ THA3 / THA4 / MediaPipe 仍由 `packaging/fetch_upstream_assets.ps1` 按 `upstre
 ```text
 E:\EasyVtuberStudio-hf\          # 维护者本机路径（可改）
 ├── README.md                    # 本目录说明（勿删）
+├── addons\openseeface\          # 上传后 DEPLOY [2] 从此路径拉取
 ├── data\ezvtb_nn\               # 上传后 DEPLOY [5] 从此路径拉取
 ├── packaging\                   # 与 main 同步的脚本（便于验收）
 └── …                            # 自 easyvtuberstudio-main 复制的其余 CORE 文件
@@ -54,6 +59,7 @@ robocopy $src $dst /MIR /XD .git .codegraph /NFL /NDL /NJH /NJS /nc /ns /np
 3. **确认权重在镜像内存在**：
 
 ```powershell
+Test-Path E:\EasyVtuberStudio-hf\addons\openseeface\Binary\facetracker.exe
 Test-Path E:\EasyVtuberStudio-hf\data\ezvtb_nn\rife\rife_x2_fp32.onnx
 ```
 
@@ -82,9 +88,23 @@ Copy-Item E:\easyvtuberstudio-develop\packaging\hf_bucket_README.md E:\EasyVtube
 python -m huggingface_hub.cli.hf buckets cp E:\EasyVtuberStudio-hf\README.md hf://buckets/liketocode789/EasyVtuberStudio/README.md
 ```
 
-上传后 Bucket 内路径示例：`data/ezvtb_nn/rife/rife_x2_fp32.onnx`（与仓库相对路径一致）。
+上传后 Bucket 内路径示例：`addons/openseeface/Binary/facetracker.exe`、`data/ezvtb_nn/rife/rife_x2_fp32.onnx`（与仓库相对路径一致）。
 
-### 2.2 日常刷新权重
+### 2.2 日常刷新大文件
+
+**OpenSeeFace（档位 [2]）：**
+
+1. 确认本机 OSF 发布目录（默认 `F:\EasyVtuber\OpenSeeFace-v1.20.4`，须含 `Binary\facetracker.exe` 与 `models\`）。
+2. 导入到 HF 镜像：
+
+```powershell
+cd E:\easyvtuberstudio-develop
+powershell -ExecutionPolicy Bypass -File scripts\maint\import_openseeface_to_hf_mirror.ps1 -MirrorRoot E:\EasyVtuberStudio-hf -SourceRoot F:\EasyVtuber\OpenSeeFace-v1.20.4
+```
+
+3. 重跑 `sync_develop_to_hf_bucket.ps1`（无 `-DryRun`）。
+
+**NN ONNX（档位 [5]）：**
 
 1. 在 **main** 或 develop 用 `scripts\maint\import_ezvtb_nn_weights.ps1` 更新 `data\ezvtb_nn\`。
 2. 再次 `robocopy` 到 `EasyVtuberStudio-hf`（或只复制 `data\ezvtb_nn`）。
@@ -102,19 +122,20 @@ python -m huggingface_hub.cli.hf buckets cp E:\EasyVtuberStudio-hf\README.md hf:
 
 | 档位 | 首选源 | 备份源 |
 |------|--------|--------|
-| **[5] output_enhancement** | Bucket `data/ezvtb_nn/` | `import_ezvtb_nn_weights.ps1`（Google Drive 数据包） |
-| **[2] mediapipe** | Google MediaPipe 官方 URL | — |
-| **[3] tha3_models** | HF `ksuriuri/talking-head-anime-3-models` | Dropbox zip |
-| **[4] tha4_training** | pkhungurn Dropbox | — |
+| **[2] openseeface** | Bucket `addons/openseeface/` | OpenSeeFace GitHub release zip |
+| **[3] face_puppeteer** | Google MediaPipe 官方 URL | — |
+| **[4] tha3_models** | HF `ksuriuri/talking-head-anime-3-models` | Dropbox zip |
+| **[5] tha4_training** | pkhungurn Dropbox | — |
+| **[6] output_enhancement** | Bucket `data/ezvtb_nn/` | `import_ezvtb_nn_weights.ps1`（Google Drive 数据包） |
 
-实现：`upstream_assets.json` 包 `ezvtb_nn_weights` + `fetch_hf_bucket.py` + `bootstrap_output_enhancement.ps1`。
+实现：`upstream_assets.json` 包 `openseeface`、`ezvtb_nn_weights` + `fetch_hf_bucket.py` + `bootstrap_output_enhancement.ps1`。
 
 ---
 
 ## 4. 额度与可见性
 
 - Bucket 为 **公开**；计入账号 **Public storage**（免费档为 best-effort，见 [Storage limits](https://huggingface.co/docs/hub/storage-limits)）。
-- 当前 Bucket 全量约 **350 MB**（完整 CORE + `data/ezvtb_nn/`）；勿 sync 整仓 develop（~12 GB）。
+- 当前 Bucket 全量约 **560 MB**（完整 CORE + `addons/openseeface/` + `data/ezvtb_nn/`）；勿 sync 整仓 develop（~12 GB）。
 
 ---
 

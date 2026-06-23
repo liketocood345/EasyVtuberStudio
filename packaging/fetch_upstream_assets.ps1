@@ -222,6 +222,45 @@ function Install-Tha4TeacherZip([string]$StagingDir, [string]$DestRelative) {
     }
 }
 
+function Install-OpenSeeFaceZip([string]$StagingDir, [string]$DestRelative) {
+    $destRoot = Resolve-PortablePath $DestRelative
+    if (Test-Path $destRoot) {
+        Remove-Item $destRoot -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $destRoot | Out-Null
+
+    $exe = Get-ChildItem $StagingDir -Recurse -Filter "facetracker.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $exe) {
+        throw "Could not locate facetracker.exe in OpenSeeFace archive."
+    }
+
+    $releaseRoot = $exe.Directory.Parent.FullName
+    if ((Split-Path $releaseRoot -Leaf) -ieq "Binary") {
+        $releaseRoot = Split-Path $releaseRoot -Parent
+    }
+
+    $binarySrc = Join-Path $releaseRoot "Binary"
+    if (-not (Test-Path $binarySrc)) {
+        $binarySrc = $exe.Directory.FullName
+    }
+    $binaryDest = Join-Path $destRoot "Binary"
+    Copy-Item $binarySrc $binaryDest -Recurse -Force
+
+    $modelsSrc = Join-Path $releaseRoot "models"
+    if (Test-Path $modelsSrc) {
+        Copy-Item $modelsSrc (Join-Path $destRoot "models") -Recurse -Force
+    }
+
+    $licensesSrc = Join-Path $releaseRoot "Licenses"
+    if (Test-Path $licensesSrc) {
+        Copy-Item $licensesSrc (Join-Path $destRoot "Licenses") -Recurse -Force
+    }
+
+    $marker = Join-Path $destRoot ".installed"
+    Set-Content -Path $marker -Value ((Get-Date -Format o)) -Encoding UTF8
+    Write-Host "Installed OpenSeeFace -> $destRoot"
+}
+
 function Install-CopyFile([string]$SourcePath, [string]$DestRelative) {
     $destPath = Resolve-PortablePath $DestRelative
     New-Item -ItemType Directory -Force -Path (Split-Path $destPath) | Out-Null
@@ -296,6 +335,9 @@ function Invoke-InstallHandler($fileSpec, [string]$localPath, [string]$stagingDi
         }
         "tha4_teacher_zip" {
             Install-Tha4TeacherZip $stagingDir $dest
+        }
+        "openseeface_zip" {
+            Install-OpenSeeFaceZip $stagingDir $dest
         }
         "copy_file" {
             Install-CopyFile $localPath $dest

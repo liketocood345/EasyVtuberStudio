@@ -8,13 +8,26 @@
       "folder": "face_puppeteer",
       "label": "Face puppeteer runtime (PyTorch + wx + MediaPipe)",
       "size_hint_mb": 3500,
-      "required_for": ["tha4_student_face_capture"],
+      "required_for": ["tha4_student_face_capture_mediapipe"],
       "delete_safe": true,
       "included_in_github_zip": false,
       "install_via": ["bootstrap_portable.ps1", "upstream:mediapipe_task"],
       "verify": [
         "addons/face_puppeteer/venv/Scripts/python.exe",
         "addons/face_puppeteer/mediapipe/face_landmarker_v2_with_blendshapes.task"
+      ]
+    },
+    {
+      "id": "openseeface",
+      "folder": "openseeface",
+      "label": "OpenSeeFace facetracker binary + models",
+      "size_hint_mb": 200,
+      "required_for": ["tha4_student_face_capture_openseeface"],
+      "delete_safe": true,
+      "included_in_github_zip": false,
+      "install_via": ["upstream:openseeface"],
+      "verify": [
+        "addons/openseeface/Binary/facetracker.exe"
       ]
     },
     {

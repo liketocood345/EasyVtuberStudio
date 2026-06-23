@@ -1,6 +1,6 @@
 {
   "schema_version": 6,
-  "notes": "Install targets live under addons/<pack>/; reconcile_portable_layout.ps1 links CORE paths. Large NN ONNX (tier [5]) primary source: HF Bucket liketocode789/EasyVtuberStudio.",
+  "notes": "Install targets live under addons/<pack>/; reconcile_portable_layout.ps1 links CORE paths. HF Bucket liketocode789/EasyVtuberStudio is primary for tier [2] openseeface and tier [5] ezvtb_nn_weights.",
   "primary_bucket": {
     "id": "liketocode789/EasyVtuberStudio",
     "label": "EasyVtuberStudio HF mirror",
@@ -26,6 +26,40 @@
       ],
       "verify": [
         "addons/face_puppeteer/mediapipe/face_landmarker_v2_with_blendshapes.task"
+      ]
+    },
+    {
+      "id": "openseeface",
+      "label": "OpenSeeFace facetracker (HF Bucket primary)",
+      "attribution": "https://github.com/emilianavt/OpenSeeFace",
+      "license_note": "BSD 2-Clause",
+      "addon_id": "openseeface",
+      "files": [
+        {
+          "kind": "huggingface_bucket",
+          "label": "EasyVtuberStudio HF mirror (primary)",
+          "install": {
+            "handler": "bucket_copy_tree",
+            "bucket_id": "liketocode789/EasyVtuberStudio",
+            "bucket_path": "addons/openseeface",
+            "dest": "addons/openseeface"
+          }
+        }
+      ],
+      "fallback_sources": [
+        {
+          "url": "https://github.com/emilianavt/OpenSeeFace/releases/download/v1.21.2/OpenSeeFace-v1.21.2.zip",
+          "filename": "OpenSeeFace-v1.21.2.zip",
+          "kind": "zip",
+          "label": "OpenSeeFace GitHub release v1.21.2 (fallback)",
+          "install": {
+            "handler": "openseeface_zip",
+            "dest": "addons/openseeface"
+          }
+        }
+      ],
+      "verify": [
+        "addons/openseeface/Binary/facetracker.exe"
       ]
     },
     {

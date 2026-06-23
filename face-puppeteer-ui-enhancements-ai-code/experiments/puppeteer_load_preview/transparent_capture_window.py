@@ -15,33 +15,14 @@ from __future__ import annotations
 
 import ctypes
 import os
+import queue
+import threading
+import time
 from ctypes import wintypes
-from typing import Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 import numpy
 
-_DEBUG_ERR_LOG_PATH = r"e:\debug-3353ed.log"
-
-
-def _capture_window_err_record(location: str, exc: BaseException) -> None:
-    # #region agent log
-    try:
-        import json
-        import time
-        import traceback
-        with open(_DEBUG_ERR_LOG_PATH, "a", encoding="utf-8") as log_file:
-            log_file.write(json.dumps({
-                "sessionId": "3353ed",
-                "runId": "err",
-                "hypothesisId": "H-CAP-WIN",
-                "location": location,
-                "message": repr(exc),
-                "data": {"traceback": traceback.format_exc()[:2000]},
-                "timestamp": int(time.time() * 1000),
-            }, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion
 
 try:
     from window_capture import _ensure_dpi_awareness
@@ -316,7 +297,42 @@ def _init_win32_prototypes() -> None:
     user32.GetForegroundWindow.restype = wintypes.HWND
     user32.GetForegroundWindow.argtypes = []
 
+    user32.PeekMessageW.restype = wintypes.BOOL
+    user32.PeekMessageW.argtypes = [
+        ctypes.c_void_p,
+        wintypes.HWND,
+        wintypes.UINT,
+        wintypes.UINT,
+        wintypes.UINT,
+    ]
+    user32.TranslateMessage.restype = wintypes.BOOL
+    user32.TranslateMessage.argtypes = [ctypes.c_void_p]
+    user32.DispatchMessageW.restype = LRESULT
+    user32.DispatchMessageW.argtypes = [ctypes.c_void_p]
+
     _prototypes_initialized = True
+
+
+PM_REMOVE = 0x0001
+ULW_UPDATE_SLOW_SEC = 0.5
+
+
+class MSG(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND),
+        ("message", wintypes.UINT),
+        ("wParam", wintypes.WPARAM),
+        ("lParam", wintypes.LPARAM),
+        ("time", wintypes.DWORD),
+        ("pt", wintypes.POINT),
+    ]
+
+
+def _pump_win32_messages() -> None:
+    msg = MSG()
+    while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_REMOVE):
+        user32.TranslateMessage(ctypes.byref(msg))
+        user32.DispatchMessageW(ctypes.byref(msg))
 
 
 def _straight_rgba_to_premultiplied_bgra(rgba: numpy.ndarray) -> numpy.ndarray:
@@ -445,9 +461,7 @@ class _DesktopOverlayWindow:
         if inst is not None:
             try:
                 handled, result = inst._handle_message(msg, wparam, lparam)
-            except Exception as exc:
-                _capture_window_err_record(
-                    "transparent_capture_window.py:_window_proc", exc)
+            except Exception:
                 handled, result = False, 0
             if handled:
                 return result
@@ -727,6 +741,7 @@ class _DesktopOverlayWindow:
         if self._bits_buffer is None or self._hdc_mem is None:
             return
         try:
+            t0 = time.perf_counter()
             if premultiplied_bgra is not None:
                 bgra_premul = numpy.ascontiguousarray(
                     premultiplied_bgra, dtype=numpy.uint8)
@@ -748,6 +763,9 @@ class _DesktopOverlayWindow:
                     ctypes.byref(self._blend),
                     ULW_ALPHA):
                 return
+            elapsed = time.perf_counter() - t0
+            if elapsed > ULW_UPDATE_SLOW_SEC:
+                pass
             if not self._visible:
                 user32.ShowWindow(wintypes.HWND(self._hwnd), 5)
                 self._visible = True
@@ -783,6 +801,107 @@ class _DesktopOverlayWindow:
         self._visible = False
 
 
+_MainThreadAsync = Callable[[Callable[[], None]], None]
+_MainThreadSync = Callable[[Callable[[], Any], float], Any]
+
+
+class _UlwWindowHost:
+    """Owns HWND + UpdateLayeredWindow on a dedicated thread so DWM stalls
+    cannot freeze the wx UI message loop."""
+
+    def __init__(self, facade: "TransparentCaptureWindow") -> None:
+        self._facade = facade
+        self._cmds: queue.Queue = queue.Queue()
+        self._frame_slot: list[Optional[tuple]] = [None]
+        self._ready = threading.Event()
+        self._init_error: Optional[BaseException] = None
+        self._overlay: Optional[_DesktopOverlayWindow] = None
+        self._border: Optional[_DesktopOverlayWindow] = None
+        self._overlay_hwnd = 0
+        self._stop = False
+        self._thread = threading.Thread(
+            target=self._thread_main,
+            name="ulw-host",
+            daemon=True)
+        self._thread.start()
+        if not self._ready.wait(timeout=15.0):
+            raise TimeoutError("ULW host thread did not become ready")
+        if self._init_error is not None:
+            raise self._init_error
+
+    def post(self, op: str, **kwargs: Any) -> None:
+        if self._stop:
+            return
+        self._cmds.put((op, kwargs))
+
+    def post_frame(
+            self,
+            rgba: numpy.ndarray,
+            *,
+            frame_signature: Optional[tuple],
+            premultiplied_bgra: Optional[numpy.ndarray]) -> None:
+        if self._stop:
+            return
+        payload = (rgba, frame_signature, premultiplied_bgra)
+        try:
+            self._frame_slot[0] = payload
+        except Exception:
+            pass
+        self.post("frame")
+
+    def overlay_hwnd(self) -> int:
+        return int(self._overlay_hwnd or 0)
+
+    def shutdown(self) -> None:
+        if self._stop:
+            return
+        self._stop = True
+        self.post("destroy")
+        if self._thread.is_alive():
+            self._thread.join(timeout=3.0)
+
+    def _thread_main(self) -> None:
+        try:
+            _init_win32_prototypes()
+            _ensure_dpi_awareness()
+            facade = self._facade
+            facade._host_init_overlay_windows()
+            self._overlay = facade._overlay
+            self._border = facade._border
+            self._overlay_hwnd = int((self._overlay._hwnd if self._overlay else 0) or 0)
+        except BaseException as exc:
+            self._init_error = exc
+            self._ready.set()
+            return
+        self._ready.set()
+        while not self._stop:
+            _pump_win32_messages()
+            frame_payload = self._frame_slot[0]
+            if frame_payload is not None:
+                self._frame_slot[0] = None
+                rgba, frame_signature, premul = frame_payload
+                try:
+                    facade._host_apply_frame_rgba(
+                        rgba,
+                        frame_signature=frame_signature,
+                        premultiplied_bgra=premul)
+                except Exception:
+                    pass
+            try:
+                op, kwargs = self._cmds.get(timeout=0.005)
+            except queue.Empty:
+                continue
+            try:
+                if op == "destroy":
+                    facade._host_destroy_overlay_windows()
+                    break
+                if op == "frame":
+                    continue
+                getattr(facade, f"_host_{op}")(**kwargs)
+            except Exception:
+                pass
+
+
 class TransparentCaptureWindow:
     """Single topmost true-transparent (per-pixel alpha) overlay window (ULW).
 
@@ -804,45 +923,160 @@ class TransparentCaptureWindow:
             on_edit_motion: Optional[EditMotionCallback] = None,
             on_edit_end: Optional[EditEndCallback] = None,
             on_key_nudge: Optional[KeyNudgeCallback] = None,
-            on_deactivate: Optional[DeactivateCallback] = None) -> None:
-        _ensure_dpi_awareness()
+            on_deactivate: Optional[DeactivateCallback] = None,
+            schedule_on_main: Optional[_MainThreadAsync] = None,
+            run_on_main_sync: Optional[_MainThreadSync] = None) -> None:
         self._destroyed = False
         self._on_geometry_changed = on_geometry_changed
+        self._schedule_on_main = schedule_on_main
+        self._run_on_main_sync = run_on_main_sync
         self._geometry_sync_suppress = False
         self._width = max(1, int(width))
         self._height = max(1, int(height))
         self._visible_x = 100
         self._visible_y = 100
         self._last_overlay_rect: Optional[Tuple[int, int, int, int]] = None
-        self._last_frame_hash: Optional[int] = None
+        self._last_frame_hash: Optional[tuple] = None
         self._border_thickness = max(0, int(BORDER_THICKNESS_PX))
         self._border_last_size: Optional[Tuple[int, int]] = None
+        self._overlay: Optional[_DesktopOverlayWindow] = None
+        self._border: Optional[_DesktopOverlayWindow] = None
+        self._raw_edit_begin = on_edit_begin
+        self._raw_edit_motion = on_edit_motion
+        self._raw_edit_end = on_edit_end
+        self._raw_key_nudge = on_key_nudge
+        self._raw_deactivate = on_deactivate
+        self._host = _UlwWindowHost(self)
+
+    def _wrap_edit_begin(self, x: int, y: int) -> bool:
+        callback = self._raw_edit_begin
+        if callback is None:
+            return False
+        runner = self._run_on_main_sync
+        if runner is None:
+            return bool(callback(x, y))
+        return bool(runner(lambda: callback(x, y), 0.25))
+
+    def _wrap_edit_motion(self, x: int, y: int) -> None:
+        callback = self._raw_edit_motion
+        if callback is None:
+            return
+        scheduler = self._schedule_on_main
+        if scheduler is None:
+            callback(x, y)
+            return
+        scheduler(lambda: callback(x, y))
+
+    def _wrap_edit_end(self) -> None:
+        callback = self._raw_edit_end
+        if callback is None:
+            return
+        scheduler = self._schedule_on_main
+        if scheduler is None:
+            callback()
+            return
+        scheduler(callback)
+
+    def _wrap_key_nudge(self, dx: float, dy: float) -> bool:
+        callback = self._raw_key_nudge
+        if callback is None:
+            return False
+        runner = self._run_on_main_sync
+        if runner is None:
+            return bool(callback(dx, dy))
+        return bool(runner(lambda: callback(dx, dy), 0.25))
+
+    def _wrap_deactivate(self) -> None:
+        callback = self._raw_deactivate
+        if callback is None:
+            return
+        scheduler = self._schedule_on_main
+        if scheduler is None:
+            callback()
+            return
+        scheduler(callback)
+
+    def _host_init_overlay_windows(self) -> None:
         self._overlay = _DesktopOverlayWindow(
-            width,
-            height,
+            self._width,
+            self._height,
             exstyle=WS_EX_LAYERED | WS_EX_APPWINDOW,
             window_title=WINDOW_TITLE,
             icon_path=_resolve_app_icon_path(),
             on_position_changed=self._on_overlay_position_changed,
-            on_edit_begin=on_edit_begin,
-            on_edit_motion=on_edit_motion,
-            on_edit_end=on_edit_end,
-            on_key_nudge=on_key_nudge,
-            on_deactivate=on_deactivate)
-        # Separate click-through, no-taskbar border window. Never the capture
-        # target, so it stays out of the stream while marking the output on-screen.
-        self._border: Optional[_DesktopOverlayWindow] = None
+            on_edit_begin=self._wrap_edit_begin,
+            on_edit_motion=self._wrap_edit_motion,
+            on_edit_end=self._wrap_edit_end,
+            on_key_nudge=self._wrap_key_nudge,
+            on_deactivate=self._wrap_deactivate)
+        self._border = None
         if self._border_thickness > 0:
             try:
                 self._border = _DesktopOverlayWindow(
-                    width + 2 * self._border_thickness,
-                    height + 2 * self._border_thickness,
+                    self._width + 2 * self._border_thickness,
+                    self._height + 2 * self._border_thickness,
                     exstyle=(WS_EX_LAYERED | WS_EX_TRANSPARENT
                              | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE),
                     window_title="")
             except OSError:
                 self._border = None
         self._sync_visible_geometry(force=True)
+
+    def _host_destroy_overlay_windows(self) -> None:
+        border = self._border
+        overlay = self._overlay
+        self._border = None
+        self._overlay = None
+        try:
+            if border is not None:
+                border.destroy()
+        except Exception:
+            pass
+        try:
+            if overlay is not None:
+                overlay.destroy()
+        except Exception:
+            pass
+
+    def _host_show(self) -> None:
+        if self._overlay is None or not self._overlay.is_valid():
+            return
+        self._overlay.show()
+        self._sync_visible_geometry(force=True)
+        if self._border is not None and self._border.is_valid():
+            self._border.show()
+        _raise_overlay_topmost(int(self._overlay._hwnd or 0))
+
+    def _host_hide(self) -> None:
+        if self._border is not None:
+            self._border.hide()
+        if self._overlay is not None:
+            self._overlay.hide()
+
+    def _host_set_position(self, *, x: int, y: int) -> None:
+        self._visible_x = int(x)
+        self._visible_y = int(y)
+        self._sync_visible_geometry(force=True)
+
+    def _host_apply_frame_rgba(
+            self,
+            rgba: numpy.ndarray,
+            *,
+            frame_signature: Optional[tuple],
+            premultiplied_bgra: Optional[numpy.ndarray]) -> None:
+        if self._destroyed or self._overlay is None or not self._overlay.is_valid():
+            return
+        rgba = numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
+        height, width = int(rgba.shape[0]), int(rgba.shape[1])
+        if width != self._width or height != self._height:
+            self._width = width
+            self._height = height
+            self._sync_visible_geometry(force=True)
+        transparent = rgba[:, :, 3] == 0
+        if numpy.any(transparent):
+            rgba = rgba.copy()
+            rgba[transparent, 0:3] = 0
+        self._overlay.update_rgba(rgba, premultiplied_bgra=premultiplied_bgra)
 
     def _on_overlay_position_changed(self, x: int, y: int) -> None:
         if self._destroyed or self._geometry_sync_suppress:
@@ -859,8 +1093,14 @@ class TransparentCaptureWindow:
         # of the output window (z-order looks wrong / intercepts the edit).
         self._sync_border_geometry()
         _raise_overlay_topmost(int(self._overlay._hwnd or 0))
-        if self._on_geometry_changed is not None:
-            self._on_geometry_changed()
+        callback = self._on_geometry_changed
+        if callback is None:
+            return
+        scheduler = self._schedule_on_main
+        if scheduler is None:
+            callback()
+            return
+        scheduler(callback)
 
     def _sync_visible_geometry(self, *, force: bool = False) -> None:
         if self._destroyed or self._overlay is None:
@@ -898,23 +1138,24 @@ class TransparentCaptureWindow:
 
     @property
     def hwnd(self) -> int:
-        if self._destroyed or self._overlay is None:
+        if self._destroyed:
             return 0
-        return int(self._overlay._hwnd or 0)
+        return self._host.overlay_hwnd()
 
     def is_valid(self) -> bool:
-        if self._destroyed or self._overlay is None:
+        if self._destroyed:
             return False
-        return self._overlay.is_valid()
+        return self._host.overlay_hwnd() != 0 and bool(
+            user32.IsWindow(wintypes.HWND(self._host.overlay_hwnd())))
 
     def owns_foreground_window(self) -> bool:
         """True when the OS foreground window is this ULW (the on-screen output
         window). Lets the wx app tell "user clicked the output window" apart
         from "user clicked away", since the ULW is a Win32 window and never
         shows up in wx focus."""
-        if self._destroyed or self._overlay is None:
+        if self._destroyed:
             return False
-        hwnd = int(self._overlay._hwnd or 0)
+        hwnd = self._host.overlay_hwnd()
         if not hwnd:
             return False
         try:
@@ -931,46 +1172,23 @@ class TransparentCaptureWindow:
     def set_position(self, x: int, y: int) -> None:
         if self._destroyed:
             return
-        self._visible_x = int(x)
-        self._visible_y = int(y)
-        self._sync_visible_geometry(force=True)
+        self._host.post("set_position", x=int(x), y=int(y))
 
     def show(self) -> None:
-        if not self.is_valid():
+        if self._destroyed:
             return
-        # Show the (possibly still-empty/transparent) ULW immediately so capture
-        # software can list/remember it by title before the first frame arrives.
-        self._overlay.show()
-        self._sync_visible_geometry(force=True)
-        if self._border is not None and self._border.is_valid():
-            self._border.show()
-        _raise_overlay_topmost(int(self._overlay._hwnd or 0))
+        self._host.post("show")
 
     def hide(self) -> None:
-        if self._destroyed or self._overlay is None:
+        if self._destroyed:
             return
-        if self._border is not None:
-            self._border.hide()
-        self._overlay.hide()
+        self._host.post("hide")
 
     def destroy(self) -> None:
         if self._destroyed:
             return
         self._destroyed = True
-        overlay = self._overlay
-        border = self._border
-        self._overlay = None
-        self._border = None
-        try:
-            if border is not None:
-                border.destroy()
-        except Exception:
-            pass
-        try:
-            if overlay is not None:
-                overlay.destroy()
-        except Exception:
-            pass
+        self._host.shutdown()
 
     def update_frame_rgba(
             self,
@@ -981,26 +1199,25 @@ class TransparentCaptureWindow:
         if self._destroyed or not self.is_valid():
             return
         try:
-            rgba = numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
             if frame_signature is not None:
                 if frame_signature == self._last_frame_hash:
                     return
                 self._last_frame_hash = frame_signature
             else:
-                frame_hash = int(hash(rgba.shape + (int(rgba[0, 0, 0]), int(rgba[-1, -1, -1]))))
+                rgba_view = numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
+                frame_hash = int(hash(
+                    rgba_view.shape + (int(rgba_view[0, 0, 0]), int(rgba_view[-1, -1, -1]))))
                 if frame_hash == self._last_frame_hash:
                     return
                 self._last_frame_hash = frame_hash
-            height, width = int(rgba.shape[0]), int(rgba.shape[1])
-            if width != self._width or height != self._height:
-                self._width = width
-                self._height = height
-                self._sync_visible_geometry(force=True)
-            transparent = rgba[:, :, 3] == 0
-            if numpy.any(transparent):
-                rgba = rgba.copy()
-                rgba[transparent, 0:3] = 0
-            self._overlay.update_rgba(rgba, premultiplied_bgra=premultiplied_bgra)
-        except Exception as exc:
-            _capture_window_err_record("transparent_capture_window.py:update_frame_rgba", exc)
+            rgba_copy = numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
+            premul_copy = None
+            if premultiplied_bgra is not None:
+                premul_copy = numpy.ascontiguousarray(
+                    premultiplied_bgra, dtype=numpy.uint8)
+            self._host.post_frame(
+                rgba_copy,
+                frame_signature=frame_signature,
+                premultiplied_bgra=premul_copy)
+        except Exception:
             raise

@@ -71,7 +71,7 @@ try {
     Write-Host ""
     Write-Host "============================================================"
     Write-Host " EasyVtuberStudio - DEPLOY (install tiers)"
-    Write-Host " Tiers: basic_run, face_puppeteer, tha3_models, tha4_training, output_enhancement"
+    Write-Host " Tiers: basic_run, openseeface, face_puppeteer, tha3_models, tha4_training, output_enhancement"
     Write-Host "============================================================"
 
     $selected = @(Resolve-DeployPackageIds | Select-Object -Unique)
@@ -108,6 +108,7 @@ try {
     }
 
     $installFace = $selected -contains "face_puppeteer"
+    $installOsf = $selected -contains "openseeface"
     $installMouseStudent = ($selected -contains "mouse_student") -or $MouseStudentOnly.IsPresent
     $installTha3 = $selected -contains "tha3_models"
     $installTha4 = $selected -contains "tha4_training"
@@ -124,6 +125,14 @@ try {
             & $bootstrapScript -PortableRoot $PortableRoot -ForceRebuildRuntime:$ForceRebuildRuntime -MouseStudentOnly
             Assert-ScriptSucceeded "Mouse student runtime bootstrap"
         }
+    }
+
+    if ($installOsf -and -not $SkipUpstream) {
+        Write-Step "openseeface: facetracker binary + models"
+        & $fetchScript -PortableRoot $PortableRoot -PackageIds @("openseeface")
+        Assert-ScriptSucceeded "OpenSeeFace install"
+    } elseif ($installOsf) {
+        Write-Step "openseeface: Skipped (-SkipUpstream)"
     }
 
     if ($installFace) {
@@ -218,13 +227,13 @@ try {
     Write-Host ""
     Write-Host "DEPLOY complete."
     Write-Host "  Installed: $($selected -join ', ')"
-    Write-Host "  Basic (Mouse + Student): EasyVtuberStudio.exe after [1] basic_run or [2] face_puppeteer"
-    Write-Host "  Face capture: needs face_puppeteer tier"
-    Write-Host "  THA3 portrait:  switch mode in app (needs tha3_models tier)"
+    Write-Host "  Basic (Mouse + Student): EasyVtuberStudio.exe after [1] basic_run or face capture tier [2]/[3]"
+    Write-Host "  Face capture: install [2] openseeface OR [3] face_puppeteer (MediaPipe)"
+    Write-Host "  THA3 portrait:  switch mode in app (needs tha3_models tier [4])"
     if ($installTha4) {
         Write-Host "  THA4 training:  scripts\launch\THA4Train.exe"
     } else {
-        Write-Host "  THA4 training:  run DEPLOY.bat and choose tier [4]"
+        Write-Host "  THA4 training:  run DEPLOY.bat and choose tier [5]"
     }
     Write-Host ""
     Write-DeployLog "DEPLOY complete: $($selected -join ', ')"

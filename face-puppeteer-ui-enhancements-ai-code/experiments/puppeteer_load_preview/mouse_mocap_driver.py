@@ -26,10 +26,16 @@ from tha4.mocap.mediapipe_constants import (
 from tha4.mocap.mediapipe_face_pose import MediaPipeFacePose
 
 MOCAP_INPUT_MODE_MEDIAPIPE = "mediapipe"
+MOCAP_INPUT_MODE_OPENSEEFACE = "openseeface"
 MOCAP_INPUT_MODE_MOUSE_AUDIO = "mouse_audio"
-MOCAP_INPUT_MODE_VALUES = (MOCAP_INPUT_MODE_MEDIAPIPE, MOCAP_INPUT_MODE_MOUSE_AUDIO)
+MOCAP_INPUT_MODE_VALUES = (
+    MOCAP_INPUT_MODE_MEDIAPIPE,
+    MOCAP_INPUT_MODE_OPENSEEFACE,
+    MOCAP_INPUT_MODE_MOUSE_AUDIO,
+)
 MOCAP_INPUT_MODE_LABELS = (
-    "Face capture (MediaPipe) / 摄像头面捕",
+    "Face capture (MediaPipe) / 摄像头面捕 (MediaPipe)",
+    "Face capture (OpenSeeFace) / 摄像头面捕 (OpenSeeFace)",
     "Eyes follow mouse, auto blink / 角色眼睛跟踪鼠标并启用自动眨眼",
 )
 
@@ -50,6 +56,8 @@ MOUSE_VERTICAL_FACE_SIZE_DELTA_PER_UNIT = 0.12
 def normalize_mocap_input_mode(value: object) -> str:
     if value == MOCAP_INPUT_MODE_MOUSE_AUDIO:
         return MOCAP_INPUT_MODE_MOUSE_AUDIO
+    if value == MOCAP_INPUT_MODE_OPENSEEFACE:
+        return MOCAP_INPUT_MODE_OPENSEEFACE
     return MOCAP_INPUT_MODE_MEDIAPIPE
 
 

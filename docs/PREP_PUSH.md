@@ -18,27 +18,31 @@
 | 路径引用扫描 | `scripts\maint\verify_path_refs.ps1` |
 | HF Bucket 已同步（若本轮迁出权重） | `sync_develop_to_hf_bucket.ps1 -MirrorRoot E:\EasyVtuberStudio-hf -DryRun` 后再正式上传 |
 
-**不要提交进 Git 的大目录**（见 `.gitignore`）：`addons/face_puppeteer/`、`addons/tha3_models/`、`addons/tha4_training/`、`addons/output_enhancement/`、`workspace/student_venv/`、`runtime/`、`workspace/*` 用户状态、**`.codegraph/`**、**`**/his/`**（历史快照）、**`docs/training/`**（旧续训流程）、**`docs/oid.md`**（本地聊天摘录）。
+**不要提交进 Git 的大目录**（见 `.gitignore`）：`addons/openseeface/`、`addons/face_puppeteer/`、`addons/tha3_models/`、`addons/tha4_training/`、`addons/output_enhancement/`、`workspace/student_venv/`、`runtime/`、`workspace/*` 用户状态、**`.codegraph/`**、**`**/his/`**（历史快照）、**`docs/training/`**（旧续训流程）、**`docs/oid.md`**（本地聊天摘录）。
 
 **应入库的发布物**：`packaging/`、`DEPLOY.bat`、`EasyVtuberStudio.exe`（若本机已编译）、`docs/`、`data/character_models/baiten_*` 等 CORE 资源。
 
 **不要入库、改放 HF Bucket 的大文件**（见 [HF_BUCKET_MIRROR.md](HF_BUCKET_MIRROR.md)）：
 
-- `data/ezvtb_nn/**/*.onnx`（档位 [5]，约 270 MB）→ Bucket `liketocode789/EasyVtuberStudio`；可保留 `data/ezvtb_nn/README.md` 占位
+- `addons/openseeface/`（档位 **[2]**，约 210 MB）→ Bucket `liketocode789/EasyVtuberStudio`；用 `scripts\maint\import_openseeface_to_hf_mirror.ps1` 导入镜像
+- `data/ezvtb_nn/**/*.onnx`（档位 **[6]**，约 270 MB）→ 同上 Bucket；可保留 `data/ezvtb_nn/README.md` 占位
 
 **HF 同步仓（本机，非 Git）：** `E:\EasyVtuberStudio-hf` — 自 main 复制后执行 `scripts\maint\sync_develop_to_hf_bucket.ps1`。**上传 Bucket 前**须完成 [HF_BUCKET_MIRROR.md](HF_BUCKET_MIRROR.md) §5 文档勾选。
 
 ---
 
-## 2. DEPLOY 五档（文档与菜单必须一致）
+## 2. DEPLOY 六档（文档与菜单必须一致）
 
 | 档位 | 默认 Enter | Package ID | 安装内容 |
 |------|------------|------------|----------|
 | **[1] basic_run** | Y | `mouse_student` | `workspace/student_venv`（torch + wx + matplotlib） |
-| **[2] face_puppeteer** | N | `face_puppeteer` | `addons/face_puppeteer` + MediaPipe `.task` |
-| **[3] tha3_models** | N | `tha3_models` | THA3 立绘权重 |
-| **[4] tha4_training** | N | `tha4_training` | Teacher + pose 数据集 |
-| **[5] output_enhancement** | N | `output_enhancement` | onnxruntime + pyanime4k；从 HF Bucket `data/ezvtb_nn/` 拉取 ONNX |
+| **[2] openseeface** | N | `openseeface` | OpenSeeFace facetracker + models（HF Bucket 首选） |
+| **[3] face_puppeteer** | N | `face_puppeteer` | `addons/face_puppeteer` + MediaPipe `.task` |
+| **[4] tha3_models** | N | `tha3_models` | THA3 立绘权重 |
+| **[5] tha4_training** | N | `tha4_training` | Teacher + pose 数据集 |
+| **[6] output_enhancement** | N | `output_enhancement` | onnxruntime + pyanime4k；从 HF Bucket `data/ezvtb_nn/` 拉取 ONNX |
+
+摄像头面捕：安装 **[2] openseeface** 或 **[3] face_puppeteer** 其一即可。
 
 用户场景：**先装 [1]，再勾选 [1]+[2]+[3]** 应能成功（bootstrap 用 `python -m pip`，复制 venv 后 `venv --upgrade`）。
 

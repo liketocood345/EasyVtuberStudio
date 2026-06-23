@@ -172,6 +172,62 @@ def portable_mouse_student_ready(portable_root: Path | None = None) -> bool:
     return not get_tha4_mouse_student_missing_components(portable_root)
 
 
+def resolve_facetracker_exe(portable_root: Path | None = None) -> Path | None:
+    root = portable_root or get_portable_root()
+    candidates = (
+        root / "addons" / "openseeface" / "Binary" / "facetracker.exe",
+        root / "addons" / "openseeface" / "facetracker.exe",
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def resolve_openseeface_models_dir(portable_root: Path | None = None) -> Path | None:
+    exe = resolve_facetracker_exe(portable_root)
+    if exe is None:
+        return None
+    for candidate in (exe.parent.parent / "models", exe.parent / "models"):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def resolve_openseeface_models_dir(portable_root: Path | None = None) -> Path | None:
+    exe = resolve_facetracker_exe(portable_root)
+    if exe is None:
+        return None
+    for candidate in (exe.parent.parent / "models", exe.parent / "models"):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def openseeface_capture_ready(portable_root: Path | None = None) -> bool:
+    return resolve_facetracker_exe(portable_root) is not None
+
+
+def mediapipe_capture_ready(portable_root: Path | None = None) -> bool:
+    return face_capture_assets_ready(portable_root)
+
+
+def any_face_capture_ready(portable_root: Path | None = None) -> bool:
+    return mediapipe_capture_ready(portable_root) or openseeface_capture_ready(portable_root)
+
+
+def face_capture_ready_for_mode(mode: str, portable_root: Path | None = None) -> bool:
+    from mouse_mocap_driver import (
+        MOCAP_INPUT_MODE_MEDIAPIPE,
+        MOCAP_INPUT_MODE_OPENSEEFACE,
+    )
+    if mode == MOCAP_INPUT_MODE_OPENSEEFACE:
+        return openseeface_capture_ready(portable_root)
+    if mode == MOCAP_INPUT_MODE_MEDIAPIPE:
+        return mediapipe_capture_ready(portable_root)
+    return True
+
+
 def face_capture_assets_ready(portable_root: Path | None = None) -> bool:
     root = portable_root or get_portable_root()
     if resolve_mediapipe_task_path(root) is None:

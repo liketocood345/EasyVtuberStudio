@@ -141,34 +141,39 @@ EasyVtuberStudio-main\
 └── …
 ```
 
-### 第 2 步：安装（DEPLOY 五档 Y/N）
+### 第 2 步：安装（DEPLOY 六档数字选择）
 
 1. 可先双击 **`EasyVtuberStudio.exe`**：若本目录**已有**满足 Mouse + THA4 Student 的运行时（`student_venv`、或已装面捕 runtime、或系统 Python 已能 `import torch, wx`），会**直接启动**。
 2. 若未就绪，会提示运行 **`DEPLOY.bat`**（exe **不会**在后台自动下载安装）。
 
-双击 **`DEPLOY.bat`**，对五个档位**逐个**询问 Y/N（**直接按 Enter = 默认**）：
+双击 **`DEPLOY.bat`**，列出六个档位后**输入要安装的档位数字**（**直接按 Enter = 仅装 [1]**）：
 
-| 档位 | 默认 Enter | 内容 |
+| 档位 | Enter 默认 | 内容 |
 |------|------------|------|
-| **[1] basic_run** | **是 (Y)** | Mouse + THA4 Student 最小运行时（PyTorch + wx，约 2–4 GB） |
-| **[2] face_puppeteer** | 否 (N) | 摄像头面捕（MediaPipe + 完整 runtime） |
-| **[3] tha3_models** | 否 (N) | THA3 立绘权重 |
-| **[4] tha4_training** | 否 (N) | THA4 训练 / 蒸馏 |
-| **[5] output_enhancement** | 否 (N) | NN 超分 + RIFE（onnxruntime；ONNX 从 HF Bucket 拉取） |
+| **[1] basic_run** | **是（空输入）** | Mouse + THA4 Student 最小运行时（PyTorch + wx，约 2–4 GB） |
+| **[2] openseeface** | 否 | OpenSeeFace 摄像头面捕（facetracker + 模型） |
+| **[3] face_puppeteer** | 否 | MediaPipe 摄像头面捕（含完整 Python runtime） |
+| **[4] tha3_models** | 否 | THA3 立绘权重 |
+| **[5] tha4_training** | 否 | THA4 训练 / 蒸馏 |
+| **[6] output_enhancement** | 否 | NN 超分 + RIFE（onnxruntime；ONNX 从 HF Bucket 拉取） |
 
-**首次使用推荐：** 前四个问题都按 Enter → 只装 **[1] basic_run**；**[5]** 默认不装（后处理 NN 功能默认关闭，不影响现有用户）。
+**输入示例：** `1` · `2`（仅 OSF）· `1 3 6` 或 `136`（装 1、3、6）· 空行 Enter（等同 `1`）
+
+**摄像头面捕：** 安装 **[2] openseeface** 或 **[3] face_puppeteer** 其一即可（不必两个都装）。
+
+**首次使用推荐：** 档位提示处直接按 Enter → 只装 **[1] basic_run**；**[6]** 默认不装（后处理 NN 功能默认关闭，不影响现有用户）。
 
 安装可能需要 **10–40 分钟**。若电脑没有 Python 3.10/3.11，DEPLOY 会自动安装。
 
-**【请谨慎】** 重复安装 **[2] face_puppeteer** 可能覆盖 `addons\face_puppeteer\venv`；已下载的模型包通常会跳过。
+**【请谨慎】** 重复安装 **[3] face_puppeteer** 可能覆盖 `addons\face_puppeteer\venv`；已下载的模型包通常会跳过。
 
-**重复运行 DEPLOY：** 已安装的档位（含 **[5] output_enhancement**）再次选择 Y 时，脚本会检测现有布局与 pip 包，**不会报错退出**，仅显示「already installed / DEPLOY complete」；缺文件或 import 失败时才会重新拉取或补装。
+**重复运行 DEPLOY：** 已安装的档位再次选中时，脚本会检测现有布局与 pip 包，**不会报错退出**，仅显示「already installed / DEPLOY complete」；缺文件或 import 失败时才会重新拉取或补装。
 
 ### 第 3 步：启动软件
 
 双击 **`EasyVtuberStudio.exe`**。若仍提示未就绪，再运行 **`DEPLOY.bat`** 补装对应档位。
 
-**训练工具（可选）：** 先安装档位 **[4]**，再运行 `scripts\launch\THA4Train.exe`。
+**训练工具（可选）：** 先安装档位 **[5]**，再运行 `scripts\launch\THA4Train.exe`。
 
 ---
 
@@ -186,9 +191,9 @@ powershell -ExecutionPolicy Bypass -File packaging\reconcile_portable_layout.ps1
 
 1. 调参窗点 **「加载其他 THA4 Student / Load Other」**  
 2. 选择自带的 bai 示例或 `character_model.yaml`  
-3. **Mouse + Audio** 模式无需摄像头即可使用；**摄像头面捕**需先安装档位 **[2] face_puppeteer**，再在 Model Input 切换 **Face capture (MediaPipe)**  
+3. **Mouse + Audio** 模式无需摄像头即可使用；**摄像头面捕**需安装 **[2] openseeface** 或 **[3] face_puppeteer**，再在 Model Input 切换 **OpenSeeFace** 或 **MediaPipe** 面捕模式  
 
-**THA3 立绘：** 界面切换 THA3 并加载 PNG；立绘规格见上文 **「THA3 立绘 PNG」**；缺模型时在 DEPLOY 中确认 **[3] tha3_models**。
+**THA3 立绘：** 界面切换 THA3 并加载 PNG；立绘规格见上文 **「THA3 立绘 PNG」**；缺模型时在 DEPLOY 中确认 **[4] tha3_models**。
 
 ---
 
@@ -208,10 +213,11 @@ powershell -ExecutionPolicy Bypass -File packaging\reconcile_portable_layout.ps1
 | 情况 | 怎么办 |
 |------|--------|
 | DEPLOY 很快失败 | 检查网络与磁盘；查看 `workspace\deploy.log`；确认从含 `EasyVtuberStudio.exe` 的目录运行 |
-| 已装 [1] 再装 [2] 失败 | 查看 `deploy.log` 是否在 face bootstrap；确认 `packaging\bootstrap_portable.ps1` 为新版（`python -m pip`） |
-| 双击 exe 无窗口 | 先完成 [1] basic_run 或 [2] face_puppeteer；查看 `workspace\launch.log` |
-| 面捕模式切换报错 | 确认已装 [2]；若 `NameError: MOCAP_INPUT_MODE_MEDIAPIPE`，更新到最新 CORE |
-| 提示缺模型 | DEPLOY 对应档位：[2] 面捕 / [3] THA3 / [4] THA4 训练 / [5] NN 超分·RIFE |
+| 已装 [1] 再装 [3] 失败 | 查看 `deploy.log` 是否在 face bootstrap；确认 `packaging\bootstrap_portable.ps1` 为新版（`python -m pip`） |
+| 双击 exe 无窗口 | 先完成 [1] basic_run 或面捕档位 [2]/[3]；查看 `workspace\launch.log` |
+| 面捕模式切换报错 | 确认已装 [2] 或 [3]；若 `NameError: MOCAP_INPUT_MODE_*`，更新到最新 CORE |
+| OpenSeeFace 无预览 | 确认 facetracker 已启动；左侧预览镜像 `OpenSeeFace Visualization` 窗口 |
+| 提示缺模型 | DEPLOY 对应档位：[2] OSF / [3] MediaPipe / [4] THA3 / [5] THA4 训练 / [6] NN 超分·RIFE |
 | 升级软件 | 重新下载 ZIP；**保留** `workspace\` 与 `addons\` |
 
 更多问题：[TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md)

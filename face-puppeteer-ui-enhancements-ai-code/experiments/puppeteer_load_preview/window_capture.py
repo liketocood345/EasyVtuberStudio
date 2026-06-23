@@ -10,6 +10,7 @@ Priority (occlusion-safe, no need to keep target window on top):
 from __future__ import annotations
 
 import ctypes
+import os
 from ctypes import wintypes
 from typing import List, Optional, Tuple
 
@@ -18,6 +19,7 @@ import numpy
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
+kernel32 = ctypes.windll.kernel32
 
 WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
@@ -393,3 +395,50 @@ def capture_window_client_bgr(hwnd: int) -> Optional[numpy.ndarray]:
         return best
     finally:
         _restore_thread_dpi(previous_dpi)
+
+
+_DOUYIN_LIVE_ASSISTANT_MARKERS = (
+    "抖音",
+    "直播伴侣",
+    "live companion",
+    "livecompanion",
+    "webcast_mate",
+    "webcastmate",
+    "douyin",
+    "bytedance",
+    "streaming tool",
+)
+
+
+def _looks_like_douyin_live_assistant(title: str, exe_path: str) -> bool:
+    haystack = f"{title} {exe_path}".lower()
+    return any(marker in haystack for marker in _DOUYIN_LIVE_ASSISTANT_MARKERS)
+
+
+def describe_window_process(hwnd: int) -> dict:
+    """Best-effort window title + owning process path (for freeze correlation)."""
+    hwnd_int = int(hwnd or 0)
+    title = get_window_title(hwnd_int) if hwnd_int else ""
+    exe_path = ""
+    process_name = ""
+    if hwnd_int and is_window_valid(hwnd_int):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(wintypes.HWND(hwnd_int), ctypes.byref(pid))
+        process_handle = kernel32.OpenProcess(0x1000, False, pid.value)  # QUERY_LIMITED
+        if process_handle:
+            try:
+                buffer = ctypes.create_unicode_buffer(512)
+                size = wintypes.DWORD(len(buffer))
+                if kernel32.QueryFullProcessImageNameW(
+                        process_handle, 0, buffer, ctypes.byref(size)):
+                    exe_path = buffer.value
+                    process_name = os.path.basename(exe_path)
+            finally:
+                kernel32.CloseHandle(process_handle)
+    return {
+        "hwnd": hwnd_int or None,
+        "title": title,
+        "exe_path": exe_path,
+        "process_name": process_name,
+        "is_douyin_live_assistant": _looks_like_douyin_live_assistant(title, exe_path),
+    }
