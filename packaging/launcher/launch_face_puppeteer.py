@@ -132,17 +132,17 @@ def main() -> int:
         log_path = portable_root / "workspace" / "launch.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            log_handle = log_path.open("a", encoding="utf-8")
-            log_handle.write(f"\n--- launch {script} ---\n")
+            with log_path.open("a", encoding="utf-8") as log_handle:
+                log_handle.write(f"\n--- launch {script} ---\n")
         except Exception:
-            log_handle = subprocess.DEVNULL
+            pass
 
         subprocess.Popen(
             [str(python_exe), str(script)],
             cwd=str(demo_root),
             env=env,
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         return 0
     except Exception as exc:

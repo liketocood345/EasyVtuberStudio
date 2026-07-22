@@ -127,7 +127,7 @@ def _style_remove_layer_button(button: wx.Button) -> None:
     font.SetWeight(wx.FONTWEIGHT_BOLD)
     button.SetFont(font)
 
-PLACEHOLDER_TEXT = "点击上方图层行以编辑 / Click a layer row above to edit"
+PLACEHOLDER_TEXT = "点击上方图层行以编辑；点「原图」可选中角色底图 / Click a layer row, or Character for the base image"
 
 SPINE_SIDEBAR_WIDTH = 176
 SPINE_DIAGRAM_MIN_HEIGHT = 100
@@ -664,8 +664,8 @@ class LayerRowPanel(wx.Panel):
             header_sizer.Add(self.up_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
             header_sizer.Add(self.down_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
             header_sizer.Add(self.load_btn, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
-            if on_header_clicked is not None:
-                _bind_left_click(self.header, on_header_clicked)
+        if on_header_clicked is not None:
+            _bind_left_click(self.header, on_header_clicked)
 
         sizer.Add(self.header, 1, wx.EXPAND)
 
@@ -683,8 +683,9 @@ class LayerRowPanel(wx.Panel):
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
         self.thumb.set_selected(selected)
-        self.SetBackgroundColour(wx.NullColour)
-        self.header.SetBackgroundColour(wx.NullColour)
+        bg = wx.Colour(255, 248, 210) if selected else wx.NullColour
+        self.SetBackgroundColour(bg)
+        self.header.SetBackgroundColour(bg)
         self.Refresh(False)
 
 
@@ -718,6 +719,15 @@ class LayerDetailDock(wx.Panel):
 
         root = wx.BoxSizer(wx.VERTICAL)
         self.SetSizer(root)
+
+        tool_row = wx.BoxSizer(wx.HORIZONTAL)
+        self.region_wobble_btn = wx.Button(
+            self, label="简易区域晃动 / Region wobble")
+        self.region_wobble_btn.SetToolTip(
+            "打开独立窗口：在静止立绘/层素材预览上涂抹晃动权重；拿起画笔自动放大。"
+            " / Open standalone still-preview brush window for region wobble.")
+        tool_row.Add(self.region_wobble_btn, 1, wx.EXPAND)
+        root.Add(tool_row, 0, wx.EXPAND | wx.ALL, 6)
 
         self.placeholder_panel = LayerDetailPlaceholderPanel(self)
         root.Add(self.placeholder_panel, 0, wx.EXPAND)
@@ -1208,6 +1218,7 @@ class BasicLayerWindow(wx.Frame):
         self._detail_slot_id: Optional[int] = None
         self._selected_slot_ids: set[int] = set()
         self._selection_anchor_slot_id: Optional[int] = None
+        self._character_selected = False
         self._hotkey_row_widgets: list[dict] = []
         self._hotkey_capture_row: Optional[int] = None
         self._hotkey_ui_syncing = False
@@ -1250,6 +1261,8 @@ class BasicLayerWindow(wx.Frame):
         self.SetSizer(frame_sizer)
         frame_sizer.Add(panel, 1, wx.EXPAND)
 
+        self.region_wobble_frame = None
+
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.Bind(wx.EVT_MOVE, self.on_geometry_changed)
         self.Bind(wx.EVT_SIZE, self.on_geometry_changed)
@@ -1265,6 +1278,12 @@ class BasicLayerWindow(wx.Frame):
 
     def on_close(self, event: wx.Event):
         event.Veto()
+        wobble = getattr(self, "region_wobble_frame", None)
+        try:
+            if wobble is not None and bool(wobble):
+                wobble.Hide()
+        except RuntimeError:
+            self.region_wobble_frame = None
         self.Hide()
         self.main_frame.save_basic_layer_window_geometry()
 
@@ -1306,6 +1325,7 @@ class BasicLayerWindow(wx.Frame):
 
     def _wire_detail_dock(self) -> None:
         dock = self.detail_dock
+        dock.region_wobble_btn.Bind(wx.EVT_BUTTON, self._on_open_region_wobble)
         dock.reset_btn.Bind(wx.EVT_BUTTON, self._on_reset_transform)
         dock.clear_btn.Bind(wx.EVT_BUTTON, self._on_clear_asset)
         dock.remove_layer_btn.Bind(wx.EVT_BUTTON, self._on_delete_layer)
@@ -1586,6 +1606,7 @@ class BasicLayerWindow(wx.Frame):
     def clear_all_selection(self) -> None:
         self._selected_slot_ids.clear()
         self._selection_anchor_slot_id = None
+        self._character_selected = False
         self.main_frame.basic_layers_state.selected_slot_id = None
         self._apply_selection_visuals()
 
@@ -1593,16 +1614,36 @@ class BasicLayerWindow(wx.Frame):
         if slot_id is None:
             self.clear_all_selection()
             return
+        self._character_selected = False
         self._selected_slot_ids = {slot_id}
         self._selection_anchor_slot_id = slot_id
         self.main_frame.basic_layers_state.selected_slot_id = slot_id
         self._apply_selection_visuals()
+
+    def select_character_row(self) -> None:
+        """Select the original-character row (deselect all layer slots)."""
+        self._selected_slot_ids.clear()
+        self._selection_anchor_slot_id = None
+        self._character_selected = True
+        self.main_frame.basic_layers_state.selected_slot_id = None
+        self._apply_selection_visuals()
+        self.main_frame.persist_basic_layers_state()
+        if self.main_frame.last_output_wx_image is not None:
+            self.main_frame.draw_cached_result_image(self.main_frame.last_banner_text)
+        self.main_frame.refresh_layer_blend_status()
+
+    def select_character_and_open_region_wobble(self) -> None:
+        """Select 立绘 row and open the region-wobble tool window."""
+        self.select_character_row()
+        self.show_region_wobble_window()
 
     def _apply_selection_visuals(self) -> None:
         selected = self._selected_slot_ids
         primary = self.main_frame.basic_layers_state.selected_slot_id
         for sid, row in self._row_panels.items():
             row.set_selected(sid in selected)
+        if self._character_row is not None:
+            self._character_row.set_selected(bool(self._character_selected))
         if primary is not None and primary in self._row_panels:
             self._detail_slot_id = primary
         elif len(selected) == 1:
@@ -1610,6 +1651,11 @@ class BasicLayerWindow(wx.Frame):
         else:
             self._detail_slot_id = None
         self._refresh_detail_dock()
+        self._notify_region_wobble_selection()
+
+    def _on_character_row_click(self, event: wx.Event) -> None:
+        self.select_character_row()
+        event.Skip()
 
     def _on_layer_row_click(self, slot_id: int, event: wx.Event) -> None:
         state = self.main_frame.basic_layers_state
@@ -1620,6 +1666,7 @@ class BasicLayerWindow(wx.Frame):
         shift_down = modifiers.ShiftDown()
         ctrl_down = modifiers.ControlDown() or modifiers.CmdDown()
 
+        self._character_selected = False
         if shift_down and self._selection_anchor_slot_id is not None:
             if self._selection_anchor_slot_id in visible:
                 anchor_idx = visible.index(self._selection_anchor_slot_id)
@@ -1679,8 +1726,10 @@ class BasicLayerWindow(wx.Frame):
                     self.scroll,
                     slot_id=None,
                     title="原图 / Character",
-                    is_character_row=True)
+                    is_character_row=True,
+                    on_header_clicked=self._on_character_row_click)
                 self._refresh_character_row()
+                self._character_row.set_selected(bool(self._character_selected))
                 self.scroll_sizer.Add(self._character_row, 0, wx.EXPAND | wx.BOTTOM, 4)
                 continue
             assert slot_id is not None
@@ -1701,6 +1750,42 @@ class BasicLayerWindow(wx.Frame):
             self._detail_slot_id = self.main_frame.basic_layers_state.selected_slot_id
         self._refresh_detail_dock()
         self._refresh_layout()
+        self._notify_region_wobble_selection()
+
+    def _region_wobble_panel(self):
+        frame = getattr(self, "region_wobble_frame", None)
+        if frame is None:
+            return None
+        try:
+            if not frame:
+                return None
+        except RuntimeError:
+            self.region_wobble_frame = None
+            return None
+        return getattr(frame, "panel", None)
+
+    def _notify_region_wobble_selection(self) -> None:
+        panel = self._region_wobble_panel()
+        if panel is not None:
+            panel.on_layer_selection_changed()
+
+    def _on_open_region_wobble(self, event: wx.Event) -> None:
+        self.show_region_wobble_window()
+        event.Skip()
+
+    def show_region_wobble_window(self) -> None:
+        from region_wobble_layer_ui import RegionWobbleFrame
+        frame = getattr(self, "region_wobble_frame", None)
+        try:
+            alive = frame is not None and bool(frame)
+        except RuntimeError:
+            alive = False
+            self.region_wobble_frame = None
+            frame = None
+        if not alive:
+            frame = RegionWobbleFrame(self)
+            self.region_wobble_frame = frame
+        frame.show_and_raise()
 
     def _wire_layer_row(self, row: LayerRowPanel, layer: BasicLayerSlot) -> None:
         row.load_btn.Bind(wx.EVT_BUTTON, lambda e, sid=layer.slot_id: self._load_asset(sid))
@@ -1723,10 +1808,15 @@ class BasicLayerWindow(wx.Frame):
             self._populate_row(row, layer, cache)
             row.set_selected(layer.slot_id in self._selected_slot_ids)
         self._refresh_character_row()
+        if self._character_row is not None:
+            self._character_row.set_selected(bool(self._character_selected))
         self._refresh_detail_dock()
         if hasattr(self, "spine_reference"):
             self.spine_reference.sync_from_main_frame()
         self._refresh_layout()
+        panel = self._region_wobble_panel()
+        if panel is not None:
+            panel.refresh_preview()
 
     def refresh_layer_slot_row(self, slot_id: int) -> None:
         """Update one list row and the detail visibility checkbox without rebuilding hotkeys."""
@@ -1840,6 +1930,11 @@ class BasicLayerWindow(wx.Frame):
         selected_ids = self._selected_slot_ids
         if not selected_ids:
             dock.show_placeholder()
+            if self._character_selected:
+                dock.placeholder_panel.hint_text.SetLabel(
+                    "已选原图（角色底图）/ Character base selected")
+            else:
+                dock.placeholder_panel.hint_text.SetLabel(PLACEHOLDER_TEXT)
             self._refresh_layout()
             return
 

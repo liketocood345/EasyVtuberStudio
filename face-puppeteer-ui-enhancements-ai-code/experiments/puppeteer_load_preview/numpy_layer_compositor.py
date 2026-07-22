@@ -176,13 +176,17 @@ def compose_full_stack_rgba(
         character_rgba: numpy.ndarray,
         binding_context: Optional[BindingContext] = None,
         *,
-        binding_smoother: Optional[LayerBindingSmoother] = None) -> numpy.ndarray:
+        binding_smoother: Optional[LayerBindingSmoother] = None,
+        layer_rgba_filter: Optional[
+            Callable[[BasicLayerSlot, numpy.ndarray], numpy.ndarray]] = None,
+) -> numpy.ndarray:
     """Composite the full layer stack (character in the middle) to a straight
     RGBA canvas, mirroring LayerCompositor.draw_post_process_stack.
 
     rgba_loader(layer) returns HxWx4 uint8 straight-alpha RGBA, or None.
     character_rgba is the already-enhanced character frame (any size; scaled to
     canvas if needed).
+    layer_rgba_filter: optional per-layer RGBA mutate before place/swing (f-068).
     """
     canvas_w = max(1, int(canvas_width))
     canvas_h = max(1, int(canvas_height))
@@ -195,6 +199,8 @@ def compose_full_stack_rgba(
         if cached is not _MISSING:
             return cached
         rgba = rgba_loader(layer)
+        if rgba is not None and layer_rgba_filter is not None:
+            rgba = layer_rgba_filter(layer, rgba)
         view = None
         if rgba is not None:
             view = _RgbaSizeView(numpy.ascontiguousarray(rgba, dtype=numpy.uint8))

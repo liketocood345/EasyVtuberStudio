@@ -21,20 +21,50 @@ $PreserveRelative = @(
     ".codegraph"
 )
 
-$ExcludeFromMirror = @(
-    ".git",
-    "plans",
-    ".codegraph",
-    "runtime",
-    "workspace",
-    "addons\face_puppeteer",
-    "addons\tha3_models",
-    "addons\tha4_training",
-    "addons\output_enhancement"
+# Per-directory mirror (same code roots as sync_develop_to_fork.ps1, reversed).
+$CopyDirs = @(
+    "addons", "assets", "bin", "data", "deps", "distiller-ui-doc", "docs",
+    "face-puppeteer-ui-enhancements-ai-code", "packaging", "poetry", "scripts", "src", "tools"
+)
+$CopyFiles = @(
+    ".gitignore", ".python-version", "EasyVtuberStudio.exe", "DEPLOY.bat", "RESET_ADDON.bat"
+)
+
+# /XJ: do not follow junctions (runtime\venv -> face_puppeteer\venv, demo\data\tha4, etc.).
+# Without /XJ a local sync can walk multi-GB addon trees for hours.
+$RoboExclude = @(
+    "__pycache__", ".codegraph", "venv", "runtime", "external_layer_output", "basic_layers",
+    "face_puppeteer", "tha3_models", "tha4_training", "output_enhancement"
+)
+$ExtraDirExclude = @{
+    "face-puppeteer-ui-enhancements-ai-code" = @(
+        # Junction targets under demo\data; reconcile_portable_layout.ps1 recreates them.
+        "talking-head-anime-4-demo\data"
+    )
+}
+$RoboFlags = @(
+    "/E", "/MIR", "/XJ", "/R:2", "/W:1", "/MT:8",
+    "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP"
 )
 
 $stamp = Get-Date -Format "yyyyMMddHHmmss"
 $backup = Join-Path $DevRoot "_sync_preserve_$stamp"
+$sw = [Diagnostics.Stopwatch]::StartNew()
+
+function Remove-BrokenDemoDataTha4Stub {
+    param([string]$RepoRoot)
+    $stub = Join-Path $RepoRoot "face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo\data\tha4"
+    if (-not (Test-Path -LiteralPath $stub)) { return }
+    $item = Get-Item -LiteralPath $stub -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return }
+    if ($item.LinkType) { return }
+    if ($item.Target -and $item.Target.Count -gt 0) { return }
+  # Empty/broken directory left from a partial sync; blocks robocopy on the fork tree.
+    Remove-Item -LiteralPath $stub -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+Remove-BrokenDemoDataTha4Stub -RepoRoot $ForkRoot
+
 New-Item -ItemType Directory -Force -Path $backup | Out-Null
 
 try {
@@ -46,17 +76,29 @@ try {
         }
     }
 
-    $excludeDirs = @((Split-Path $backup -Leaf)) + $ExcludeFromMirror
-    $roboArgs = @($ForkRoot, $DevRoot, "/MIR", "/XF", "README.md", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP")
-    foreach ($d in $excludeDirs) {
-        $roboArgs += "/XD"
-        $roboArgs += $d
+    foreach ($dir in $CopyDirs) {
+        $src = Join-Path $ForkRoot $dir
+        if (-not (Test-Path $src)) { continue }
+        $dst = Join-Path $DevRoot $dir
+        $dirExclude = @($RoboExclude)
+        if ($ExtraDirExclude.ContainsKey($dir)) {
+            $dirExclude += $ExtraDirExclude[$dir]
+        }
+        $args = @($src, $dst) + $RoboFlags + @("/XD") + $dirExclude
+        robocopy @args | Out-Null
+        if ($LASTEXITCODE -ge 8) {
+            throw "robocopy failed for $dir exit $LASTEXITCODE"
+        }
+        Write-Host "Mirrored $dir"
     }
-    robocopy @roboArgs | Out-Null
-    if ($LASTEXITCODE -ge 8) {
-        throw "robocopy failed with exit code $LASTEXITCODE"
+
+    foreach ($file in $CopyFiles) {
+        $src = Join-Path $ForkRoot $file
+        if (Test-Path $src) {
+            Copy-Item -Force $src (Join-Path $DevRoot $file)
+        }
     }
-    Write-Host "Mirrored fork -> develop (preserved full install under addons/, runtime/, workspace/)"
+    Write-Host "Mirrored root files (README.md stays main-only)"
 
     foreach ($rel in $PreserveRelative) {
         $bak = Join-Path $backup $rel
@@ -80,5 +122,6 @@ finally {
     }
 }
 
-Write-Host "Done. Fork: $ForkRoot"
+$sw.Stop()
+Write-Host ("Done in {0:N1}s. Fork: {1}" -f $sw.Elapsed.TotalSeconds, $ForkRoot)
 Write-Host "Develop protected: README.md (main-only), addons payloads, runtime/, workspace/, $($PreserveRelative -join ', ')"
