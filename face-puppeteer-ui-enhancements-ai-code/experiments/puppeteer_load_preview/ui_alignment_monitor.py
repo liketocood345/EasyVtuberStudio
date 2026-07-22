@@ -142,7 +142,10 @@ class UiAlignmentMonitor:
             probe = self._probes.get(probe_id)
             if probe is None:
                 continue
-            result = probe.check()
+            try:
+                result = probe.check()
+            except Exception:
+                continue
             if result is None:
                 continue
             label, ui_val, runtime_val = result

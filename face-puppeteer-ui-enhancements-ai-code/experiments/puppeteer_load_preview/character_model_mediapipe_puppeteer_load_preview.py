@@ -283,6 +283,13 @@ from numpy_edit_chrome import (
     render_selection_chrome_rgba,
 )
 from output_backends import resolve_output_backend
+from app_diag_log import log_once
+from region_wobble_host import (
+    init_region_wobble_on_frame,
+    apply_character_wobble,
+    apply_layer_wobble_filter,
+    persist_masks,
+)
 
 
 try:
@@ -1157,6 +1164,7 @@ class MainFrame(wx.Frame):
         self.layer_asset_cache = LayerAssetCache(self.resolve_layer_asset_path)
         self.layer_binding_smoother = LayerBindingSmoother()
         self.head_binding_pose_filter = HeadBindingPoseFilter()
+        init_region_wobble_on_frame(self)
         self._source_preview_cache_key: Optional[tuple] = None
         self._source_preview_scaled_key: Optional[tuple] = None
         self._source_preview_scaled_bitmap = None
@@ -1308,11 +1316,9 @@ class MainFrame(wx.Frame):
                 return
             if not getattr(self, "_output_stall_heal_logged", False):
                 self._output_stall_heal_logged = True
-                print(
-                    "Output stalled (identical present for "
-                    f"{MainFrame.OUTPUT_STALL_SAMPLE_INTERVAL_SEC:.0f}s); "
-                    "reloading model or portrait...",
-                    file=sys.stderr)
+                log_once(
+                    "output_stall_heal",
+                    "Output stalled; reloading model or portrait...")
             self._maybe_heal_stuck_infer_worker()
             self._reset_infer_worker_runtime()
             if self.get_image_source_mode() == IMAGE_SOURCE_THA3:
@@ -1861,6 +1867,11 @@ class MainFrame(wx.Frame):
             return False
         if window is getattr(self, "output_frame", None):
             return False
+        layer_win = getattr(self, "basic_layer_window", None)
+        if layer_win is not None:
+            wobble = getattr(layer_win, "region_wobble_frame", None)
+            if wobble is not None and window is wobble:
+                return False
         return True
 
     def _is_layer_editing_focus_window(self) -> bool:
@@ -1884,6 +1895,10 @@ class MainFrame(wx.Frame):
             return True
         if output_win is not None and top is output_win:
             return True
+        if layer_win is not None:
+            wobble = getattr(layer_win, "region_wobble_frame", None)
+            if wobble is not None and top is wobble:
+                return True
         return False
 
     def _maybe_clear_layer_selection_after_deactivate(self) -> None:
@@ -1994,6 +2009,31 @@ class MainFrame(wx.Frame):
                     f"图层窗口显示失败：{exc}\n/ Layer window failed to show: {exc}")
             return
         self.refresh_layer_blend_status()
+        # Open wobble editor on 立绘 when character art is already loaded.
+        if self.is_model_loaded():
+            try:
+                window.select_character_and_open_region_wobble()
+            except Exception:
+                traceback.print_exc()
+
+    def maybe_open_region_wobble_after_character_load(self) -> None:
+        """After loading 立绘: ensure layer window, select character, open wobble."""
+        if not self.is_layer_blend_enabled():
+            return
+        try:
+            self.show_basic_layer_window()
+        except Exception:
+            traceback.print_exc()
+            return
+        # show_basic_layer_window already opens wobble when model loaded;
+        # call again in case show path skipped (window already up before load).
+        window = self._get_basic_layer_window()
+        if window is None:
+            return
+        try:
+            window.select_character_and_open_region_wobble()
+        except Exception:
+            traceback.print_exc()
 
     def hide_basic_layer_window(self) -> None:
         window = self._get_basic_layer_window()
@@ -2138,6 +2178,16 @@ class MainFrame(wx.Frame):
             self.controls_frame = None
         if getattr(self, "basic_layer_window", None) is not None:
             if self._wx_control_alive(self.basic_layer_window):
+                wobble = getattr(self.basic_layer_window, "region_wobble_frame", None)
+                try:
+                    if wobble is not None and self._wx_control_alive(wobble):
+                        wobble.Close(force=True)
+                except Exception:
+                    pass
+                try:
+                    self.basic_layer_window.region_wobble_frame = None
+                except Exception:
+                    pass
                 self.basic_layer_window.Destroy()
             self.basic_layer_window = None
         if getattr(self, "layer_asset_cache", None) is not None:
@@ -4792,7 +4842,9 @@ class MainFrame(wx.Frame):
                 canvas_width,
                 canvas_height,
                 character_rgba,
-                binding_context)
+                binding_context,
+                layer_rgba_filter=lambda layer, rgba: apply_layer_wobble_filter(
+                    self, layer, rgba))
         else:
             fg = character_rgba
         c3 = time.perf_counter()
@@ -5460,6 +5512,10 @@ class MainFrame(wx.Frame):
                 self._layer_hotkeys_enabled_state,
                 default=False),
             "layer_force_full_follow": layer_force_full_follow,
+            **(
+                self.character_region_wobble.to_persist_dict()
+                if getattr(self, "character_region_wobble", None) is not None
+                else {}),
             "spine_neck_anchor_ratio": self.get_spine_neck_anchor_ratio(),
             "spine_body_bind_ray_percent": self.get_spine_body_bind_ray_percent(),
             "spine_head_bind_ray_percent": self.get_spine_head_bind_ray_percent(),
@@ -5550,6 +5606,7 @@ class MainFrame(wx.Frame):
             disk_state = self.relativize_persistent_path_fields(self.persistent_ui_state)
             with open(self.get_ui_state_file_path(), "w", encoding="utf-8") as f:
                 json.dump(disk_state, f, ensure_ascii=True, indent=2)
+            persist_masks(self)
         except Exception:
             pass
 
@@ -6356,7 +6413,7 @@ class MainFrame(wx.Frame):
             return
         self._mouse_mocap_fallback_done = True
         if reason:
-            print(f"Switching to Mouse + Audio mode: {reason}", file=sys.stderr)
+            log_once(f"mouse_mocap_fallback:{reason[:80]}", f"Switching to Mouse + Audio mode: {reason}")
         if not self.is_mouse_audio_mocap_mode():
             wx.CallAfter(
                 self.set_mocap_input_mode,
@@ -6390,7 +6447,7 @@ class MainFrame(wx.Frame):
                     dialog_key="face_landmarker_init_failed")
             elif not getattr(self, "_face_landmarker_error_logged", False):
                 self._face_landmarker_error_logged = True
-                print(f"MediaPipe face landmarker unavailable: {exc}", file=sys.stderr)
+                log_once("face_landmarker_async", f"MediaPipe face landmarker unavailable: {exc}")
             self._fallback_to_mouse_mocap_once(reason=str(exc))
             return False
 
@@ -6598,7 +6655,7 @@ class MainFrame(wx.Frame):
             self.set_wrapped_static_text_if_changed(
                 self.osf_status_text,
                 f"OpenSeeFace 错误 / Error:\n{message}")
-        print(f"OpenSeeFace error: {message}", file=sys.stderr)
+        log_once(f"osf_runtime_error:{message[:120]}", f"OpenSeeFace: {message}")
 
     def _start_openseeface_runtime(self, *, from_user: bool = False) -> bool:
         runtime = self._osf_runtime
@@ -10255,7 +10312,7 @@ class MainFrame(wx.Frame):
                     frame = None
                     if not getattr(self, "_window_capture_read_error", None):
                         self._window_capture_read_error = repr(exc)
-                        print(f"ERR: {exc!r}", file=sys.stderr)
+                        log_once("window_capture_read", f"ERR: {exc!r}")
                 elapsed = time.perf_counter() - start
                 if elapsed >= MainFrame.WINDOW_CAPTURE_STALL_SEC:
                     window_capture.invalidate_capture_method_cache(hwnd)
@@ -10307,7 +10364,7 @@ class MainFrame(wx.Frame):
                     ok, frame = False, None
                     if not getattr(self, "_camera_capture_read_error", None):
                         self._camera_capture_read_error = repr(exc)
-                        print(f"ERR camera read: {exc!r}", file=sys.stderr)
+                        log_once("camera_capture_read", f"ERR camera read: {exc!r}")
                 elapsed = time.perf_counter() - start
                 if not ok or frame is None:
                     sleep_for = interval - (time.perf_counter() - start)
@@ -10946,6 +11003,7 @@ class MainFrame(wx.Frame):
         keyframe_rgba = self.output_enhancement.keyframe_cache.rgba
         if keyframe_rgba is None:
             raise RuntimeError("keyframe rgba cache missing")
+        keyframe_rgba = apply_character_wobble(self, keyframe_rgba)
         canvas_width = max(1, int(canvas_width))
         canvas_height = max(1, int(canvas_height))
         return compose_character_rgba_from_keyframe(
@@ -11186,6 +11244,56 @@ class MainFrame(wx.Frame):
 
         return "tick"
 
+    def _region_wobble_output_active(self) -> bool:
+        """True when any character/layer region wobble is enabled with a mask."""
+        st = getattr(self, "character_region_wobble", None)
+        if st is not None and st.enabled and st.has_active_mask():
+            return True
+        if not self.is_layer_blend_enabled():
+            return False
+        store = getattr(self, "_layer_region_wobble", None)
+        if not store:
+            return False
+        state = getattr(self, "basic_layers_state", None)
+        if state is None:
+            return False
+        for layer in state.layers:
+            if not getattr(layer, "region_wobble_enabled", False):
+                continue
+            lst = store.get(int(layer.slot_id))
+            if lst is not None and lst.enabled and lst.has_active_mask():
+                return True
+        return False
+
+    def _region_wobble_compose_token(self) -> tuple:
+        """Quantized wobble/pose token for compose early-out (no warp)."""
+        if not self._region_wobble_output_active():
+            return ("off",)
+        try:
+            from region_wobble_host import head_pose_for_wobble
+            yaw, pitch = head_pose_for_wobble(self)
+        except Exception:
+            yaw, pitch = 0.0, 0.0
+        tokens = [
+            round(float(yaw), 2),
+            round(float(pitch), 2),
+        ]
+        st = getattr(self, "character_region_wobble", None)
+        if st is not None:
+            tokens.append(("c", st.compose_signature_token()))
+        store = getattr(self, "_layer_region_wobble", None)
+        if store and self.is_layer_blend_enabled():
+            state = getattr(self, "basic_layers_state", None)
+            if state is not None:
+                for layer in state.layers:
+                    if not getattr(layer, "region_wobble_enabled", False):
+                        continue
+                    lst = store.get(int(layer.slot_id))
+                    if lst is None or not lst.enabled or not lst.has_active_mask():
+                        continue
+                    tokens.append((int(layer.slot_id), lst.compose_signature_token()))
+        return tuple(tokens)
+
     def _get_compose_signature(
             self,
             wx_image: wx.Image,
@@ -11204,6 +11312,7 @@ class MainFrame(wx.Frame):
             edge_colour.Red(),
             edge_colour.Green(),
             edge_colour.Blue(),
+            self._region_wobble_compose_token(),
         )
 
     def _cached_affine_compose_signature(self) -> Optional[tuple]:
@@ -11266,6 +11375,8 @@ class MainFrame(wx.Frame):
             self.draw_cached_result_image(self.last_banner_text)
             self._maybe_schedule_transparent_capture_update()
         else:
+            # Region wobble is folded into compose signature (~12 Hz idle bucket),
+            # so still_wobble does not force a present every display tick.
             self._present_smooth_output_frame()
         pipe = getattr(self, "output_enhancement", None)
         if pipe is not None and pipe.has_pending_rife() and self.last_output_wx_image is not None:
@@ -11403,6 +11514,7 @@ class MainFrame(wx.Frame):
         self.refresh_basic_layer_window_if_visible()
         self._clear_output_stall_watch_state()
         self._activate_mocap_capture_after_model_load()
+        self.maybe_open_region_wobble_after_character_load()
         return True
 
     def load_model(self, event: wx.Event):
@@ -11476,16 +11588,15 @@ def create_face_landmarker():
             )
             landmarker = mediapipe.tasks.vision.FaceLandmarker.create_from_options(options)
             label = "GPU" if delegate == mediapipe.tasks.BaseOptions.Delegate.GPU else "CPU"
-            print(f"MediaPipe FaceLandmarker using {label} delegate.", file=sys.stderr)
+            log_once(f"mp_landmarker_delegate:{label}", f"MediaPipe FaceLandmarker using {label}")
             return landmarker
         except Exception as exc:
             last_error = exc
             if delegate == mediapipe.tasks.BaseOptions.Delegate.CPU:
                 break
-            print(
-                f"MediaPipe GPU delegate unavailable ({exc}); falling back to CPU.",
-                file=sys.stderr,
-            )
+            log_once(
+                "mp_gpu_delegate_unavailable",
+                f"MediaPipe GPU unavailable; using CPU ({exc})")
     if last_error is not None:
         raise last_error
     raise RuntimeError("Failed to create MediaPipe FaceLandmarker")
@@ -11498,8 +11609,6 @@ if __name__ == "__main__":
         os.environ.setdefault("GLOG_minloglevel", "3")
         os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        print("THA4 Load Preview script:", os.path.abspath(__file__), file=sys.stderr)
-        print("Using device:", device, file=sys.stderr)
 
         pose_converter = MediaPoseFacePoseConverter00()
 

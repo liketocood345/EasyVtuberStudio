@@ -977,6 +977,20 @@ class BasicLayerSlot:
     gif_playback_epoch: float = 0.0
     gif_hide_when_playback_stops: bool = False
     _gif_playback_visibility_dirty: bool = field(default=False, repr=False, compare=False)
+    # f-068 region spring wobble (per-layer); mask PNG stored beside slot assets
+    region_wobble_enabled: bool = False
+    region_wobble_idle_mode: str = "still_wobble"
+    region_wobble_strength: float = 0.35
+    region_wobble_speed: float = 1.0
+    region_wobble_pose_hooks_islands: bool = True
+    region_wobble_island_phase_stagger: bool = False
+    region_wobble_pins: list = field(default_factory=list)
+    region_wobble_axis: object = None
+    region_wobble_axes: list = field(default_factory=list)
+    region_wobble_region_count: int = 1
+    region_wobble_active_region: int = 0
+    region_wobble_active_island: int = 0
+    region_wobble_islands_by_region: list = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         payload = {
@@ -994,6 +1008,22 @@ class BasicLayerSlot:
             "binding_follow_mocap_roll": bool(self.binding_follow_mocap_roll),
             "binding_follow_smooth": bool(self.binding_follow_smooth),
             "binding_follow_smooth_alpha": binding_smooth_alpha_for_layer(self),
+            "region_wobble_enabled": bool(self.region_wobble_enabled),
+            "region_wobble_idle_mode": str(self.region_wobble_idle_mode or "still_wobble"),
+            "region_wobble_strength": float(self.region_wobble_strength),
+            "region_wobble_speed": float(self.region_wobble_speed),
+            "region_wobble_pose_hooks_islands": bool(
+                self.region_wobble_pose_hooks_islands),
+            "region_wobble_island_phase_stagger": bool(
+                self.region_wobble_island_phase_stagger),
+            "region_wobble_pins": list(self.region_wobble_pins or []),
+            "region_wobble_axis": self.region_wobble_axis,
+            "region_wobble_axes": list(self.region_wobble_axes or []),
+            "region_wobble_region_count": int(self.region_wobble_region_count or 1),
+            "region_wobble_active_region": int(self.region_wobble_active_region or 0),
+            "region_wobble_active_island": int(self.region_wobble_active_island or 0),
+            "region_wobble_islands_by_region": list(
+                self.region_wobble_islands_by_region or []),
         }
         if normalize_binding_target(self.binding_parent) is not None:
             payload["binding_ray_percent"] = layer_binding_ray_percent(self)
@@ -1099,6 +1129,23 @@ class BasicLayerSlot:
                 sat_index_raw, sat_count_raw),
             orbit_satellite_count=clamp_orbit_satellite_count(sat_count_raw),
             hotkey_bindings=layer_hotkey_bindings_from_list(data.get("hotkey_bindings")),
+            region_wobble_enabled=bool(data.get("region_wobble_enabled", False)),
+            region_wobble_idle_mode=str(
+                data.get("region_wobble_idle_mode", "still_wobble") or "still_wobble"),
+            region_wobble_strength=float(data.get("region_wobble_strength", 0.35)),
+            region_wobble_speed=float(data.get("region_wobble_speed", 1.0)),
+            region_wobble_pose_hooks_islands=bool(
+                data.get("region_wobble_pose_hooks_islands", True)),
+            region_wobble_island_phase_stagger=bool(
+                data.get("region_wobble_island_phase_stagger", False)),
+            region_wobble_pins=list(data.get("region_wobble_pins") or []),
+            region_wobble_axis=data.get("region_wobble_axis"),
+            region_wobble_axes=list(data.get("region_wobble_axes") or []),
+            region_wobble_region_count=int(data.get("region_wobble_region_count") or 1),
+            region_wobble_active_region=int(data.get("region_wobble_active_region") or 0),
+            region_wobble_active_island=int(data.get("region_wobble_active_island") or 0),
+            region_wobble_islands_by_region=list(
+                data.get("region_wobble_islands_by_region") or []),
         )
 
 

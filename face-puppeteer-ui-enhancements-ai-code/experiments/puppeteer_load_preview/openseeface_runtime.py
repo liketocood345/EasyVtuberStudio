@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import ctypes
 import locale
-import logging
 import os
 import re
 import socket
@@ -14,6 +13,8 @@ from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
+
+from app_diag_log import log_once
 
 from openseeface_mocap_driver import (
     OSF_CAMERA_LIST_TIMEOUT_SEC,
@@ -39,8 +40,6 @@ from portable_paths import (
     resolve_facetracker_exe,
     resolve_openseeface_models_dir,
 )
-
-logger = logging.getLogger(__name__)
 
 _FACETRACKER_CAMERA_IN_USE = threading.Event()
 _FACETRACKER_LIST_LOCK = threading.Lock()
@@ -226,13 +225,11 @@ def _facetracker_console_encoding() -> str:
 
 def list_openseeface_cameras(portable_root: Optional[Path] = None) -> List[OpenSeeFaceCameraInfo]:
     if facetracker_camera_in_use():
-        logger.info("Skipping facetracker -l 1 while OpenSeeFace runtime holds the camera")
         return []
     exe = resolve_facetracker_exe(portable_root)
     if exe is None:
         return []
     if not _FACETRACKER_LIST_LOCK.acquire(blocking=True, timeout=2.0):
-        logger.warning("facetracker -l 1 skipped: list lock busy")
         return []
     try:
         if facetracker_camera_in_use():
@@ -252,17 +249,16 @@ def list_openseeface_cameras(portable_root: Optional[Path] = None) -> List[OpenS
         cameras = parse_facetracker_camera_list(text)
         if not cameras:
             if result.returncode != 0:
-                logger.warning(
-                    "facetracker -l 1 failed (rc=%s): %s",
-                    result.returncode,
-                    text.strip()[:500])
+                log_once(
+                    "osf_list_cameras_failed",
+                    f"facetracker -l 1 failed (rc={result.returncode})")
             elif text.strip():
-                logger.warning(
-                    "facetracker -l 1 returned no cameras; output: %s",
-                    text.strip()[:500])
+                log_once(
+                    "osf_list_cameras_empty",
+                    "facetracker -l 1 returned no cameras")
         return cameras
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        logger.warning("facetracker -l 1 failed: %s", exc)
+        log_once("osf_list_cameras_exc", f"facetracker -l 1 failed: {exc}")
         return []
     finally:
         _FACETRACKER_LIST_LOCK.release()
@@ -336,7 +332,7 @@ class OpenSeeFaceRuntime:
                     if user32.IsWindow(wintypes.HWND(int(hwnd))):
                         user32.ShowWindow(wintypes.HWND(int(hwnd)), SW_HIDE)
                 except OSError:
-                    logger.debug("OpenSeeFace preview hide failed", exc_info=True)
+                    pass
                 self._preview_visible = False
             self._preview_placement_key = None
 
@@ -387,7 +383,6 @@ class OpenSeeFaceRuntime:
                     self._state.preview_status = self._status.preview_status
                 return ok
             except OSError:
-                logger.debug("OpenSeeFace preview placement failed", exc_info=True)
                 self._preview_visible = False
                 self._preview_placement_key = None
                 return False
@@ -532,7 +527,7 @@ class OpenSeeFaceRuntime:
                     try:
                         callback(pose)
                     except Exception:
-                        logger.exception("OpenSeeFace pose callback failed")
+                        pass
         finally:
             try:
                 sock.close()

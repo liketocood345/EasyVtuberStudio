@@ -90,6 +90,8 @@ class Tha3Source:
         main_frame.save_persistent_ui_state()
         if hasattr(main_frame, "refresh_basic_layer_window_if_visible"):
             main_frame.refresh_basic_layer_window_if_visible()
+        if hasattr(main_frame, "maybe_open_region_wobble_after_character_load"):
+            main_frame.maybe_open_region_wobble_after_character_load()
         return True
 
     def tick(self, main_frame) -> Optional[str]:
