@@ -1,17 +1,17 @@
 {
-  "slot_id": 4,
+  "slot_id": 5,
   "enabled": true,
   "visible": true,
-  "asset_path": "data/character_models/baiten_from_project_forlon9/bai_450k/parts/blade_s.png",
-  "z_order": 1,
-  "occlusion": "behind_character",
+  "asset_path": null,
+  "z_order": 5,
+  "occlusion": "in_front_of_character",
   "transform": {
-    "offset_x": -3.9999999999999747,
-    "offset_y": 240.66666666666643,
-    "scale": 0.32,
-    "rotation_deg": -159.0
+    "offset_x": 0.0,
+    "offset_y": 0.0,
+    "scale": 1.0,
+    "rotation_deg": 0.0
   },
-  "binding_parent": "character:body",
+  "binding_parent": null,
   "binding_follow_rotation_same": false,
   "binding_follow_rotation_reverse": false,
   "binding_follow_mocap_position": false,
@@ -31,7 +31,5 @@
   "region_wobble_active_region": 0,
   "region_wobble_active_island": 0,
   "region_wobble_islands_by_region": [],
-  "binding_ray_percent": 86.0,
-  "binding_neck_anchor_ratio": 0.65,
   "motion_mode": "none"
 }

@@ -35,7 +35,8 @@ python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtu
 2. 双击 **`DEPLOY.bat`**，按提示选择安装档位（首次建议前四档直接 Enter，只装 **[1] basic_run**）。  
 3. 双击 **`EasyVtuberStudio.exe`** 启动。
 
-本桶已包含 **`data/ezvtb_nn/`**（NN 超分 / RIFE 权重）与 **`addons/openseeface/`**（OpenSeeFace facetracker + models）。安装档位 **[6] output_enhancement** 时通常无需再拉 ONNX；安装 **[2] openseeface** 时通常无需再下载 facetracker。
+本桶已包含 **`data/ezvtb_nn/`**（NN 超分 / RIFE 权重）与 **`addons/openseeface/`**（OpenSeeFace facetracker + models）。安装档位 **[6] output_enhancement** 时通常无需再拉 ONNX；安装 **[2] openseeface** 时通常无需再下载 facetracker。  
+同步目录亦含 **种子 UI 记忆**：`workspace/load_preview_ui_state.json`、`workspace/basic_layers/`、`workspace/region_wobble_mask*.png`（与 GitHub CORE 一致）。
 
 ### 方式 B：从 GitHub 瘦包 + 自动补全
 
