@@ -13,7 +13,7 @@
 
 | 位置 | 放什么 | 说明 |
 |------|--------|------|
-| **GitHub `main`（CORE ZIP）** | 代码、exe、示例角色、DEPLOY 脚本 | 瘦包；**不含** `data/ezvtb_nn/*.onnx`、`addons/openseeface/` |
+| **GitHub `main`（CORE ZIP）** | 代码、exe、示例角色、DEPLOY 脚本、**种子 UI 记忆**（`workspace/load_preview_ui_state.json` + `basic_layers/`） | 瘦包；**不含** `data/ezvtb_nn/*.onnx`、`addons/openseeface/` |
 | **HF Bucket** | **完整项目树**（与 CORE 同步 + 已内置 `data/ezvtb_nn/`、`addons/openseeface/`） | 用户可 `hf buckets sync` 整目录下载即用；亦供 GitHub 瘦包 DEPLOY 拉取大文件 |
 | **用户本机 `addons/`** | DEPLOY 安装的可选包 | 不入 Git |
 
@@ -54,13 +54,17 @@ $src = "E:\easyvtuberstudio-main"
 $dst = "E:\EasyVtuberStudio-hf"
 New-Item -ItemType Directory -Force -Path $dst | Out-Null
 robocopy $src $dst /MIR /XD .git .codegraph /NFL /NDL /NJH /NJS /nc /ns /np
+# Seed UI memory is tracked on main (`workspace/load_preview_ui_state.json`, `basic_layers/`);
+# MIR copy brings it into the HF mirror automatically.
 ```
 
-3. **确认权重在镜像内存在**：
+3. **确认权重与种子记忆在镜像内存在**：
 
 ```powershell
 Test-Path E:\EasyVtuberStudio-hf\addons\openseeface\Binary\facetracker.exe
 Test-Path E:\EasyVtuberStudio-hf\data\ezvtb_nn\rife\rife_x2_fp32.onnx
+Test-Path E:\EasyVtuberStudio-hf\workspace\load_preview_ui_state.json
+Test-Path E:\EasyVtuberStudio-hf\workspace\basic_layers\manifest.json
 ```
 
 4. **登录 Hugging Face**（不要用 PowerShell 交互粘贴 token，易带入 `\x00` 乱码）：

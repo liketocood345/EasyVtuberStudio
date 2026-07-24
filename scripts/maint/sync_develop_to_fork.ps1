@@ -1,5 +1,6 @@
 # Sync easyvtuberstudio-develop -> easyvtuberstudio-main (code, docs, packaging, scripts).
-# Preserves main .git; skips local-only heavy state (venv, runtime, addons payloads, workspace).
+# Preserves main .git; skips local-only heavy state (venv, runtime, addons payloads).
+# Copies shipped workspace seed memory (load_preview_ui_state.json, basic_layers/, masks).
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\maint\sync_develop_to_fork.ps1
 
@@ -68,7 +69,8 @@ if (-not (Test-Path $gitkeep)) {
     New-Item -ItemType File -Force -Path $gitkeep | Out-Null
 }
 
-foreach ($pack in @("face_puppeteer", "tha3_models", "tha4_training", "output_enhancement")) {
+# CORE fork must not ship optional addons (HF Bucket / DEPLOY installs them).
+foreach ($pack in @("openseeface", "face_puppeteer", "tha3_models", "tha4_training", "output_enhancement")) {
     $path = Join-Path $ForkRoot "addons\$pack"
     if (Test-Path $path) {
         Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
@@ -92,6 +94,9 @@ if (Test-Path $resetFork) {
     Write-Warning "reset_fork_fresh_extract.ps1 not found; fork layout may not match fresh extract."
 }
 
-Write-Host "Synced develop -> fork (code only; fork = fresh CORE extract)"
+. (Join-Path $PSScriptRoot "workspace_shipped_memory.ps1")
+Copy-ShippedWorkspaceMemory -SourceRoot $DevRoot -DestRoot $ForkRoot
+
+Write-Host "Synced develop -> fork (code + shipped workspace memory; fork = fresh CORE extract)"
 Write-Host "  Dev:  $DevRoot"
 Write-Host "  Fork: $ForkRoot"

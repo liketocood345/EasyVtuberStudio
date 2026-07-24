@@ -418,20 +418,26 @@ class RegionWobbleState:
         self._last_wobble_key = None
         self._last_wobble_rgba = None
 
-    def compose_signature_token(self) -> tuple:
-        """Quantized token for present/compose early-out (cheap, no warp)."""
+    def compose_signature_token(self, *, present_hz: float = 30.0) -> tuple:
+        """Quantized token for present/compose early-out (cheap, no warp).
+
+        ``present_hz`` aligns idle/time buckets with the display present cap
+        (default 30) so still_wobble does not pin Out near ~12 Hz.
+        """
         if not self.enabled or not self.has_active_mask():
             return ("off",)
+        hz = max(1.0, float(present_hz))
+        bucket_mod = max(1, int(round(hz * 10.0)))
         angles = []
         phases = []
         for reg in self.regions:
             reg.ensure_island_bank()
             for isl in reg.islands[:MAX_ACTIVE_ISLANDS]:
                 angles.append(round(float(isl.spring_x), 1))
-                phases.append(int(float(isl._time_s) * 12.0) % 120)
+                phases.append(int(float(isl._time_s) * hz) % bucket_mod)
         idle_bucket = 0
         if normalize_idle_mode(self.idle_mode) == IDLE_MODE_STILL_WOBBLE:
-            idle_bucket = int(time.perf_counter() * 12.0) % 120
+            idle_bucket = int(time.perf_counter() * hz) % bucket_mod
         return (
             int(self._mask_generation),
             bool(self.pose_hooks_islands),

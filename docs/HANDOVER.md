@@ -63,7 +63,7 @@ scripts\launch\run_load_preview_puppeteer.bat
 | **OpenSeeFace** | `.../openseeface_mocap_driver.py`、`openseeface_runtime.py`、`openseeface_packet.py` |
 | 鼠标+音频面捕 | `.../experiments/puppeteer_load_preview/mouse_mocap_driver.py` |
 | **ULW 真透输出** | `.../transparent_capture_window.py` |
-| UI 状态 | `workspace/load_preview_ui_state.json` |
+| UI 状态 | `workspace/load_preview_ui_state.json`（**入库种子**；与 `basic_layers/` 一并随 GitHub/HF 发布） |
 | 五层持久化 | `workspace/basic_layers/` |
 | THA3 依赖与资产 | 仓库根 `deps/tha3/`、`deps/pip/` |
 | 环境安装 | `deps/pip/install_all_image_source_deps.bat` |

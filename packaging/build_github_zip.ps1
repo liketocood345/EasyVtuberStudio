@@ -119,6 +119,13 @@ foreach ($fileName in $copyFiles) {
 
 New-Item -ItemType Directory -Force -Path (Join-Path $stageRoot "workspace") | Out-Null
 New-Item -ItemType File -Force -Path (Join-Path $stageRoot "workspace\.gitkeep") | Out-Null
+$shippedMemory = Join-Path $ForkRoot "scripts\maint\workspace_shipped_memory.ps1"
+if (Test-Path $shippedMemory) {
+    . $shippedMemory
+    Copy-ShippedWorkspaceMemory -SourceRoot $ForkRoot -DestRoot $stageRoot
+} else {
+    Write-Warning "workspace_shipped_memory.ps1 missing; ZIP will omit seed UI memory."
+}
 
 $demoData = Join-Path $stageRoot "face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo\data"
 

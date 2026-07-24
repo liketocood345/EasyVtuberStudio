@@ -10,6 +10,18 @@
 
 ---
 
+## 2026-07-25
+
+### 发布 · 长时诊断最小化 + 面捕修正 + 种子记忆入库
+
+| # | 改动 |
+|---|------|
+| R1 | **长时诊断脚手架最小化**：`longrun_diag` 默认关眼部洪泛；全量采样仅 `EVS_LONGRUN_DIAG=1`；倾斜 T2 忽略 neck_z 饱和误报 |
+| R2 | **OSF**：近远 `face_size` 符号修正；眨眼/wink 分类（peer 开度 + dominance）与 wink hold 不继承 blink |
+| R3 | **种子持久化记忆**：`workspace/load_preview_ui_state.json`、`basic_layers/`、`region_wobble_mask*.png` 随 GitHub/HF 发布 |
+
+---
+
 ## 2026-06-24
 
 ### 发布 · 去除 debug 脚手架

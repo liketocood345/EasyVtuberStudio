@@ -23,6 +23,11 @@ from typing import Any, Callable, Optional, Tuple
 
 import numpy
 
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
 
 try:
     from window_capture import _ensure_dpi_awareness
@@ -336,17 +341,29 @@ def _pump_win32_messages() -> None:
 
 
 def _straight_rgba_to_premultiplied_bgra(rgba: numpy.ndarray) -> numpy.ndarray:
+    """Straight RGBA -> premultiplied BGRA for UpdateLayeredWindow.
+
+    Prefer OpenCV (releases the GIL during convert/multiply) so the wx display
+    timer is not starved while the ULW worker premultiplies 768² frames.
+    Falls back to a uint16 integer path if cv2 is unavailable.
+    """
     rgba = numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
     if rgba.ndim != 3 or rgba.shape[2] != 4:
         raise ValueError(f"expected HxWx4 RGBA, got {rgba.shape}")
-    alpha = rgba[:, :, 3:4].astype(numpy.float32) / 255.0
-    rgb = rgba[:, :, 0:3].astype(numpy.float32) * alpha
-    bgra = numpy.empty_like(rgba)
-    bgra[:, :, 0] = numpy.clip(rgb[:, :, 2], 0.0, 255.0).astype(numpy.uint8)
-    bgra[:, :, 1] = numpy.clip(rgb[:, :, 1], 0.0, 255.0).astype(numpy.uint8)
-    bgra[:, :, 2] = numpy.clip(rgb[:, :, 0], 0.0, 255.0).astype(numpy.uint8)
-    bgra[:, :, 3] = rgba[:, :, 3]
-    return numpy.ascontiguousarray(bgra)
+    if cv2 is not None:
+        bgra = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA)
+        b, g, r, a = cv2.split(bgra)
+        b = cv2.multiply(b, a, scale=1.0 / 255.0)
+        g = cv2.multiply(g, a, scale=1.0 / 255.0)
+        r = cv2.multiply(r, a, scale=1.0 / 255.0)
+        return cv2.merge([b, g, r, a])
+    a16 = rgba[:, :, 3].astype(numpy.uint16)
+    out = numpy.empty(rgba.shape, dtype=numpy.uint8)
+    out[:, :, 0] = ((rgba[:, :, 2].astype(numpy.uint16) * a16 + 127) // 255).astype(numpy.uint8)
+    out[:, :, 1] = ((rgba[:, :, 1].astype(numpy.uint16) * a16 + 127) // 255).astype(numpy.uint8)
+    out[:, :, 2] = ((rgba[:, :, 0].astype(numpy.uint16) * a16 + 127) // 255).astype(numpy.uint8)
+    out[:, :, 3] = rgba[:, :, 3]
+    return out
 
 
 def _resolve_app_icon_path() -> Optional[str]:

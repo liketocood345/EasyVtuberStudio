@@ -12,13 +12,14 @@ straight-alpha RGBA (so this module has no dependency on wx or the asset cache).
 from __future__ import annotations
 
 import math
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import cv2
 import numpy
 
 from character_edge_postprocess import composite_rgba_arrays
 from rgba_capture_compose import scale_rgba
+from present_compose_cache import LayerWarpResultCache
 from layer_runtime import (
     MOTION_MODE_SIMPLE_SWING,
     BasicLayersState,
@@ -108,17 +109,44 @@ def _warp_rgba_onto_canvas(
         canvas_width: int,
         canvas_height: int) -> numpy.ndarray:
     # cv2.warpAffine takes the forward (src -> dst) matrix directly, so the
-    # PIL inverse round-trip is unnecessary. cv2 is far faster than PIL BICUBIC,
-    # which matters once several layers each warp per frame.
+    # PIL inverse round-trip is unnecessary. Warp into the rotated AABB only,
+    # then paste onto the full canvas — small sprites must not pay a 768² warp.
     source = numpy.ascontiguousarray(scaled, dtype=numpy.uint8)
+    src_h, src_w = int(source.shape[0]), int(source.shape[1])
+    canvas_width = max(1, int(canvas_width))
+    canvas_height = max(1, int(canvas_height))
+    m = numpy.ascontiguousarray(forward_2x3, dtype=numpy.float64)
+    corners = numpy.array(
+        [[0.0, 0.0, 1.0],
+         [float(src_w), 0.0, 1.0],
+         [float(src_w), float(src_h), 1.0],
+         [0.0, float(src_h), 1.0]],
+        dtype=numpy.float64)
+    mapped = corners @ m.T
+    pad = 2.0
+    x0 = int(math.floor(float(mapped[:, 0].min()) - pad))
+    y0 = int(math.floor(float(mapped[:, 1].min()) - pad))
+    x1 = int(math.ceil(float(mapped[:, 0].max()) + pad))
+    y1 = int(math.ceil(float(mapped[:, 1].max()) + pad))
+    x0 = max(0, min(canvas_width, x0))
+    y0 = max(0, min(canvas_height, y0))
+    x1 = max(0, min(canvas_width, x1))
+    y1 = max(0, min(canvas_height, y1))
+    out = numpy.zeros((canvas_height, canvas_width, 4), dtype=numpy.uint8)
+    if x1 <= x0 or y1 <= y0:
+        return out
+    shifted = m.copy()
+    shifted[0, 2] -= float(x0)
+    shifted[1, 2] -= float(y0)
     warped = cv2.warpAffine(
         source,
-        numpy.ascontiguousarray(forward_2x3, dtype=numpy.float64),
-        (max(1, int(canvas_width)), max(1, int(canvas_height))),
+        shifted,
+        (x1 - x0, y1 - y0),
         flags=cv2.INTER_LINEAR,
         borderMode=cv2.BORDER_CONSTANT,
         borderValue=(0, 0, 0, 0))
-    return numpy.ascontiguousarray(warped, dtype=numpy.uint8)
+    out[y0:y1, x0:x1] = numpy.ascontiguousarray(warped, dtype=numpy.uint8)
+    return out
 
 
 def _render_layer_contribution(
@@ -129,10 +157,12 @@ def _render_layer_contribution(
         binding_context: Optional[BindingContext],
         motion_time_s: Optional[float],
         canvas_width: int,
-        canvas_height: int) -> Optional[numpy.ndarray]:
+        canvas_height: int,
+        *,
+        warp_cache: Optional[LayerWarpResultCache] = None,
+        wobble_token: Any = None) -> Optional[numpy.ndarray]:
     draw_w = max(1, int(round(rect.draw_width)))
     draw_h = max(1, int(round(rect.draw_height)))
-    scaled = scale_rgba(layer_rgba, draw_w, draw_h)
 
     container_rotation_deg = float(layer.transform.rotation_deg)
     container_rotation_deg = resolved_layer_rotation_deg(
@@ -145,27 +175,50 @@ def _render_layer_contribution(
             and layer.motion_mode == MOTION_MODE_SIMPLE_SWING):
         swing_deg = compute_swing_angle_deg(layer, motion_time_s)
 
+    cache_key = None
+    if warp_cache is not None:
+        cache_key = LayerWarpResultCache.make_key(
+            slot_id=int(layer.slot_id),
+            asset_path=layer.asset_path,
+            draw_x=rect.draw_x,
+            draw_y=rect.draw_y,
+            draw_width=rect.draw_width,
+            draw_height=rect.draw_height,
+            rotation_deg=container_rotation_deg,
+            swing_deg=swing_deg,
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+            wobble_token=wobble_token)
+        hit = warp_cache.get(cache_key)
+        if hit is not None:
+            return hit
+
+    scaled = scale_rgba(layer_rgba, draw_w, draw_h)
     needs_transform = (
         abs(container_rotation_deg) > _TRANSFORM_EPS
         or abs(swing_deg) > _TRANSFORM_EPS)
     if not needs_transform:
-        return _paste_rgba_onto_canvas(
+        contribution = _paste_rgba_onto_canvas(
             scaled, rect.draw_x, rect.draw_y, canvas_width, canvas_height)
-
-    cx = rect.draw_x + rect.draw_width / 2.0
-    cy = rect.draw_y + rect.draw_height / 2.0
-    matrix = _mat3_translate(cx, cy) @ _mat3_rotate(container_rotation_deg)
-    if abs(swing_deg) > _TRANSFORM_EPS:
-        pivot_off_x = (clamp_swing_pivot_u(layer.swing_pivot_u) - 0.5) * draw_w
-        pivot_off_y = (clamp_swing_pivot_v(layer.swing_pivot_v) - 0.5) * draw_h
-        matrix = (
-            matrix
-            @ _mat3_translate(pivot_off_x, pivot_off_y)
-            @ _mat3_rotate(swing_deg)
-            @ _mat3_translate(-pivot_off_x, -pivot_off_y))
-    matrix = matrix @ _mat3_translate(-draw_w / 2.0, -draw_h / 2.0)
-    forward_2x3 = numpy.ascontiguousarray(matrix[:2, :])
-    return _warp_rgba_onto_canvas(scaled, forward_2x3, canvas_width, canvas_height)
+    else:
+        cx = rect.draw_x + rect.draw_width / 2.0
+        cy = rect.draw_y + rect.draw_height / 2.0
+        matrix = _mat3_translate(cx, cy) @ _mat3_rotate(container_rotation_deg)
+        if abs(swing_deg) > _TRANSFORM_EPS:
+            pivot_off_x = (clamp_swing_pivot_u(layer.swing_pivot_u) - 0.5) * draw_w
+            pivot_off_y = (clamp_swing_pivot_v(layer.swing_pivot_v) - 0.5) * draw_h
+            matrix = (
+                matrix
+                @ _mat3_translate(pivot_off_x, pivot_off_y)
+                @ _mat3_rotate(swing_deg)
+                @ _mat3_translate(-pivot_off_x, -pivot_off_y))
+        matrix = matrix @ _mat3_translate(-draw_w / 2.0, -draw_h / 2.0)
+        forward_2x3 = numpy.ascontiguousarray(matrix[:2, :])
+        contribution = _warp_rgba_onto_canvas(
+            scaled, forward_2x3, canvas_width, canvas_height)
+    if warp_cache is not None and cache_key is not None and contribution is not None:
+        warp_cache.put(cache_key, contribution)
+    return contribution
 
 
 def compose_full_stack_rgba(
@@ -179,6 +232,9 @@ def compose_full_stack_rgba(
         binding_smoother: Optional[LayerBindingSmoother] = None,
         layer_rgba_filter: Optional[
             Callable[[BasicLayerSlot, numpy.ndarray], numpy.ndarray]] = None,
+        warp_cache: Optional[LayerWarpResultCache] = None,
+        layer_wobble_token_fn: Optional[Callable[[BasicLayerSlot], Any]] = None,
+        base_rgba: Optional[numpy.ndarray] = None,
 ) -> numpy.ndarray:
     """Composite the full layer stack (character in the middle) to a straight
     RGBA canvas, mirroring LayerCompositor.draw_post_process_stack.
@@ -187,6 +243,10 @@ def compose_full_stack_rgba(
     character_rgba is the already-enhanced character frame (any size; scaled to
     canvas if needed).
     layer_rgba_filter: optional per-layer RGBA mutate before place/swing (f-068).
+    warp_cache: optional keyed cache of warped layer contributions.
+    layer_wobble_token_fn: optional per-layer wobble signature for cache keys.
+    base_rgba: optional opaque background plate to seed the canvas (avoids a
+    second full-footprint bg underlay after the stack is built).
     """
     canvas_w = max(1, int(canvas_width))
     canvas_h = max(1, int(canvas_height))
@@ -215,7 +275,12 @@ def compose_full_stack_rgba(
         binding_context,
         binding_smoother=binding_smoother)
 
-    canvas = numpy.zeros((canvas_h, canvas_w, 4), dtype=numpy.uint8)
+    if base_rgba is not None:
+        canvas = numpy.ascontiguousarray(base_rgba, dtype=numpy.uint8).copy()
+        if canvas.shape[0] != canvas_h or canvas.shape[1] != canvas_w:
+            canvas = _fit_canvas(canvas, canvas_w, canvas_h)
+    else:
+        canvas = numpy.zeros((canvas_h, canvas_w, 4), dtype=numpy.uint8)
     motion_time_s = (
         binding_context.motion_time_s if binding_context is not None else None)
     orbit_plan, hidden_slots = orbit_frame_plan(state, binding_context)
@@ -239,6 +304,12 @@ def compose_full_stack_rgba(
         view = _resolver_loader(draw_layer)
         if view is None:
             continue
+        wobble_token = None
+        if layer_wobble_token_fn is not None:
+            try:
+                wobble_token = layer_wobble_token_fn(draw_layer)
+            except Exception:
+                wobble_token = None
         contribution = _render_layer_contribution(
             view.rgba,
             draw_layer,
@@ -247,7 +318,9 @@ def compose_full_stack_rgba(
             binding_context,
             motion_time_s,
             canvas_w,
-            canvas_h)
+            canvas_h,
+            warp_cache=warp_cache,
+            wobble_token=wobble_token)
         if contribution is not None:
             canvas = composite_rgba_arrays(canvas, contribution)
 

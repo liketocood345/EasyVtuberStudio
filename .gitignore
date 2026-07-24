@@ -77,8 +77,14 @@ addons/tha3_models/
 addons/tha4_training/
 !addons/README.md
 !addons/.gitkeep
+# workspace: keep empty by default, but ship seed UI persistence (GitHub + HF).
 workspace/*
 !workspace/.gitkeep
+!workspace/load_preview_ui_state.json
+!workspace/basic_layers/
+!workspace/basic_layers/**
+!workspace/region_wobble_mask.png
+!workspace/region_wobble_mask_*.png
 
 # Allow portable training wrappers (ignore other generated tools output)
 tools/*
@@ -116,5 +122,5 @@ deps/tha3/models/**/*.pt
 # io dump to ABCI tasks
 *.o*
 
-# Local UI state (per-machine; do not commit)
+# Legacy UI state path (pre-portable); real seed is workspace/load_preview_ui_state.json
 face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/load_preview_ui_state.json
