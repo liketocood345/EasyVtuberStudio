@@ -21,6 +21,34 @@ _EXPERIMENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _EXPERIMENT_DIR not in sys.path:
     sys.path.insert(0, _EXPERIMENT_DIR)
 
+# #region agent log
+_AGENT_DEBUG_LOG_PATH = r"e:\debug-d095ab.log"
+
+
+def _agent_debug_ndjson(
+        location: str,
+        message: str,
+        data: dict,
+        *,
+        hypothesis_id: str = "",
+        run_id: str = "pre-fix") -> None:
+    """Legacy FPS-session logger → longrun_diag (off unless EVS_LONGRUN_DIAG=1)."""
+    try:
+        from longrun_diag import emit, longrun_enabled
+        if not longrun_enabled():
+            return
+        emit(
+            location,
+            message,
+            data,
+            hypothesis_id=hypothesis_id or "LR",
+            run_id=run_id if run_id else "longrun",
+            min_interval_s=0.0,
+        )
+    except Exception:
+        pass
+# #endregion
+
 OUTPUT_BACKGROUND_TRANSPARENT = "transparent"
 OUTPUT_BACKGROUND_TRANSPARENT_CAPTURE = "transparent_capture"
 OUTPUT_BACKGROUND_COLOR = "color"
@@ -49,6 +77,9 @@ MOUTH_INFER_CAP_HZ_LABELS = (
 )
 MOUTH_INFER_CAP_HZ_DEFAULT = 10
 MOUTH_POSE_QUANT_STEP = 0.05
+# Event-driven Inf bypass: large mouth/wink deltas skip the uniform infer cap once.
+FAST_ACTION_MOUTH_DELTA = 0.18
+FAST_ACTION_EYE_WINK_DELTA = 0.35
 POSE_PARAM_EPS = 1e-4
 OSF_POSE_PARAM_EPS = 0.004
 
@@ -160,6 +191,9 @@ from layer_runtime import (
     basic_layers_state_has_active_motion,
     consume_layer_gif_playback_visibility_dirty,
     compute_orbit_edit_geometry,
+    layer_has_active_gif_playback,
+    layer_has_active_orbit,
+    layer_has_active_swing,
     layer_uses_orbit_edit_chrome,
     load_basic_layers_state,
     OrbitEditGeometry,
@@ -226,6 +260,7 @@ from openseeface_runtime import (
     OpenSeeFaceRuntime,
     facetracker_camera_in_use,
     list_openseeface_cameras,
+    mark_facetracker_camera_in_use,
 )
 from ui_dialog_guard import show_rate_limited_message
 from ui_switch_guard import block_events, is_blocked, restore_choice, run_guarded_switch, snapshot_choice
@@ -277,6 +312,10 @@ from transparent_capture_window import (
     _straight_rgba_to_premultiplied_bgra,
 )
 from numpy_layer_compositor import compose_full_stack_rgba
+from present_compose_cache import (
+    CharacterWarpCache,
+    LayerWarpResultCache,
+)
 from numpy_edit_chrome import (
     DEFAULT_HIGHLIGHT_RGB,
     render_orbit_edit_chrome_rgba,
@@ -889,8 +928,11 @@ class MainFrame(wx.Frame):
     CAPTURE_PROCESS_INTERVAL_MS = 66
     CAPTURE_PREVIEW_INTERVAL_MS = 66
     CAPTURE_IDLE_INTERVAL_MS = 400
-    DISPLAY_PRESENT_INTERVAL_MS = 30
+    # Present timer ceiling (not an Out FPS floor). Keep full-res compose for
+    # quality; weak machines may lower PRESENT_COMPOSE_SCALE manually later.
     DISPLAY_PRESENT_CAP_HZ = 30
+    DISPLAY_PRESENT_INTERVAL_MS = max(1, int(round(1000.0 / DISPLAY_PRESENT_CAP_HZ)))
+    PRESENT_COMPOSE_SCALE = 1.0
     INFER_WORKER_STUCK_TIMEOUT_SEC = 12.0
     OUTPUT_STALL_SAMPLE_INTERVAL_SEC = 30.0
     OUTPUT_STALL_FINGERPRINT_EDGE = 64
@@ -969,6 +1011,7 @@ class MainFrame(wx.Frame):
         self._mediapipe_detect_error_logged = False
         self._last_preview_ui_time = 0.0
         self._video_enumeration_in_progress = False
+        self._video_connect_after_pending = False
         self._startup_auto_connect_attempted = False
         self._startup_full_controls_shown = False
         self._defer_heavy_ui_refresh = True
@@ -990,6 +1033,35 @@ class MainFrame(wx.Frame):
         self._user_change_history = UserChangeHistory(3)
         self._ui_change_log_wired = False
         self._last_compose_signature: Optional[tuple] = None
+        self._last_present_stages: Optional[dict] = None
+        self._present_stage_log_last_mono: float = 0.0
+        self._layer_warp_result_cache = LayerWarpResultCache()
+        self._character_warp_cache = CharacterWarpCache()
+        # #region agent log
+        self._dbg_display_ticks = 0
+        self._dbg_motion_branch = 0
+        self._dbg_smooth_branch = 0
+        self._dbg_compose_calls = 0
+        self._dbg_compose_early_out = 0
+        self._dbg_char_cache_hit = 0
+        self._dbg_char_cache_miss = 0
+        self._dbg_ulw_deliver = 0
+        self._dbg_ulw_drop = 0
+        self._dbg_ulw_async_busy = 0
+        self._dbg_last_compose_ms = 0.0
+        self._dbg_flush_last_mono = 0.0
+        self._dbg_display_timer_ms = 0.0
+        self._dbg_capture_panel_ms = 0.0
+        self._dbg_infer_tick_ms = 0.0
+        self._dbg_display_gap_sum_ms = 0.0
+        self._dbg_display_gap_n = 0
+        self._dbg_last_display_mono = 0.0
+        self._dbg_capture_calls = 0
+        self._dbg_infer_tick_calls = 0
+        self._dbg_premul_ms = 0.0
+        self._dbg_premul_n = 0
+        self._dbg_ulw_push_ms = 0.0
+        # #endregion
         self._last_transform_status_refresh_time = 0.0
         self._last_chrome_background_signature: Optional[str] = None
         self._cached_background_signature: Optional[str] = None
@@ -1077,6 +1149,9 @@ class MainFrame(wx.Frame):
         self._capture_geometry_save_pending = False
         self._capture_update_pending = False
         self._capture_async_active = False
+        # Latest-wins frame while premultiply/ULW worker is in flight.
+        self._capture_pending_delivery: Optional[tuple] = None
+        self._capture_async_drop_count = 0
         self.transparent_capture_window: Optional[TransparentCaptureWindow] = None
         self._creating_transparent_capture_window = False
         self._startup_autofit_pending = False
@@ -3216,6 +3291,19 @@ class MainFrame(wx.Frame):
             converter.mouth_raised_corner_right_index,
         )
 
+    def get_eye_fast_action_indices(self) -> tuple[int, ...]:
+        converter = self.pose_converter
+        return (
+            converter.eye_wink_left_index,
+            converter.eye_wink_right_index,
+            converter.eye_happy_wink_left_index,
+            converter.eye_happy_wink_right_index,
+            converter.eye_surprised_left_index,
+            converter.eye_surprised_right_index,
+            converter.eye_relaxed_left_index,
+            converter.eye_relaxed_right_index,
+        )
+
     def _pose_infer_exempt_indices(self) -> frozenset[int]:
         return frozenset(self.get_mouth_pose_indices()) | frozenset([
             self.pose_converter.breathing_index,
@@ -3235,6 +3323,27 @@ class MainFrame(wx.Frame):
             if abs(last_pose[index] - current_pose[index]) >= MOUTH_POSE_QUANT_STEP:
                 return True
         return False
+
+    def _pose_fast_action_spike(
+            self,
+            last_pose: List[float],
+            current_pose: List[float]) -> tuple[bool, str, float]:
+        """True when mouth/wink jumps hard enough to bypass the Inf cap once."""
+        mouth_max = 0.0
+        for index in self.get_mouth_pose_indices():
+            if index >= len(last_pose) or index >= len(current_pose):
+                continue
+            mouth_max = max(mouth_max, abs(current_pose[index] - last_pose[index]))
+        if mouth_max >= FAST_ACTION_MOUTH_DELTA:
+            return True, "mouth", float(mouth_max)
+        eye_max = 0.0
+        for index in self.get_eye_fast_action_indices():
+            if index >= len(last_pose) or index >= len(current_pose):
+                continue
+            eye_max = max(eye_max, abs(current_pose[index] - last_pose[index]))
+        if eye_max >= FAST_ACTION_EYE_WINK_DELTA:
+            return True, "eye", float(eye_max)
+        return False, "", float(max(mouth_max, eye_max))
 
     def get_effective_infer_cap_hz(self) -> int:
         base = self.get_mouth_infer_cap_hz()
@@ -3263,6 +3372,27 @@ class MainFrame(wx.Frame):
         if self.is_smooth_display_priority():
             if not self._pose_any_changed(reference_pose, current_pose):
                 return False
+            # Keep base Inf cap for small motion; large blink/speech jumps infer immediately.
+            spiked, spike_kind, spike_mag = self._pose_fast_action_spike(
+                reference_pose, current_pose)
+            if spiked:
+                # #region agent log
+                now_mono = time.perf_counter()
+                last_log = float(getattr(self, "_dbg_fast_action_log_mono", 0.0))
+                if now_mono - last_log >= 0.25:
+                    self._dbg_fast_action_log_mono = now_mono
+                    _agent_debug_ndjson(
+                        "should_infer_pose:fast_action",
+                        "fast_action_infer_bypass",
+                        {
+                            "kind": spike_kind,
+                            "mag": round(spike_mag, 4),
+                            "cap_hz": int(self.get_effective_infer_cap_hz()),
+                        },
+                        hypothesis_id="FA",
+                        run_id="scale-fast-action")
+                # #endregion
+                return True
             now_ns = time.time_ns()
             min_interval_ns = int(1e9 / max(1, self.get_effective_infer_cap_hz()))
             if self._last_pose_infer_time_ns is None:
@@ -3363,6 +3493,12 @@ class MainFrame(wx.Frame):
     def _clear_present_compose_dedupe(self) -> None:
         self._last_compose_signature = None
         self._last_cached_affine_present_time_ns = None
+        cache = getattr(self, "_layer_warp_result_cache", None)
+        if cache is not None:
+            cache.clear()
+        char_cache = getattr(self, "_character_warp_cache", None)
+        if char_cache is not None:
+            char_cache.clear()
 
     def _infer_worker_stuck(self) -> bool:
         if not self._infer_worker_active:
@@ -3380,6 +3516,7 @@ class MainFrame(wx.Frame):
             self._infer_worker_active = False
             self._infer_worker_started_mono = 0.0
         self._capture_async_active = False
+        self._capture_pending_delivery = None
         self._clear_present_compose_dedupe()
         self._clear_output_stall_watch_state()
         if torch.cuda.is_available():
@@ -3544,18 +3681,9 @@ class MainFrame(wx.Frame):
         """Single hook after each ULW frame reaches the output surface."""
         self._note_capture_present_time()
         self._note_actual_output_present()
-
-    def _refresh_fps_display(self) -> None:
-        if not hasattr(self, "fps_text"):
-            return
-        input_fps = getattr(self, "_input_fps", 0.0)
-        inference_fps = getattr(self, "_inference_fps", 0.0)
-        display_fps = self._get_display_out_fps_for_label()
-        label = (
-            f"输入 In {input_fps:.1f}\n"
-            f"推理 Inf {inference_fps:.1f}\n"
-            f"显示 Out {display_fps:.1f}")
-        self.set_wrapped_static_text_if_changed(self.fps_text, label)
+        # #region agent log
+        self._dbg_ulw_deliver = int(getattr(self, "_dbg_ulw_deliver", 0)) + 1
+        # #endregion
 
     def _record_ui_change(self, message: str) -> None:
         if is_blocked(self):
@@ -3986,11 +4114,31 @@ class MainFrame(wx.Frame):
         pipe = getattr(self, "output_enhancement", None)
         if pipe is None or present_rgba is None:
             return present_rgba
+        # Off path must stay near-zero cost on the UI present tick.
+        if not pipe.is_active() and not pipe.has_pending_rife():
+            return present_rgba
         pending = pipe.pop_rife_frame()
         if pending is not None:
             return pending
+        if not pipe.is_active():
+            return present_rgba
         self._sync_output_enhancement_config()
         return pipe.apply(present_rgba, is_new_real_frame=True)
+
+    def _refresh_fps_display(self) -> None:
+        if not hasattr(self, "fps_text"):
+            return
+        input_fps = getattr(self, "_input_fps", 0.0)
+        inference_fps = getattr(self, "_inference_fps", 0.0)
+        display_fps = self._get_display_out_fps_for_label()
+        label = (
+            f"输入 In {input_fps:.1f}\n"
+            f"推理 Inf {inference_fps:.1f}\n"
+            f"显示 Out {display_fps:.1f}")
+        if not self.is_smooth_affine_30hz_enabled():
+            cap = max(1, int(self.get_mouth_infer_cap_hz()))
+            label += f"\nSmooth关→Out上限{cap}"
+        self.set_wrapped_static_text_if_changed(self.fps_text, label)
 
     def get_output_background_hex(self) -> str:
         picker = getattr(self, "output_background_choice", None)
@@ -4645,17 +4793,35 @@ class MainFrame(wx.Frame):
             self._cached_capture_foreground_rgba = rgba
             self._cached_capture_foreground_signature = signature
             if getattr(self, "_capture_async_active", False):
+                # Latest-wins: keep newest frame; deliver when worker finishes.
+                self._capture_pending_delivery = (signature, rgba, capture_t0)
+                self._capture_async_drop_count = int(
+                    getattr(self, "_capture_async_drop_count", 0)) + 1
+                # #region agent log
+                self._dbg_ulw_drop = int(getattr(self, "_dbg_ulw_drop", 0)) + 1
+                self._dbg_ulw_async_busy = int(
+                    getattr(self, "_dbg_ulw_async_busy", 0)) + 1
+                # #endregion
                 return
-            self._capture_async_active = True
-            threading.Thread(
-                target=self._async_premultiply_and_deliver,
-                args=(signature, rgba, capture_t0),
-                daemon=True,
-                name="capture-premultiply").start()
+            self._start_ulw_premultiply_delivery(signature, rgba, capture_t0)
         except Exception as exc:
             print(
                 "ERR capture push:", exc, file=sys.stderr)
             self._capture_async_active = False
+            self._capture_pending_delivery = None
+
+    def _start_ulw_premultiply_delivery(
+            self,
+            signature: tuple,
+            rgba: numpy.ndarray,
+            capture_t0: float) -> None:
+        self._capture_async_active = True
+        self._capture_pending_delivery = None
+        threading.Thread(
+            target=self._async_premultiply_and_deliver,
+            args=(signature, rgba, capture_t0),
+            daemon=True,
+            name="capture-premultiply").start()
 
     def _async_premultiply_and_deliver(
             self,
@@ -4663,16 +4829,39 @@ class MainFrame(wx.Frame):
             rgba: numpy.ndarray,
             capture_t0: float) -> None:
         try:
+            # #region agent log
+            _pre_t0 = time.perf_counter()
+            # #endregion
             premultiplied_bgra = _straight_rgba_to_premultiplied_bgra(rgba)
+            # #region agent log
+            try:
+                self._dbg_premul_ms = float(
+                    getattr(self, "_dbg_premul_ms", 0.0)) + (
+                    time.perf_counter() - _pre_t0) * 1000.0
+                self._dbg_premul_n = int(getattr(self, "_dbg_premul_n", 0)) + 1
+            except Exception:
+                pass
+            # #endregion
         except Exception:
             premultiplied_bgra = None
         capture_window = getattr(self, "transparent_capture_window", None)
         if capture_window is not None and capture_window.is_valid():
             try:
+                # #region agent log
+                _push_t0 = time.perf_counter()
+                # #endregion
                 capture_window.update_frame_rgba(
                     rgba,
                     frame_signature=signature,
                     premultiplied_bgra=premultiplied_bgra)
+                # #region agent log
+                try:
+                    self._dbg_ulw_push_ms = float(
+                        getattr(self, "_dbg_ulw_push_ms", 0.0)) + (
+                        time.perf_counter() - _push_t0) * 1000.0
+                except Exception:
+                    pass
+                # #endregion
             except Exception as exc:
                 print(f"ERR ULW deliver: {exc!r}", file=sys.stderr)
         wx.CallAfter(self._finish_ulw_delivery, capture_t0)
@@ -4680,11 +4869,20 @@ class MainFrame(wx.Frame):
     def _finish_ulw_delivery(self, capture_t0: float) -> None:
         self._capture_async_active = False
         if self._is_closing or not self.is_ulw_output_enabled():
+            self._capture_pending_delivery = None
             return
         try:
             self._on_ulw_frame_delivered()
         except Exception as exc:
             print(f"ERR: {exc!r}", file=sys.stderr)
+        pending = getattr(self, "_capture_pending_delivery", None)
+        if pending is None:
+            return
+        self._capture_pending_delivery = None
+        signature, rgba, pending_t0 = pending
+        if rgba is None:
+            return
+        self._start_ulw_premultiply_delivery(signature, rgba, pending_t0)
 
     def _deliver_capture_premultiplied(
             self,
@@ -4694,6 +4892,7 @@ class MainFrame(wx.Frame):
             capture_t0: float) -> None:
         self._capture_async_active = False
         if self._is_closing or not self.is_ulw_output_enabled():
+            self._capture_pending_delivery = None
             return
         capture_window = getattr(self, "transparent_capture_window", None)
         if capture_window is None or not capture_window.is_valid():
@@ -4717,7 +4916,12 @@ class MainFrame(wx.Frame):
         if getattr(self, "_capture_update_pending", False):
             return
         self._capture_update_pending = True
-        wx.CallAfter(self._run_transparent_capture_update)
+        if immediate:
+            # Caller is already on the wx UI thread (display present / edit).
+            # Run inline to avoid an extra CallAfter hop that delays Out FPS.
+            self._run_transparent_capture_update()
+        else:
+            wx.CallAfter(self._run_transparent_capture_update)
 
     def _run_transparent_capture_update(self) -> None:
         self._capture_update_pending = False
@@ -4814,10 +5018,15 @@ class MainFrame(wx.Frame):
     def compose_output_stack_rgba(
             self,
             canvas_width: int,
-            canvas_height: int) -> Optional[numpy.ndarray]:
+            canvas_height: int,
+            *,
+            antialias_factor: Optional[float] = None,
+            apply_edge: bool = True,
+            base_rgba: Optional[numpy.ndarray] = None,
+            sanitize_fringe: bool = True) -> Optional[numpy.ndarray]:
         """wx-free full output composite: enhanced character keyframe + layer
-        stack, all in numpy (no wx.DC). Returns transparent-background straight
-        RGBA, or None when no keyframe is cached yet.
+        stack, all in numpy (no wx.DC). Returns straight RGBA (seeded from
+        base_rgba when provided), or None when no keyframe is cached yet.
 
         This is the unified render entry the capture path (and the future
         ctypes layered output window) consume so enhancement and multi-layer
@@ -4827,12 +5036,16 @@ class MainFrame(wx.Frame):
             return None
         canvas_width = max(1, int(canvas_width))
         canvas_height = max(1, int(canvas_height))
-        antialias_factor = self._get_antialias_factor()
+        if antialias_factor is None:
+            antialias_factor = self._get_antialias_factor()
+        else:
+            antialias_factor = float(antialias_factor)
         c0 = time.perf_counter()
         character_rgba = self._compose_character_rgba_from_keyframe(
             canvas_width, canvas_height, antialias_factor)
         c1 = time.perf_counter()
-        character_rgba = self._apply_character_edge_postprocess_rgba(character_rgba)
+        if apply_edge:
+            character_rgba = self._apply_character_edge_postprocess_rgba(character_rgba)
         c2 = time.perf_counter()
         if self.is_layer_blend_enabled():
             binding_context = self._make_binding_context(canvas_width, canvas_height)
@@ -4844,11 +5057,23 @@ class MainFrame(wx.Frame):
                 character_rgba,
                 binding_context,
                 layer_rgba_filter=lambda layer, rgba: apply_layer_wobble_filter(
-                    self, layer, rgba))
+                    self, layer, rgba),
+                warp_cache=getattr(self, "_layer_warp_result_cache", None),
+                layer_wobble_token_fn=self._layer_wobble_cache_token,
+                base_rgba=base_rgba)
+        elif base_rgba is not None:
+            fg = composite_rgba_arrays(
+                numpy.ascontiguousarray(base_rgba, dtype=numpy.uint8),
+                character_rgba)
         else:
             fg = character_rgba
         c3 = time.perf_counter()
-        result = self.sanitize_rgba_alpha_fringe(fg)
+        # Opaque ULW bg already seeds the canvas; transparent fringe RGB is
+        # covered by the plate, so full-canvas sanitize is wasted work.
+        if sanitize_fringe:
+            result = self.sanitize_rgba_alpha_fringe(fg)
+        else:
+            result = fg
         c4 = time.perf_counter()
         self._compose_stack_substages = {
             "char": (c1 - c0) * 1000.0,
@@ -6565,6 +6790,15 @@ class MainFrame(wx.Frame):
         previous_mode = self.mocap_input_mode
         if mode == previous_mode:
             self.refresh_mocap_input_mode_ui()
+            # Re-selecting the same mode recovers a dead capture session.
+            if from_user and self.is_model_loaded():
+                if mode == MOCAP_INPUT_MODE_MEDIAPIPE and not self.is_capture_source_active():
+                    wx.CallAfter(self.refresh_and_autoload_video_source)
+                elif (
+                        mode == MOCAP_INPUT_MODE_OPENSEEFACE
+                        and not self._osf_runtime.status.process_running):
+                    wx.CallAfter(
+                        lambda: self.refresh_osf_camera_choices_async(reconnect_after=True))
             return True
 
         if mode == MOCAP_INPUT_MODE_MEDIAPIPE:
@@ -6603,6 +6837,7 @@ class MainFrame(wx.Frame):
         if previous_mode == MOCAP_INPUT_MODE_MEDIAPIPE or mode == MOCAP_INPUT_MODE_OPENSEEFACE:
             self._release_video_input_for_openseeface()
 
+        defer_osf_start = False
         if mode == MOCAP_INPUT_MODE_OPENSEEFACE:
             self._osf_runtime_error = ""
             self.pose_converter.args.set_mouth_input_mode("face")
@@ -6612,8 +6847,12 @@ class MainFrame(wx.Frame):
             self._osf_input_pacer.reset()
             self._osf_pace_keyframe_committed = False
             self._osf_pose_converter_calibrated = False
-            if start_osf_runtime:
-                if not self._start_openseeface_runtime(from_user=from_user):
+            if start_osf_runtime and self.is_model_loaded():
+                # Enumerate cameras first (releases stale claim, picks valid index),
+                # then start — same path as post-model-load activation.
+                if from_user:
+                    defer_osf_start = True
+                elif not self._start_openseeface_runtime(from_user=from_user):
                     return False
 
         if mode == MOCAP_INPUT_MODE_MOUSE_AUDIO:
@@ -6639,11 +6878,18 @@ class MainFrame(wx.Frame):
             self.schedule_active_capture_timer()
         if persist:
             self.save_persistent_ui_state()
+        if mode == MOCAP_INPUT_MODE_MEDIAPIPE and self.is_model_loaded():
+            # Video was released when leaving OSF / never connected after mode switch.
+            wx.CallAfter(self.refresh_and_autoload_video_source)
+        elif defer_osf_start:
+            wx.CallAfter(
+                lambda: self.refresh_osf_camera_choices_async(reconnect_after=True))
         return True
 
     def _release_video_input_for_openseeface(self) -> None:
         """Release OpenCV camera so facetracker can open the device exclusively."""
         self.release_video_capture()
+        self.video_source_kind = "none"
         with self._camera_capture_lock:
             self._camera_capture_worker_active = False
             self._camera_capture_latest_frame = None
@@ -6830,6 +7076,8 @@ class MainFrame(wx.Frame):
             *,
             stop_runtime_for_probe: bool = True) -> None:
         if self._osf_camera_enum_in_progress:
+            if reconnect_after:
+                self._osf_camera_reconnect_after_enum = True
             return
         choice = getattr(self, "osf_camera_choice", None)
         if choice is None:
@@ -6842,7 +7090,10 @@ class MainFrame(wx.Frame):
             self._stop_openseeface_runtime()
             restart_after_enum = True
         elif facetracker_camera_in_use():
-            return
+            # Stale claim after facetracker crash (process_running already false).
+            if self._osf_runtime.status.process_running:
+                return
+            mark_facetracker_camera_in_use(False)
         self._osf_camera_reconnect_after_enum = restart_after_enum
         self._osf_camera_enum_in_progress = True
         if hasattr(self, "osf_status_text"):
@@ -6874,11 +7125,11 @@ class MainFrame(wx.Frame):
             self._osf_started_mono = 0.0
 
     def _apply_osf_camera_choices(self, cameras: list) -> None:
-        self._osf_camera_enum_in_progress = False
         reconnect_after = bool(getattr(self, "_osf_camera_reconnect_after_enum", False))
-        self._osf_camera_reconnect_after_enum = False
         choice = getattr(self, "osf_camera_choice", None)
         if choice is None:
+            self._osf_camera_enum_in_progress = False
+            self._osf_camera_reconnect_after_enum = False
             return
         previous_index = int(self._osf_camera_index)
         labels: List[str] = []
@@ -6914,6 +7165,12 @@ class MainFrame(wx.Frame):
             self._osf_camera_label = camera_names[selection]
         if self.is_openseeface_mocap_mode() and hasattr(self, "osf_status_text"):
             self.osf_status_text.SetLabel(self.get_openseeface_preview_status_message())
+        # Keep enum "in progress" until here so overlapping refresh_osf only queues
+        # reconnect_after instead of starting a second list process.
+        if getattr(self, "_osf_camera_reconnect_after_enum", False):
+            reconnect_after = True
+        self._osf_camera_enum_in_progress = False
+        self._osf_camera_reconnect_after_enum = False
         if reconnect_after and self.is_openseeface_mocap_mode():
             self.save_persistent_ui_state()
             if self._osf_camera_index != previous_index:
@@ -8269,18 +8526,37 @@ class MainFrame(wx.Frame):
     def connect_default_video_source(self):
         if self.video_source_choice is None or self.video_source_choice.GetCount() == 0:
             return
+        # MediaPipe face capture: prefer a real camera. Saved window entries are
+        # often stale hwnds that leave the preview blank ("no video source").
+        prefer_camera = self.mocap_input_mode == MOCAP_INPUT_MODE_MEDIAPIPE
+        camera_labels: list[str] = []
+        window_labels: list[str] = []
         for label in self.video_source_choice.GetStrings():
             entry = self.video_source_choice_map.get(label)
-            if entry is not None and entry[0] == "window":
-                self.video_source_choice.SetStringSelection(label)
-                self.on_video_source_choice_changed(wx.CommandEvent())
+            if entry is None:
+                continue
+            kind = entry[0]
+            if kind == "camera":
+                camera_labels.append(label)
+            elif kind == "window":
+                hwnd = entry[1]
+                if hwnd and window_capture.is_window_valid(int(hwnd)):
+                    window_labels.append(label)
+
+        ordered = camera_labels + window_labels if prefer_camera else window_labels + camera_labels
+        if self._last_camera_index is not None:
+            for label in camera_labels:
+                entry = self.video_source_choice_map.get(label)
+                if entry is not None and int(entry[1]) == int(self._last_camera_index):
+                    ordered = [label] + [item for item in ordered if item != label]
+                    break
+
+        for label in ordered:
+            self.video_source_choice.SetStringSelection(label)
+            self.on_video_source_choice_changed(wx.CommandEvent())
+            if self.is_capture_source_active():
                 return
-        for label in self.video_source_choice.GetStrings():
-            entry = self.video_source_choice_map.get(label)
-            if entry is not None and entry[0] == "camera":
-                self.video_source_choice.SetStringSelection(label)
-                self.on_video_source_choice_changed(wx.CommandEvent())
-                return
+            # Failed open — try next candidate.
 
     def update_video_source_status_text(self, message: str):
         if self.video_source_status_text is not None:
@@ -8577,11 +8853,14 @@ class MainFrame(wx.Frame):
             self.webcam_capture_panel.Refresh(False)
 
     def refresh_video_source_choice_async(self, connect_after: bool = False, trigger_source: str = "manual"):
-        refresh_start = time.time()
         if self._video_enumeration_in_progress:
+            if connect_after:
+                self._video_connect_after_pending = True
             return
         normalized_trigger = "auto" if str(trigger_source).lower() == "auto" else "manual"
         self._video_enumeration_in_progress = True
+        if connect_after:
+            self._video_connect_after_pending = True
         if normalized_trigger == "auto":
             self.update_video_source_status_text("自动加载视频源中... / Auto loading video sources...")
         else:
@@ -8589,7 +8868,13 @@ class MainFrame(wx.Frame):
 
         def worker():
             discovered = self.enumerate_camera_sources()
-            wx.CallAfter(self._apply_video_source_choices, discovered, connect_after, normalized_trigger)
+            # Pending flag is authoritative so overlapping autoload calls cannot
+            # drop connect_after when a prior enum was still running.
+            wx.CallAfter(
+                self._apply_video_source_choices,
+                discovered,
+                bool(getattr(self, "_video_connect_after_pending", False) or connect_after),
+                normalized_trigger)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -8598,6 +8883,9 @@ class MainFrame(wx.Frame):
                                     connect_after: bool,
                                     trigger_source: str = "manual"):
         self._video_enumeration_in_progress = False
+        if getattr(self, "_video_connect_after_pending", False):
+            connect_after = True
+            self._video_connect_after_pending = False
         if self.video_source_choice is None:
             return
 
@@ -9241,14 +9529,14 @@ class MainFrame(wx.Frame):
 
         mouth_infer_cap_hint = wx.StaticText(
             self.postprocess_panel,
-            label="节流全部 GPU 推理（含大动作）；显示 ~30Hz 用 cached 帧 / throttles all infer; display uses cached")
+            label="节流全部 GPU 推理（含大动作）；显示用 cached 帧 / throttles all infer; display uses cached")
         self.postprocess_panel_sizer.Add(
             mouth_infer_cap_hint,
             wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
 
         self.smooth_affine_30hz_checkbox = wx.CheckBox(
             self.postprocess_panel,
-            label="平滑位移 30Hz / Smooth Motion 30Hz")
+            label="平滑位移 / Smooth Motion")
         self.smooth_affine_30hz_checkbox.SetValue(smooth_affine_30hz)
         self.smooth_affine_30hz_checkbox.Bind(wx.EVT_CHECKBOX, self.on_smooth_affine_30hz_changed)
         self.postprocess_panel_sizer.Add(
@@ -9257,7 +9545,8 @@ class MainFrame(wx.Frame):
 
         smooth_affine_hint = wx.StaticText(
             self.postprocess_panel,
-            label="开 = 动态增强 ~30Hz 重绘（默认，更顺）/ on = smooth pan & scale; "
+            label="开 = 动态增强随显示重绘 / "
+                  "on = smooth pan & scale at present rate; "
                   "关 = 跟 GPU 推理上限（省 CPU）/ off follows infer cap")
         self.postprocess_panel_sizer.Add(
             smooth_affine_hint,
@@ -9825,7 +10114,19 @@ class MainFrame(wx.Frame):
         return self._perform_head_orientation_calibration(calibration_time=time_now)
 
     def maybe_apply_periodic_direction_calibration(self):
-        self.try_apply_auto_forward_gaze_calibration(time.time(), respect_interval=True)
+        applied = self.try_apply_auto_forward_gaze_calibration(time.time(), respect_interval=True)
+        # #region agent log
+        if applied:
+            try:
+                from longrun_diag import note_direction_calib
+                note_direction_calib(
+                    roll_deg=float(self.latest_head_roll_deg or 0.0),
+                    neutral_roll=float(self.neutral_head_roll_deg),
+                    source="periodic_direction",
+                )
+            except Exception:
+                pass
+        # #endregion
 
     def maybe_apply_periodic_scale_calibration(self) -> None:
         """Periodic auto UI-A02/A10 (camera + OSF); mouse uses UI-B07."""
@@ -9899,7 +10200,9 @@ class MainFrame(wx.Frame):
     def get_scale_curve_current_delta(self) -> Optional[float]:
         if self.latest_face_screen_motion is None or self.neutral_face_screen_motion is None:
             return None
-        return self.latest_face_screen_motion.face_size - self.neutral_face_screen_motion.face_size
+        return (
+            self.latest_face_screen_motion.face_size
+            - self.neutral_face_screen_motion.face_size)
 
     def get_scale_curve_domain(self) -> tuple[float, float]:
         current_delta = self.get_scale_curve_current_delta()
@@ -9984,12 +10287,20 @@ class MainFrame(wx.Frame):
         arc_power = max(0.05, self.scale_curve_arc_spin.GetValue())
         overshoot_factor = 1.18
 
-        size_delta = latest_face_size - neutral_face_size - self.scale_curve_peak_shift_spin.GetValue()
-        scaled_delta = size_delta * self.scale_gain_spin.GetValue()
+        # Face-box grows when the user approaches the camera.
+        # Contract: 靠近→放大(近距曲率)、远离→缩小(远距曲率). Curve axis: left=Far, right=Near.
+        # Live callers may pass an already sign-corrected face_size when mocap depth is inverted.
+        physical_delta = (
+            float(latest_face_size)
+            - float(neutral_face_size)
+            - self.scale_curve_peak_shift_spin.GetValue())
+        approaching = physical_delta >= 0.0
+        magnitude = abs(physical_delta) * self.scale_gain_spin.GetValue()
 
-        if scaled_delta >= 0.0:
+        if approaching:
             positive_span = max_scale - 1.0
-            expand_response = math.tanh(scaled_delta * self.scale_curve_near_spin.GetValue())
+            expand_response = math.tanh(
+                magnitude * self.scale_curve_near_spin.GetValue())
             expand_response = expand_response ** arc_power
             raw_scale = 1.0 + positive_span * expand_response * overshoot_factor
             upper_bound = max(1.0, max_scale)
@@ -10005,8 +10316,8 @@ class MainFrame(wx.Frame):
         if negative_span <= 0.0:
             return min_scale, min_scale, "min"
 
-        # Shrink more conservatively than zoom-in so moving away does not make the avatar too small too quickly.
-        shrink_response = math.tanh(abs(scaled_delta) * self.scale_curve_far_spin.GetValue())
+        shrink_response = math.tanh(
+            magnitude * self.scale_curve_far_spin.GetValue())
         shrink_response = shrink_response ** arc_power
         raw_scale = 1.0 - negative_span * shrink_response * overshoot_factor
         target_scale = max(min_scale, raw_scale)
@@ -10056,6 +10367,29 @@ class MainFrame(wx.Frame):
                 target_offset_x = (latest_motion.center_x - neutral_motion.center_x) * self.move_x_gain_spin.GetValue()
                 target_offset_y = (latest_motion.center_y - neutral_motion.center_y) * self.move_y_gain_spin.GetValue()
                 target_scale = self.compute_target_scale(latest_motion.face_size, neutral_motion.face_size)
+                # #region agent log
+                now_mono = time.perf_counter()
+                last_log = float(getattr(self, "_dbg_scale_live_log_mono", 0.0))
+                if now_mono - last_log >= 0.35:
+                    self._dbg_scale_live_log_mono = now_mono
+                    raw_delta = float(latest_motion.face_size) - float(neutral_motion.face_size)
+                    _agent_debug_ndjson(
+                        "update_display_transform_state:live",
+                        "scale_live_sample",
+                        {
+                            "mocap": (
+                                "osf" if self.is_openseeface_mocap_mode()
+                                else ("mouse" if self.is_mouse_audio_mocap_mode() else "mp")),
+                            "latest_face_size": round(float(latest_motion.face_size), 5),
+                            "neutral_face_size": round(float(neutral_motion.face_size), 5),
+                            "raw_delta": round(raw_delta, 5),
+                            "curve_delta": round(raw_delta, 5),
+                            "approaching_ui": raw_delta >= 0.0,
+                            "target_scale": round(float(target_scale), 4),
+                        },
+                        hypothesis_id="S3",
+                        run_id="post-fix")
+                # #endregion
                 tilt_limit = max(0.0, self.tilt_limit_spin.GetValue())
                 head_roll_delta = (self.latest_head_roll_deg if self.latest_head_roll_deg is not None else 0.0) \
                     - self.neutral_head_roll_deg
@@ -10097,9 +10431,66 @@ class MainFrame(wx.Frame):
             or abs(self.display_scale - old_scale) > 0.002 \
             or abs(self.display_rotation_deg - old_rotation_deg) > 0.05
 
+        # #region agent log
+        try:
+            from longrun_diag import note_tilt_pipeline
+            pose_neck_z = 0.0
+            converter = getattr(self, "pose_converter", None)
+            last_pose = getattr(self, "last_pose", None)
+            if converter is not None and last_pose is not None:
+                idx = int(converter.neck_z_index)
+                if 0 <= idx < len(last_pose):
+                    pose_neck_z = float(last_pose[idx])
+            head_roll_delta = 0.0
+            if self.latest_head_roll_deg is not None:
+                head_roll_delta = -(
+                    float(self.latest_head_roll_deg) - float(self.neutral_head_roll_deg))
+            tilt_limit = 0.0
+            try:
+                tilt_limit = max(0.0, float(self.tilt_limit_spin.GetValue()))
+            except Exception:
+                pass
+            smoothing = 0.0
+            try:
+                smoothing = float(self.smoothing_spin.GetValue())
+            except Exception:
+                pass
+            note_tilt_pipeline(
+                mode=str(mode),
+                auto_on=bool(enabled),
+                input_roll_delta_deg=head_roll_delta,
+                target_rotation_deg=float(target_rotation_deg),
+                display_rotation_deg=float(self.display_rotation_deg),
+                pose_neck_z=pose_neck_z,
+                tilt_limit=tilt_limit,
+                smoothing=smoothing,
+                infer_active=bool(getattr(self, "_infer_worker_active", False)),
+                infer_stuck=bool(self._infer_worker_stuck()),
+                mocap=(
+                    "osf" if self.is_openseeface_mocap_mode()
+                    else ("mouse" if self.is_mouse_audio_mocap_mode() else "mp")),
+            )
+        except Exception:
+            pass
+        # #endregion
+
         return changed
 
+    def _dbg_note_capture_panel_ms(self, t0: float) -> None:
+        # #region agent log
+        try:
+            self._dbg_capture_calls = int(getattr(self, "_dbg_capture_calls", 0)) + 1
+            self._dbg_capture_panel_ms = float(
+                getattr(self, "_dbg_capture_panel_ms", 0.0)) + (
+                time.perf_counter() - t0) * 1000.0
+        except Exception:
+            pass
+        # #endregion
+
     def update_capture_panel(self, event: wx.Event):
+        # #region agent log
+        _dbg_cap_t0 = time.perf_counter()
+        # #endregion
         self._capture_frame_serial += 1
         time_now = time.time()
 
@@ -10109,6 +10500,7 @@ class MainFrame(wx.Frame):
                 self._last_preview_ui_time = time_now
                 self.draw_capture_status_message(self.get_mocap_input_mode_status_message())
             self.schedule_active_capture_timer()
+            self._dbg_note_capture_panel_ms(_dbg_cap_t0)
             return
 
         if self.is_openseeface_mocap_mode():
@@ -10126,6 +10518,7 @@ class MainFrame(wx.Frame):
             if self._capture_frame_serial % 12 == 0:
                 self.refresh_mocap_input_mode_ui()
             self.schedule_active_capture_timer()
+            self._dbg_note_capture_panel_ms(_dbg_cap_t0)
             return
 
         if not self.is_capture_source_active():
@@ -10165,6 +10558,7 @@ class MainFrame(wx.Frame):
                     self._last_preview_ui_time = time_now
                     self.draw_capture_status_message(self.video_capture_status_message or "Nothing yet!")
                 self.schedule_idle_capture_timer()
+                self._dbg_note_capture_panel_ms(_dbg_cap_t0)
                 return
 
             if self.video_capture_status_message is None:
@@ -10173,6 +10567,7 @@ class MainFrame(wx.Frame):
                 self._last_preview_ui_time = time_now
                 self.draw_capture_status_message(self.video_capture_status_message or "Nothing yet!")
             self.schedule_idle_capture_timer()
+            self._dbg_note_capture_panel_ms(_dbg_cap_t0)
             return
 
         bgr_frame = self.read_capture_frame_bgr()
@@ -10188,6 +10583,7 @@ class MainFrame(wx.Frame):
                     self.draw_capture_status_message(
                         self.video_capture_status_message or "Nothing yet!")
                 self.schedule_active_capture_timer()
+                self._dbg_note_capture_panel_ms(_dbg_cap_t0)
                 return
         else:
             self._last_good_webcam_bgr_frame = bgr_frame
@@ -10203,13 +10599,16 @@ class MainFrame(wx.Frame):
                     self.video_source_kind == "window"
                     and self._capture_frame_serial == self._last_mediapipe_capture_serial):
                 self.schedule_active_capture_timer()
+                self._dbg_note_capture_panel_ms(_dbg_cap_t0)
                 return
             if self.face_landmarker is None:
                 if self._face_landmarker_init_in_progress:
                     self.schedule_active_capture_timer()
+                    self._dbg_note_capture_panel_ms(_dbg_cap_t0)
                     return
                 if not self.ensure_face_landmarker(show_dialog=False):
                     self.schedule_active_capture_timer()
+                    self._dbg_note_capture_panel_ms(_dbg_cap_t0)
                     return
             self._last_mediapipe_process_time = time_now
             self._last_mediapipe_capture_serial = self._capture_frame_serial
@@ -10231,6 +10630,7 @@ class MainFrame(wx.Frame):
             self._schedule_mediapipe_detect(mediapipe_image, time_ms, rgb_frame)
 
         self.schedule_active_capture_timer()
+        self._dbg_note_capture_panel_ms(_dbg_cap_t0)
 
     def _schedule_mediapipe_detect(self, mediapipe_image, time_ms: int, frame_buffer) -> None:
         """Queue a frame for off-thread MediaPipe detection (latest-wins, single worker)."""
@@ -10517,11 +10917,18 @@ class MainFrame(wx.Frame):
             canvas_width: int,
             canvas_height: int) -> BindingContext:
         pose_head_x, pose_head_y, pose_neck_z = self._collect_pose_binding_fields()
+        canvas_width = max(1, int(canvas_width))
+        canvas_height = max(1, int(canvas_height))
+        # display_offset_* are authored in locked (full) canvas pixels; scale when
+        # composing at PRESENT_COMPOSE_SCALE so anchors stay visually consistent.
+        full_w, full_h = self.get_locked_output_client_size()
+        sx = float(canvas_width) / max(1.0, float(full_w))
+        sy = float(canvas_height) / max(1.0, float(full_h))
         return BindingContext(
-            canvas_width=max(1, int(canvas_width)),
-            canvas_height=max(1, int(canvas_height)),
-            display_offset_x=float(self.display_offset_x),
-            display_offset_y=float(self.display_offset_y),
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+            display_offset_x=float(self.display_offset_x) * sx,
+            display_offset_y=float(self.display_offset_y) * sy,
             display_scale=max(0.1, float(self.display_scale)),
             display_rotation_deg=float(self.display_rotation_deg),
             neck_anchor_ratio=self.get_spine_neck_anchor_ratio(),
@@ -10985,6 +11392,18 @@ class MainFrame(wx.Frame):
     def _get_antialias_factor(self) -> float:
         return get_antialias_factor_from_control(getattr(self, "antialias_strength_spin", None))
 
+    def _get_antialias_factor_for_present(self) -> float:
+        """Live present uses the user-configured AA factor (no silent clamp)."""
+        return float(self._get_antialias_factor())
+
+    def _present_compose_dims(
+            self, output_width: int, output_height: int) -> tuple[int, int, float]:
+        scale = float(getattr(self, "PRESENT_COMPOSE_SCALE", 1.0) or 1.0)
+        scale = max(0.25, min(1.0, scale))
+        compose_w = max(1, int(round(max(1, int(output_width)) * scale)))
+        compose_h = max(1, int(round(max(1, int(output_height)) * scale)))
+        return compose_w, compose_h, scale
+
     def _keyframe_cache_valid(self, wx_image: wx.Image, antialias_factor: float) -> bool:
         return self.output_enhancement.keyframe_cache.is_valid(wx_image, antialias_factor)
 
@@ -11003,18 +11422,53 @@ class MainFrame(wx.Frame):
         keyframe_rgba = self.output_enhancement.keyframe_cache.rgba
         if keyframe_rgba is None:
             raise RuntimeError("keyframe rgba cache missing")
-        keyframe_rgba = apply_character_wobble(self, keyframe_rgba)
         canvas_width = max(1, int(canvas_width))
         canvas_height = max(1, int(canvas_height))
-        return compose_character_rgba_from_keyframe(
+        full_w, full_h = self.get_locked_output_client_size()
+        sx = float(canvas_width) / max(1.0, float(full_w))
+        sy = float(canvas_height) / max(1.0, float(full_h))
+        wobble_token = self._region_wobble_compose_token()
+        # Quantize to the same order as update_display_transform_state's
+        # "changed" thresholds so micro-lerp ticks reuse the warped character.
+        cache_key = (
+            id(keyframe_rgba),
+            canvas_width,
+            canvas_height,
+            round(float(antialias_factor), 4),
+            round(float(self.display_offset_x) * sx / 0.25) * 0.25,
+            round(float(self.display_offset_y) * sy / 0.25) * 0.25,
+            round(float(self.display_scale) * sx / 0.002) * 0.002,
+            round(float(self.display_rotation_deg) / 0.05) * 0.05,
+            wobble_token,
+        )
+        char_cache = getattr(self, "_character_warp_cache", None)
+        if char_cache is not None:
+            hit = char_cache.get(cache_key)
+            if hit is not None:
+                # #region agent log
+                self._dbg_char_cache_hit = int(
+                    getattr(self, "_dbg_char_cache_hit", 0)) + 1
+                # #endregion
+                return hit
+        # #region agent log
+        self._dbg_char_cache_miss = int(
+            getattr(self, "_dbg_char_cache_miss", 0)) + 1
+        # #endregion
+        keyframe_rgba = apply_character_wobble(self, keyframe_rgba)
+        # display_scale is authored for the locked (full) canvas; multiply by
+        # compose ratio so half-res present keeps the same on-screen size after upsample.
+        out = compose_character_rgba_from_keyframe(
             keyframe_rgba,
             canvas_width,
             canvas_height,
-            anchor_x=(canvas_width / 2.0 + self.display_offset_x),
-            anchor_y=(canvas_height + self.display_offset_y),
-            scale=max(0.1, self.display_scale),
+            anchor_x=(canvas_width / 2.0 + float(self.display_offset_x) * sx),
+            anchor_y=(canvas_height + float(self.display_offset_y) * sy),
+            scale=max(0.1, float(self.display_scale) * sx),
             rotation_deg=self.display_rotation_deg,
             antialias_factor=antialias_factor)
+        if char_cache is not None:
+            char_cache.put(cache_key, out)
+        return out
 
     def _compose_character_bitmap_from_keyframe(
             self,
@@ -11069,30 +11523,196 @@ class MainFrame(wx.Frame):
         with the edit chrome (selection box/handle) overlaid when a layer is
         selected. Returns straight RGBA, or None when no keyframe is cached yet.
 
-        The unified ULW output is the only output window now, so the mode
-        background (color/image/黑键) is composited UNDER the character here.
-        真透 (transparent_capture) returns None from the background builder, so
-        the foreground stays per-pixel transparent for desktop-transparent output.
+        Live path composes at PRESENT_COMPOSE_SCALE (default 1.0 = full res).
+        When scale < 1.0 the stack is upsampled to the locked ULW size; edit
+        chrome is drawn after upsample at full resolution.
         """
+        out_w = max(1, int(canvas_width))
+        out_h = max(1, int(canvas_height))
+        compose_w, compose_h, _scale = self._present_compose_dims(out_w, out_h)
         t0 = time.perf_counter()
-        fg = self.compose_output_stack_rgba(canvas_width, canvas_height)
+        apply_edge = self.get_character_edge_mode() != "none"
+        # Seed the stack from the opaque ULW plate when present so we do not
+        # pay a second full-footprint bg underlay after compositing.
+        background = self._compose_ulw_background_rgba(compose_w, compose_h)
+        t_bg_fetch = time.perf_counter()
+        fg = self.compose_output_stack_rgba(
+            compose_w,
+            compose_h,
+            antialias_factor=self._get_antialias_factor_for_present(),
+            apply_edge=apply_edge,
+            base_rgba=background,
+            sanitize_fringe=(background is None))
         if fg is None:
             return None
         t_stack = time.perf_counter()
-        chrome = self.compose_edit_chrome_rgba(canvas_width, canvas_height)
+        t_bg = t_stack  # bg already merged into stack when plate exists
+        if compose_w != out_w or compose_h != out_h:
+            fg = cv2.resize(
+                numpy.ascontiguousarray(fg, dtype=numpy.uint8),
+                (out_w, out_h),
+                interpolation=cv2.INTER_LINEAR)
+            if fg.ndim == 2:
+                fg = numpy.repeat(fg[:, :, None], 4, axis=2)
+            elif fg.shape[2] == 3:
+                alpha = numpy.full((out_h, out_w, 1), 255, dtype=numpy.uint8)
+                fg = numpy.concatenate([fg, alpha], axis=2)
+            fg = numpy.ascontiguousarray(fg, dtype=numpy.uint8)
+        t_up = time.perf_counter()
+        chrome = None
+        if self._output_edit_slot_id() is not None:
+            chrome = self.compose_edit_chrome_rgba(out_w, out_h)
         if chrome is not None:
             fg = self.sanitize_rgba_alpha_fringe(composite_rgba_arrays(fg, chrome))
         t_chrome = time.perf_counter()
-        background = self._compose_ulw_background_rgba(canvas_width, canvas_height)
-        if background is not None:
-            fg = composite_rgba_arrays(background, fg)
-        t_bg = time.perf_counter()
         stages = dict(getattr(self, "_compose_stack_substages", {}) or {})
-        stages["stack_total"] = (t_stack - t0) * 1000.0
-        stages["chrome"] = (t_chrome - t_stack) * 1000.0
-        stages["bg"] = (t_bg - t_chrome) * 1000.0
+        stages["stack_total"] = (t_stack - t_bg_fetch) * 1000.0
+        # bg fetch cost only (plate is cached; underlay merged into stack).
+        stages["bg"] = (t_bg_fetch - t0) * 1000.0
+        stages["upsample"] = (t_up - t_bg) * 1000.0
+        stages["chrome"] = (t_chrome - t_up) * 1000.0
+        stages["compose_wh"] = (compose_w, compose_h, out_w, out_h)
         self._last_present_stages = stages
+        # #region agent log
+        try:
+            total_ms = (
+                float(stages.get("stack_total", 0.0))
+                + float(stages.get("bg", 0.0))
+                + float(stages.get("upsample", 0.0))
+                + float(stages.get("chrome", 0.0)))
+            self._dbg_last_compose_ms = total_ms
+            from longrun_diag import note_compose_ms
+            note_compose_ms(total_ms, motion_active=bool(
+                getattr(self, "_dbg_last_motion_active", False)))
+        except Exception:
+            pass
+        # #endregion
+        self._maybe_log_present_stages(stages)
         return fg
+
+    def _agent_debug_flush_present_stats(self, *, motion_active: bool) -> None:
+        """Throttled (~1s) NDJSON snapshot for Out-FPS hypotheses A-E."""
+        # #region agent log
+        now = time.monotonic()
+        last = float(getattr(self, "_dbg_flush_last_mono", 0.0) or 0.0)
+        if now - last < 1.0:
+            return
+        self._dbg_flush_last_mono = now
+        layer_cache = getattr(self, "_layer_warp_result_cache", None)
+        stages = dict(getattr(self, "_last_present_stages", {}) or {})
+        try:
+            aa = float(self._get_antialias_factor_for_present())
+        except Exception:
+            aa = -1.0
+        try:
+            self._update_output_fps_estimate_if_due()
+        except Exception:
+            pass
+        data = {
+            "motion_active": bool(motion_active),
+            "display_ticks": int(getattr(self, "_dbg_display_ticks", 0)),
+            "motion_branch": int(getattr(self, "_dbg_motion_branch", 0)),
+            "smooth_branch": int(getattr(self, "_dbg_smooth_branch", 0)),
+            "compose_calls": int(getattr(self, "_dbg_compose_calls", 0)),
+            "compose_early_out": int(getattr(self, "_dbg_compose_early_out", 0)),
+            "char_cache_hit": int(getattr(self, "_dbg_char_cache_hit", 0)),
+            "char_cache_miss": int(getattr(self, "_dbg_char_cache_miss", 0)),
+            "layer_cache_hit": int(getattr(layer_cache, "hits", 0) or 0),
+            "layer_cache_miss": int(getattr(layer_cache, "misses", 0) or 0),
+            "ulw_deliver": int(getattr(self, "_dbg_ulw_deliver", 0)),
+            "ulw_drop": int(getattr(self, "_dbg_ulw_drop", 0)),
+            "ulw_async_busy": int(getattr(self, "_dbg_ulw_async_busy", 0)),
+            "compose_ms": round(float(getattr(self, "_dbg_last_compose_ms", 0.0)), 2),
+            "display_timer_ms": round(float(getattr(self, "_dbg_display_timer_ms", 0.0)), 2),
+            "capture_panel_ms": round(float(getattr(self, "_dbg_capture_panel_ms", 0.0)), 2),
+            "infer_tick_ms": round(float(getattr(self, "_dbg_infer_tick_ms", 0.0)), 2),
+            "capture_calls": int(getattr(self, "_dbg_capture_calls", 0)),
+            "infer_tick_calls": int(getattr(self, "_dbg_infer_tick_calls", 0)),
+            "display_gap_avg_ms": round(
+                (float(getattr(self, "_dbg_display_gap_sum_ms", 0.0))
+                 / max(1, int(getattr(self, "_dbg_display_gap_n", 0)))),
+                2) if int(getattr(self, "_dbg_display_gap_n", 0)) > 0 else 0.0,
+            "premul_ms": round(float(getattr(self, "_dbg_premul_ms", 0.0)), 2),
+            "premul_n": int(getattr(self, "_dbg_premul_n", 0)),
+            "premul_avg_ms": round(
+                (float(getattr(self, "_dbg_premul_ms", 0.0))
+                 / max(1, int(getattr(self, "_dbg_premul_n", 0)))),
+                2) if int(getattr(self, "_dbg_premul_n", 0)) > 0 else 0.0,
+            "ulw_push_ms": round(float(getattr(self, "_dbg_ulw_push_ms", 0.0)), 2),
+            "stage_char": round(float(stages.get("char", 0.0) or 0.0), 2),
+            "stage_edge": round(float(stages.get("edge", 0.0) or 0.0), 2),
+            "stage_layers": round(float(stages.get("layers", 0.0) or 0.0), 2),
+            "stage_sanitize": round(float(stages.get("sanitize", 0.0) or 0.0), 2),
+            "stage_bg": round(float(stages.get("bg", 0.0) or 0.0), 2),
+            "aa": aa,
+            "in_fps": round(float(getattr(self, "_input_fps", 0.0) or 0.0), 2),
+            "inf_fps": round(float(getattr(self, "_inference_fps", 0.0) or 0.0), 2),
+            "out_fps": round(float(getattr(self, "_display_out_fps", 0.0) or 0.0), 2),
+            "layer_blend": bool(self.is_layer_blend_enabled()),
+            "wh": stages.get("compose_wh"),
+        }
+        # Reset per-window counters so each line is a 1s delta.
+        self._dbg_display_ticks = 0
+        self._dbg_motion_branch = 0
+        self._dbg_smooth_branch = 0
+        self._dbg_compose_calls = 0
+        self._dbg_compose_early_out = 0
+        self._dbg_char_cache_hit = 0
+        self._dbg_char_cache_miss = 0
+        self._dbg_ulw_deliver = 0
+        self._dbg_ulw_drop = 0
+        self._dbg_ulw_async_busy = 0
+        self._dbg_display_timer_ms = 0.0
+        self._dbg_capture_panel_ms = 0.0
+        self._dbg_infer_tick_ms = 0.0
+        self._dbg_display_gap_sum_ms = 0.0
+        self._dbg_display_gap_n = 0
+        self._dbg_capture_calls = 0
+        self._dbg_infer_tick_calls = 0
+        self._dbg_premul_ms = 0.0
+        self._dbg_premul_n = 0
+        self._dbg_ulw_push_ms = 0.0
+        if layer_cache is not None:
+            layer_cache.hits = 0
+            layer_cache.misses = 0
+        _agent_debug_ndjson(
+            "character_model_mediapipe_puppeteer_load_preview.py:present_stats",
+            "present_1s_snapshot",
+            data,
+            hypothesis_id="H,I,J",
+            run_id="post-fix-cv2premul")
+        # #endregion
+
+    def _maybe_log_present_stages(self, stages: dict) -> None:
+        """Throttled present-stage timing (opt-in via EVS_PRESENT_STAGE_LOG=1)."""
+        if str(os.environ.get("EVS_PRESENT_STAGE_LOG", "")).strip() not in (
+                "1", "true", "TRUE", "yes", "YES"):
+            return
+        now = time.monotonic()
+        last = float(getattr(self, "_present_stage_log_last_mono", 0.0) or 0.0)
+        if now - last < 1.0:
+            return
+        self._present_stage_log_last_mono = now
+        try:
+            total = (
+                float(stages.get("stack_total", 0.0))
+                + float(stages.get("bg", 0.0))
+                + float(stages.get("upsample", 0.0))
+                + float(stages.get("chrome", 0.0)))
+            msg = (
+                f"present_stages ms char={stages.get('char', 0):.1f} "
+                f"edge={stages.get('edge', 0):.1f} "
+                f"layers={stages.get('layers', 0):.1f} "
+                f"sanitize={stages.get('sanitize', 0):.1f} "
+                f"bg={stages.get('bg', 0):.1f} "
+                f"upsample={stages.get('upsample', 0):.1f} "
+                f"chrome={stages.get('chrome', 0):.1f} "
+                f"total={total:.1f} "
+                f"cap={self.get_display_present_cap_hz()} "
+                f"wh={stages.get('compose_wh')}")
+            print(msg, file=sys.stderr)
+        except Exception:
+            pass
 
     def _draw_banner_on_result_bitmap(
             self, banner_text: str, canvas_width: int, canvas_height: int) -> None:
@@ -11129,8 +11749,9 @@ class MainFrame(wx.Frame):
         self._cached_present_rgba = present_rgba
         self.last_banner_text = banner_text
         self.last_background_choice = self.get_output_background_signature()
-        if fast_affine_only:
-            self._note_cached_affine_present_time()
+        # Always stamp present time so layer-blend settled frames can redeliver
+        # at the display present cap (not only the character-only fast path).
+        self._note_cached_affine_present_time()
         # The layered ULW is now the only output window in every mode (OutputFrame
         # is retired/hidden) and it is fed straight from _cached_present_rgba, so
         # the wx.Bitmap rebuild + banner DC + OutputFrame chrome/panel refresh are
@@ -11155,35 +11776,39 @@ class MainFrame(wx.Frame):
             push_capture: bool = False):
         self.ensure_result_bitmap_size()
         canvas_width, canvas_height = self.get_output_canvas_size()
-        antialias_factor = self._get_antialias_factor()
+        antialias_factor = self._get_antialias_factor_for_present()
         background_signature = self.get_output_background_signature()
         if self.last_background_choice != background_signature:
             self._cached_background_signature = None
             self._cached_background_rgba = None
 
-        if fast_affine_only:
-            compose_signature = self._get_compose_signature(wx_image, antialias_factor)
-            if compose_signature == self._last_compose_signature:
-                return
-            self._last_compose_signature = compose_signature
+        compose_signature = self._get_compose_signature(wx_image, antialias_factor)
+        # Frame-level early-out for BOTH character-only and layer-blend paths:
+        # settled frames redeliver the cached present via the outer ULW push.
+        if compose_signature == self._last_compose_signature:
+            # #region agent log
+            self._dbg_compose_early_out = int(
+                getattr(self, "_dbg_compose_early_out", 0)) + 1
+            # #endregion
+            return
 
+        # #region agent log
+        self._dbg_compose_calls = int(getattr(self, "_dbg_compose_calls", 0)) + 1
+        # #endregion
         cache_valid = self._keyframe_cache_valid(wx_image, antialias_factor)
         if fast_affine_only and not cache_valid:
             fast_affine_only = False
         if not cache_valid:
             self._update_keyframe_cache(wx_image, antialias_factor)
 
-        self._last_compose_signature = self._get_compose_signature(wx_image, antialias_factor)
+        self._last_compose_signature = compose_signature
         self._present_character_bitmap(
             None, canvas_width, canvas_height, banner_text,
             fast_affine_only=fast_affine_only)
-        # ULW is the sole on-screen output in transparent mode, so every actual
-        # present (new THA pose, affine smoothing, layer change) must feed it.
-        # Throttled to the display cap; no-op when transparent capture is off.
-        if push_capture:
-            self._maybe_schedule_transparent_capture_update(immediate=True)
-        else:
-            self._maybe_schedule_transparent_capture_update()
+        # ULW is the sole on-screen output, so every actual present must feed it.
+        # Always run inline here (we are on the wx UI thread); CallAfter hops
+        # were delaying Out under GIL contention from the ULW premultiply worker.
+        self._maybe_schedule_transparent_capture_update(immediate=True)
 
     def render_pose_to_result_bitmap(self, pose_list: List[float], banner_text: Optional[str] = None):
         self._note_pose_present_time()
@@ -11269,6 +11894,7 @@ class MainFrame(wx.Frame):
         """Quantized wobble/pose token for compose early-out (no warp)."""
         if not self._region_wobble_output_active():
             return ("off",)
+        present_hz = float(self.get_display_present_cap_hz())
         try:
             from region_wobble_host import head_pose_for_wobble
             yaw, pitch = head_pose_for_wobble(self)
@@ -11280,7 +11906,7 @@ class MainFrame(wx.Frame):
         ]
         st = getattr(self, "character_region_wobble", None)
         if st is not None:
-            tokens.append(("c", st.compose_signature_token()))
+            tokens.append(("c", st.compose_signature_token(present_hz=present_hz)))
         store = getattr(self, "_layer_region_wobble", None)
         if store and self.is_layer_blend_enabled():
             state = getattr(self, "basic_layers_state", None)
@@ -11291,8 +11917,100 @@ class MainFrame(wx.Frame):
                     lst = store.get(int(layer.slot_id))
                     if lst is None or not lst.enabled or not lst.has_active_mask():
                         continue
-                    tokens.append((int(layer.slot_id), lst.compose_signature_token()))
+                    tokens.append((
+                        int(layer.slot_id),
+                        lst.compose_signature_token(present_hz=present_hz)))
         return tuple(tokens)
+
+    def _layer_wobble_cache_token(self, layer) -> tuple:
+        if not bool(getattr(layer, "region_wobble_enabled", False)):
+            return ("off",)
+        store = getattr(self, "_layer_region_wobble", None)
+        if not store:
+            return ("off",)
+        lst = store.get(int(layer.slot_id))
+        if lst is None or not lst.enabled or not lst.has_active_mask():
+            return ("off",)
+        present_hz = float(self.get_display_present_cap_hz())
+        return (int(layer.slot_id), lst.compose_signature_token(present_hz=present_hz))
+
+    def _binding_smoother_compose_token(self) -> tuple:
+        smoother = getattr(self, "layer_binding_smoother", None)
+        if smoother is None:
+            return ("off",)
+        if self.is_layer_force_full_follow_enabled():
+            return ("force_full",)
+        slots = getattr(smoother, "_slots", None) or {}
+        items = []
+        for slot_id, state in slots.items():
+            if not getattr(state, "active", False):
+                continue
+            items.append((
+                int(slot_id),
+                round(float(state.rotation_deg), 2),
+            ))
+        if not items:
+            return ("idle",)
+        items.sort(key=lambda item: item[0])
+        return tuple(items)
+
+    def _layer_blend_compose_token(self) -> tuple:
+        """Quantized layer/binding visual token for compose early-out."""
+        if not self.is_layer_blend_enabled():
+            return ("layers_off",)
+        state = getattr(self, "basic_layers_state", None)
+        if state is None:
+            return ("layers_off",)
+        pose_head_x, pose_head_y, pose_neck_z = self._collect_pose_binding_fields()
+        motion_time_s = time.time()
+        present_hz = max(1.0, float(self.get_display_present_cap_hz()))
+        motion_bucket = int(motion_time_s * present_hz)
+        layer_tokens = []
+        for layer in state.layers:
+            if not layer.enabled:
+                continue
+            tr = layer.transform
+            token = [
+                int(layer.slot_id),
+                1 if layer.visible else 0,
+                str(layer.asset_path or ""),
+                int(layer.z_order),
+                str(layer.occlusion or ""),
+                round(float(tr.offset_x), 2),
+                round(float(tr.offset_y), 2),
+                round(float(tr.scale), 4),
+                round(float(tr.rotation_deg), 2),
+                str(layer.binding_parent or ""),
+                1 if layer.binding_follow_rotation_same else 0,
+                1 if layer.binding_follow_rotation_reverse else 0,
+                1 if layer.binding_follow_mocap_position else 0,
+                1 if layer.binding_follow_mocap_roll else 0,
+                str(layer.motion_mode or ""),
+            ]
+            if (
+                    layer_has_active_swing(layer)
+                    or layer_has_active_orbit(layer, state)
+                    or layer_has_active_gif_playback(layer)):
+                # Continuous motions must invalidate each present bucket.
+                token.append(motion_bucket)
+                token.append(round(float(layer.swing_amplitude_deg), 2))
+                token.append(round(float(layer.swing_speed_deg_per_sec), 2))
+                token.append(round(float(layer.orbit_radius), 2))
+                token.append(round(float(layer.orbit_speed_deg_per_sec), 2))
+                token.append(round(float(layer.orbit_phase_rad), 3))
+            if str(layer.asset_path or "").lower().endswith(".gif"):
+                token.append(round(float(layer.gif_playback_epoch), 3))
+                token.append(str(layer.gif_playback_mode or ""))
+            token.append(self._layer_wobble_cache_token(layer))
+            layer_tokens.append(tuple(token))
+        return (
+            round(float(pose_head_x), 3),
+            round(float(pose_head_y), 3),
+            round(float(pose_neck_z), 3),
+            1 if self.is_layer_force_full_follow_enabled() else 0,
+            self._binding_smoother_compose_token(),
+            tuple(layer_tokens),
+        )
 
     def _get_compose_signature(
             self,
@@ -11313,13 +12031,14 @@ class MainFrame(wx.Frame):
             edge_colour.Green(),
             edge_colour.Blue(),
             self._region_wobble_compose_token(),
+            self._layer_blend_compose_token(),
         )
 
     def _cached_affine_compose_signature(self) -> Optional[tuple]:
         if self.last_output_wx_image is None:
             return None
         return self._get_compose_signature(
-            self.last_output_wx_image, self._get_antialias_factor())
+            self.last_output_wx_image, self._get_antialias_factor_for_present())
 
     def _cached_affine_visual_unchanged(self) -> bool:
         signature = self._cached_affine_compose_signature()
@@ -11358,9 +12077,25 @@ class MainFrame(wx.Frame):
         elif not infer_stuck and not self.should_refresh_cached_affine():
             return
         self.draw_cached_result_image(self.last_banner_text)
-        self._maybe_schedule_transparent_capture_update()
+        self._maybe_schedule_transparent_capture_update(immediate=True)
 
     def on_display_timer(self, event: Optional[wx.Event] = None):
+        # #region agent log
+        _dbg_t0 = time.perf_counter()
+        _dbg_now = time.monotonic()
+        _dbg_last = float(getattr(self, "_dbg_last_display_mono", 0.0) or 0.0)
+        if _dbg_last > 0.0:
+            self._dbg_display_gap_sum_ms = float(
+                getattr(self, "_dbg_display_gap_sum_ms", 0.0)) + (_dbg_now - _dbg_last) * 1000.0
+            self._dbg_display_gap_n = int(getattr(self, "_dbg_display_gap_n", 0)) + 1
+            try:
+                from longrun_diag import note_display_gap_ms, note_hour_mark
+                note_display_gap_ms((_dbg_now - _dbg_last) * 1000.0)
+                note_hour_mark()
+            except Exception:
+                pass
+        self._dbg_last_display_mono = _dbg_now
+        # #endregion
         self.poll_layer_gif_playback_side_effects()
         self._maybe_heal_stuck_infer_worker()
         if self.is_model_loaded():
@@ -11368,20 +12103,41 @@ class MainFrame(wx.Frame):
         motion_active = (
             self._layer_motion_output_active()
             and self._output_has_presentable_keyframe())
+        # #region agent log
+        self._dbg_display_ticks = int(getattr(self, "_dbg_display_ticks", 0)) + 1
+        # #endregion
         if motion_active:
             # Single full composite per tick (avoids duplicate draw when affine also changed).
+            # #region agent log
+            self._dbg_motion_branch = int(getattr(self, "_dbg_motion_branch", 0)) + 1
+            # #endregion
             if self._infer_worker_stuck():
                 self._clear_present_compose_dedupe()
             self.draw_cached_result_image(self.last_banner_text)
-            self._maybe_schedule_transparent_capture_update()
+            # Already on the wx UI thread: push ULW in this turn (no CallAfter
+            # hop). Cuts one event-loop delay and keeps present→deliver coupled.
+            self._maybe_schedule_transparent_capture_update(immediate=True)
         else:
-            # Region wobble is folded into compose signature (~12 Hz idle bucket),
-            # so still_wobble does not force a present every display tick.
+            # Region wobble is folded into compose signature (idle bucket =
+            # display present cap Hz), so still_wobble does not force a present
+            # every tick but is no longer pinned near ~12 Hz.
+            # #region agent log
+            self._dbg_smooth_branch = int(getattr(self, "_dbg_smooth_branch", 0)) + 1
+            # #endregion
             self._present_smooth_output_frame()
         pipe = getattr(self, "output_enhancement", None)
         if pipe is not None and pipe.has_pending_rife() and self.last_output_wx_image is not None:
             self.draw_cached_result_image(self.last_banner_text)
             self._maybe_schedule_transparent_capture_update(immediate=True)
+        # #region agent log
+        try:
+            self._dbg_display_timer_ms = float(
+                getattr(self, "_dbg_display_timer_ms", 0.0)) + (
+                time.perf_counter() - _dbg_t0) * 1000.0
+            self._agent_debug_flush_present_stats(motion_active=motion_active)
+        except Exception:
+            pass
+        # #endregion
 
     def on_ui_anim_timer(self, event: Optional[wx.Event] = None):
         """Drive continuously-refreshing animated UI (controls + layer window) at a
@@ -11400,6 +12156,9 @@ class MainFrame(wx.Frame):
                 window.refresh_spine_diagram()
 
     def on_infer_tick(self, event: Optional[wx.Event] = None):
+        # #region agent log
+        _dbg_inf_t0 = time.perf_counter()
+        # #endregion
         if getattr(self.pose_converter, "refresh_audio_input_runtime", None) is not None:
             if self.is_mouse_audio_mocap_mode():
                 if self.is_model_loaded():
@@ -11408,6 +12167,16 @@ class MainFrame(wx.Frame):
                     self.poser is None or self.mediapipe_face_pose is None):
                 self.pose_converter.refresh_audio_input_runtime(time.time())
         self.active_image_source.tick(self)
+        # #region agent log
+        try:
+            self._dbg_infer_tick_calls = int(
+                getattr(self, "_dbg_infer_tick_calls", 0)) + 1
+            self._dbg_infer_tick_ms = float(
+                getattr(self, "_dbg_infer_tick_ms", 0.0)) + (
+                time.perf_counter() - _dbg_inf_t0) * 1000.0
+        except Exception:
+            pass
+        # #endregion
 
     def update_result_image_bitmap(self, event: Optional[wx.Event] = None):
         """Legacy entry: run both display refresh and infer scheduling."""

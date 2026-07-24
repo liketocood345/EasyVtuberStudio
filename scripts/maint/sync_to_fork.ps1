@@ -1,5 +1,6 @@
 # Copy easyvtuberstudio-develop -> easyvtuberstudio-main (Load Preview experiment subtree).
-# Does NOT overwrite local runtime state (ui state, layer json, external_layer_output).
+# Does NOT overwrite experiment-local runtime dumps under the experiment folder.
+# Portable seed memory lives in workspace/ and is synced by sync_develop_to_fork.ps1.
 # Usage (from develop root):
 #   powershell -ExecutionPolicy Bypass -File sync_to_fork.ps1
 # Optional: -ForkRoot "E:\easyvtuberstudio-main"

@@ -30,6 +30,7 @@ from openseeface_mocap_driver import (
     copy_mediapipe_face_pose,
     lerp_mediapipe_face_pose,
     osf_eye_blinks_from_frame,
+    osf_eye_glare_wink_candidate,
     osf_head_is_near_forward,
     osf_rotation_to_packet_quaternion,
     resolve_osf_eye_motion,
@@ -102,6 +103,13 @@ def test_eye_motion_pattern_classification() -> None:
     assert classify_osf_eye_motion_pattern(0.55, 0.52) == OsfEyeMotionPattern.BLINK_BOTH
     assert classify_osf_eye_motion_pattern(0.38, 0.12) == OsfEyeMotionPattern.WINK_LEFT
     assert classify_osf_eye_motion_pattern(0.10, 0.36) == OsfEyeMotionPattern.WINK_RIGHT
+    # Soft peer ghost but strong left dominance → still left wink (user left-wink case).
+    assert classify_osf_eye_motion_pattern(0.90, 0.48) == OsfEyeMotionPattern.WINK_LEFT
+    # Mild asymmetry both closing → blink / close, not wink.
+    assert classify_osf_eye_motion_pattern(0.72, 0.50) == OsfEyeMotionPattern.CLOSE_BOTH
+    assert classify_osf_eye_motion_pattern(0.60, 0.42) == OsfEyeMotionPattern.BLINK_BOTH
+    assert osf_eye_glare_wink_candidate(0.60, 0.42) is True
+    assert osf_eye_glare_wink_candidate(0.85, 0.15) is False
 
     blink_left, blink_right = apply_osf_eye_motion_pattern(
         OsfEyeMotionPattern.BLINK_BOTH, 0.6, 0.55)
@@ -117,6 +125,39 @@ def test_eye_motion_pattern_classification() -> None:
         OsfEyeMotionPattern.WINK_LEFT, 0.85, 0.2)
     assert wink_l > 0.8
     assert wink_r < 0.2
+
+
+def test_wink_hold_does_not_inherit_blink_both() -> None:
+    state = OpenSeeFaceMocapState(calibration_warmup_remaining=0)
+    t0 = 2000.0
+    blink = parse_openseeface_udp_packet(
+        build_test_packet_with_eyes(
+            right_eye_open=0.05,
+            left_eye_open=0.05,
+            eye_right_feature=-0.85,
+            eye_left_feature=-0.85,
+            right_pupil_confidence=0.0,
+            left_pupil_confidence=0.0,
+        ))
+    assert blink is not None
+    both = resolve_osf_eye_motion(blink, state, t0)
+    assert both.pattern == OsfEyeMotionPattern.BLINK_BOTH
+    assert both.left >= 0.55 and both.right >= 0.55
+
+    left_wink = parse_openseeface_udp_packet(
+        build_test_packet_with_eyes(
+            right_eye_open=1.0,
+            left_eye_open=0.1,
+            eye_left_feature=-0.9,
+            eye_right_feature=-0.05,
+            right_pupil_confidence=1.0,
+            left_pupil_confidence=0.0,
+        ))
+    assert left_wink is not None
+    wink = resolve_osf_eye_motion(left_wink, state, t0 + 0.02)
+    assert wink.pattern == OsfEyeMotionPattern.WINK_LEFT
+    assert wink.left > 0.65
+    assert wink.right < 0.35
 
 
 def test_wink_hold_survives_low_fps_gap() -> None:
@@ -376,6 +417,7 @@ def test_input_pacer_uniform_keyframes() -> None:
 if __name__ == "__main__":
     test_convert_chain()
     test_eye_motion_pattern_classification()
+    test_wink_hold_does_not_inherit_blink_both()
     test_wink_hold_survives_low_fps_gap()
     test_blink_both_vs_close_both_temporal()
     test_no_blink_when_pupil_untracked_without_eyelid()

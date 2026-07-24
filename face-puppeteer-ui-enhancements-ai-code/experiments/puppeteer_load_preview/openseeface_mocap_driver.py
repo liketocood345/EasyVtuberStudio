@@ -65,8 +65,13 @@ OSF_EYE_OPEN_GAZE_MIN = 0.30
 OSF_EYE_PEAK_MIN = 0.20
 OSF_EYE_FULL_CLOSE_THRESHOLD = 0.72
 OSF_EYE_SQUINT_FEATURE_CEIL = -0.6
-# Spatial: |L-R| at/above this => single-eye wink (check before both-eyes).
+# Spatial: |L-R| at/above this => candidate single-eye wink (check before both-eyes).
 OSF_EYE_ASYMMETRY_MIN = 0.16
+# Classic wink: peer eye nearly open.
+OSF_EYE_WINK_OPEN_PEER_MAX = 0.38
+# Soft wink under glasses ghost: closed eye must dominate peer by this margin.
+OSF_EYE_WINK_DOMINANCE_MIN = 0.28
+OSF_EYE_WINK_CLOSED_MIN = 0.55
 OSF_EYE_GHOST_BLINK_CAP = 0.12
 # Hold peaks across pacer gaps (seconds).
 OSF_EYE_BLINK_HOLD_SEC = 0.11
@@ -164,22 +169,47 @@ def measure_osf_per_eye_closure(sample: OsfPerEyeSample) -> float:
 
 
 def classify_osf_eye_motion_pattern(left: float, right: float) -> OsfEyeMotionPattern:
-    """Spatial classification: asymmetry first, then both-eyes."""
+    """Spatial classification: asymmetry first, then both-eyes.
+
+    Wink if (a) peer nearly open, or (b) one eye clearly dominates despite peer
+    ghost closure (glasses). Symmetric both-lid close stays blink/close-both.
+    """
     left = float(left)
     right = float(right)
     peak = max(left, right)
     if peak < OSF_EYE_PEAK_MIN:
         return OsfEyeMotionPattern.OPEN
     delta = abs(left - right)
+    peer = min(left, right)
     if delta >= OSF_EYE_ASYMMETRY_MIN:
-        return (
-            OsfEyeMotionPattern.WINK_LEFT
-            if left > right
-            else OsfEyeMotionPattern.WINK_RIGHT
+        is_wink = peer <= OSF_EYE_WINK_OPEN_PEER_MAX or (
+            peak >= OSF_EYE_WINK_CLOSED_MIN
+            and (peak - peer) >= OSF_EYE_WINK_DOMINANCE_MIN
         )
+        if is_wink:
+            return (
+                OsfEyeMotionPattern.WINK_LEFT
+                if left > right
+                else OsfEyeMotionPattern.WINK_RIGHT
+            )
     if peak >= OSF_EYE_FULL_CLOSE_THRESHOLD:
         return OsfEyeMotionPattern.CLOSE_BOTH
     return OsfEyeMotionPattern.BLINK_BOTH
+
+
+def osf_eye_glare_wink_candidate(left: float, right: float) -> bool:
+    """Asymmetry with elevated peer — used for diag; may still classify as wink via dominance."""
+    left = float(left)
+    right = float(right)
+    peak = max(left, right)
+    if peak < OSF_EYE_PEAK_MIN:
+        return False
+    delta = abs(left - right)
+    peer = min(left, right)
+    return (
+        delta >= OSF_EYE_ASYMMETRY_MIN
+        and peer > OSF_EYE_WINK_OPEN_PEER_MAX
+    )
 
 
 def _suppress_osf_peer_eye_closure(peer: float) -> float:
@@ -277,8 +307,20 @@ def apply_osf_eye_output_hold(
         right: float,
         pattern: OsfEyeMotionPattern,
         now_mono: float) -> tuple[float, float]:
-    """Keep blink/wink peaks visible across low-fps pacer gaps."""
+    """Keep blink/wink peaks visible across low-fps pacer gaps.
+
+    Wink must not inherit a previous blink-both hold (max would force both eyes
+    shut and kill single-eye wink).
+    """
     now_mono = float(now_mono)
+    if pattern in (OsfEyeMotionPattern.WINK_LEFT, OsfEyeMotionPattern.WINK_RIGHT):
+        state.eye_hold_left = float(left)
+        state.eye_hold_right = float(right)
+        hold_sec = _osf_eye_hold_duration(pattern)
+        if hold_sec > 0.0:
+            state.eye_hold_until_mono = now_mono + hold_sec
+        return state.eye_hold_left, state.eye_hold_right
+
     if pattern != OsfEyeMotionPattern.OPEN:
         state.eye_hold_left = max(float(state.eye_hold_left), float(left))
         state.eye_hold_right = max(float(state.eye_hold_right), float(right))
@@ -307,12 +349,29 @@ def resolve_osf_eye_motion(
     right_sample = _osf_per_eye_sample_from_frame(frame, side="right")
     raw_left = measure_osf_per_eye_closure(left_sample)
     raw_right = measure_osf_per_eye_closure(right_sample)
+    glare_candidate = osf_eye_glare_wink_candidate(raw_left, raw_right)
 
     pattern = classify_osf_eye_motion_pattern(raw_left, raw_right)
     pattern = refine_osf_eye_motion_temporal(
         state, pattern, raw_left, raw_right, now_mono)
     left, right = apply_osf_eye_motion_pattern(pattern, raw_left, raw_right)
     left, right = apply_osf_eye_output_hold(state, left, right, pattern, now_mono)
+    # #region agent log
+    try:
+        from longrun_diag import note_eye_pattern
+        note_eye_pattern(
+            pattern=pattern.value,
+            raw_left=raw_left,
+            raw_right=raw_right,
+            out_left=left,
+            out_right=right,
+            glare_candidate=glare_candidate,
+            pupil_l=bool(left_sample.pupil_tracked),
+            pupil_r=bool(right_sample.pupil_tracked),
+        )
+    except Exception:
+        pass
+    # #endregion
     return OsfEyeMotionResult(pattern=pattern, left=left, right=right)
 
 
@@ -518,6 +577,7 @@ def build_openseeface_face_screen_motion(
 
     ox, oy, oz = state.translation_offset
     # Match OpenSeeFace Unity IK: lateral (-x), vertical (y), depth (-z), then scale.
+    # Depth→face_size: approach (dz>0 after -z) must enlarge face_size (was inverted: DEFAULT - dz).
     dx = -(tx - ox)
     dy = (ty - oy)
     dz = -(tz - oz)
@@ -525,7 +585,7 @@ def build_openseeface_face_screen_motion(
     center_x = clamp(dx * gain * 3.0, -1.0, 1.0)
     center_y = clamp(-dy * gain * 3.0, -1.0, 1.0)
     face_size = clamp(
-        OSF_DEFAULT_FACE_SIZE - dz * gain * 0.8,
+        OSF_DEFAULT_FACE_SIZE + dz * gain * 0.8,
         0.08,
         0.70,
     )

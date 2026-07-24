@@ -107,7 +107,7 @@ flowchart TB
 | **示例模型** | `data/character_models/` | 内置 bai student 等 | 少量 |
 | **打包** | `packaging/` | PyInstaller 启动器、THA4Train 入口、运行时探测 | 4 文件 |
 | **维护脚本** | `scripts/` | 摄像头探测、双仓同步、验收 | 1+ 文件（索引内） |
-| **运行时数据** | `workspace/` | `load_preview_ui_state.json`、`basic_layers/`（**不进 Git 索引**） | — |
+| **运行时数据** | `workspace/` | 本地：venv/日志/engines；**入库种子**：`load_preview_ui_state.json`、`basic_layers/`、`region_wobble_mask*.png` | — |
 | **可选包** | `addons/` | 面捕 venv、THA3 权重、THA4 训练（**venv 已排除索引**） | — |
 
 ---

@@ -536,6 +536,17 @@ class OpenSeeFaceRuntime:
             if self._udp_socket is sock:
                 self._udp_socket = None
 
+    def _note_facetracker_process_exited(self, *, reason: str = "") -> None:
+        """Mark process dead and release the in-process camera claim.
+
+        facetracker may exit without going through stop(); leaving
+        facetracker_camera_in_use set blocks camera re-enumeration forever.
+        """
+        self._status.process_running = False
+        if reason:
+            self._status.last_error = reason
+        mark_facetracker_camera_in_use(False)
+
     def _preview_worker(self) -> None:
         process = self._process
         if process is None:
@@ -544,8 +555,7 @@ class OpenSeeFaceRuntime:
         deadline = time.monotonic() + OSF_PREVIEW_HWND_TIMEOUT_SEC
         while not self._stopped and time.monotonic() < deadline:
             if process.poll() is not None:
-                self._status.last_error = "facetracker exited early"
-                self._status.process_running = False
+                self._note_facetracker_process_exited(reason="facetracker exited early")
                 return
             hwnd = wait_for_openseeface_preview_hwnd(
                 process.pid,
@@ -564,7 +574,7 @@ class OpenSeeFaceRuntime:
 
         while not self._stopped:
             if process.poll() is not None:
-                self._status.process_running = False
+                self._note_facetracker_process_exited()
                 self._status.preview_available = False
                 self._status.preview_status = "facetracker stopped"
                 self._state.preview_lost = True

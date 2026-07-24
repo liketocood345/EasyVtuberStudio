@@ -194,16 +194,6 @@ def resolve_openseeface_models_dir(portable_root: Path | None = None) -> Path | 
     return None
 
 
-def resolve_openseeface_models_dir(portable_root: Path | None = None) -> Path | None:
-    exe = resolve_facetracker_exe(portable_root)
-    if exe is None:
-        return None
-    for candidate in (exe.parent.parent / "models", exe.parent / "models"):
-        if candidate.is_dir():
-            return candidate
-    return None
-
-
 def openseeface_capture_ready(portable_root: Path | None = None) -> bool:
     return resolve_facetracker_exe(portable_root) is not None
 

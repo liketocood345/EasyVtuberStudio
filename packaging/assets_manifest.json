@@ -15,7 +15,10 @@
     "data/images",
     "deps/tha3 code (tha3_src, ezvtuber_rt) without model weights",
     "deps/tha3/models/README.txt",
-    "face-puppeteer-ui-enhancements-ai-code/.../data/tha4/placeholder.txt"
+    "face-puppeteer-ui-enhancements-ai-code/.../data/tha4/placeholder.txt",
+    "workspace/load_preview_ui_state.json (seed UI persistence)",
+    "workspace/basic_layers/ (seed layer slots)",
+    "workspace/region_wobble_mask*.png (when present)"
   ],
   "github_zip_excludes": [
     "addons/*/venv",
@@ -26,7 +29,8 @@
     "deps/tha3/models/**/*.pt",
     "demo/data/tha4/*.pt",
     "demo/data/pose_dataset.pt",
-    "workspace/* (user state)"
+    "workspace/student_venv",
+    "workspace logs / deploy markers / ezvtb_engines (local only)"
   ],
   "assets": [
     {

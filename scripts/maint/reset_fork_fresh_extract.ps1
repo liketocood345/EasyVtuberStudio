@@ -34,10 +34,14 @@ Remove-TreeIfExists (Join-Path $ForkRoot "talking-head-anime-4-demo\venv")
 Remove-TreeIfExists (Join-Path $ForkRoot "workspace\student_venv")
 Remove-TreeIfExists (Join-Path $ForkRoot "data\thirdparty\mediapipe")
 
+. (Join-Path $PSScriptRoot "workspace_shipped_memory.ps1")
+
 $workspace = Join-Path $ForkRoot "workspace"
 if (Test-Path $workspace) {
-    Get-ChildItem $workspace -Force | Where-Object { $_.Name -ne ".gitkeep" } |
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    # Wipe deploy/runtime debris, but keep shipped seed memory (ui state + layers).
+    Get-ChildItem $workspace -Force | Where-Object {
+        $_.Name -ne ".gitkeep" -and -not (Test-IsShippedWorkspaceMemoryName $_.Name)
+    } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 } else {
     New-Item -ItemType Directory -Force -Path $workspace | Out-Null
 }

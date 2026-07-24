@@ -18,9 +18,9 @@
 | 路径引用扫描 | `scripts\maint\verify_path_refs.ps1` |
 | HF Bucket 已同步（若本轮迁出权重） | `sync_develop_to_hf_bucket.ps1 -MirrorRoot E:\EasyVtuberStudio-hf -DryRun` 后再正式上传 |
 
-**不要提交进 Git 的大目录**（见 `.gitignore`）：`addons/openseeface/`、`addons/face_puppeteer/`、`addons/tha3_models/`、`addons/tha4_training/`、`addons/output_enhancement/`、`workspace/student_venv/`、`runtime/`、`workspace/*` 用户状态、**`.codegraph/`**、**`**/his/`**（历史快照）、**`docs/training/`**（旧续训流程）、**`docs/oid.md`**（本地聊天摘录）。
+**不要提交进 Git 的大目录**（见 `.gitignore`）：`addons/openseeface/`、`addons/face_puppeteer/`、`addons/tha3_models/`、`addons/tha4_training/`、`addons/output_enhancement/`、`workspace/student_venv/`、`runtime/`、`workspace` 下日志/部署标记/`ezvtb_engines` 等本地状态、**`.codegraph/`**、**`**/his/`**（历史快照）、**`docs/training/`**（旧续训流程）、**`docs/oid.md`**（本地聊天摘录）。
 
-**应入库的发布物**：`packaging/`、`DEPLOY.bat`、`EasyVtuberStudio.exe`（若本机已编译）、`docs/`、`data/character_models/baiten_*` 等 CORE 资源。
+**应入库的发布物**：`packaging/`、`DEPLOY.bat`、`EasyVtuberStudio.exe`（若本机已编译）、`docs/`、`data/character_models/baiten_*` 等 CORE 资源；以及 **种子持久化记忆**：`workspace/load_preview_ui_state.json`、`workspace/basic_layers/`、`workspace/region_wobble_mask*.png`（由 `sync_develop_to_fork.ps1` 从 develop 拷入；见 `scripts/maint/workspace_shipped_memory.ps1`）。
 
 **不要入库、改放 HF Bucket 的大文件**（见 [HF_BUCKET_MIRROR.md](HF_BUCKET_MIRROR.md)）：
 
