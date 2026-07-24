@@ -25,7 +25,11 @@
 
 
 
-https://github.com/user-attachments/assets/dfa16395-3dfc-4861-b727-53e208856555
+
+
+https://github.com/user-attachments/assets/f282fbef-212c-4839-8cf5-1793cd1926d5
+
+
 
 ## 仓库与路径
 
@@ -81,6 +85,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 
 - 加载后即显示默认姿态；`Load Last` / `Load Other`
 - `workspace/load_preview_ui_state.json` 保存开关、滑块、输出窗、嘴部/显示变换、面捕模式等
+- **CORE / HF 种子记忆**（随发布入库）：同目录下 `basic_layers/`、`region_wobble_mask*.png`；本地另有 venv/日志等不入 Git
 
 ### 4. 呼吸与嘴部（`mediapipe_face_pose_converter_00.py`）
 
@@ -106,6 +111,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 
 - **启用图层混合**：弹出多槽位 `BasicLayerWindow`，在内置预览区编辑
 - **无限图层系统（L2）**：动态增删槽位；**简单摇摆**、**圆周运动**、**环绕跟随（orbit host）**；绑定可随躯干倾斜（Lean shift/rotate）
+- **区域晃动（region wobble）**：立绘局部网格晃动（如动耳），掩膜与参数写入 `workspace/`
 - 合成经 `draw_result_wx_image()` → present 管线交付 **ULW**（`layer_runtime.py`、`numpy_layer_compositor.py`）
 - ~~向外挂图层系统输出 / bridge~~ 已移除（2026-05-30）
 
@@ -121,13 +127,14 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 
 ### 10. 附带内容与文档
 
-- `data/character_models/baiten_from_project_forlon9/bai_450k/`：示例白腾 student 模型
+- `data/character_models/baiten_from_project_forlon9/bai_450k/`：示例白腾，包含 student 模型与立绘（白腾设定是白猫，这里穿着白短袖，不是这个项目只能放白模）
 - 文档：`docs/HANDOVER.md`、`docs/TROUBLESHOOTING_QA.md`、`docs/DOC_INDEX.md`、`docs/CHANGELOG.md` 等
 - `his/`：按时间归档的历史快照
 
-**发布版说明（2026-06-24）：** 已去除长跑 debug 脚手架（`debug-3353ed.log` 等 NDJSON 埋点）；保留 ULW 独立线程投递、输出停滞自愈、infer worker stuck 愈合等生产修复。详见 [docs/CHANGELOG.md](docs/CHANGELOG.md) §2026-06-24。
+**发布版说明（2026-07-25）：** 长时诊断默认关闭（可选 `EVS_LONGRUN_DIAG` / `EVS_DIAG_*`）；OSF 近远缩放与眨眼/wink 分类已修正；种子 UI 记忆随 GitHub/HF 发布。更早的 2026-06-24 已去除旧版 `longrun_freeze_debug` NDJSON 脚手架。详见 [docs/CHANGELOG.md](docs/CHANGELOG.md) §2026-07-25。
 
-“这不是我的选择，但是我选择的。”他总是如是说道。
+“这不是我的选择，但是我选择的。”白腾总是如是说道。
+                                    ——————————本项目由小说《代号：九星独行》友情赞助
 
 ---
 
@@ -136,6 +143,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 ```
 <REPO_ROOT>\
 ├── README.md                 ← 本文件（GitHub 首页）
+├── LICENSE                   ← Apache-2.0
 ├── DEPLOY.bat                ← 六档安装（basic / OSF / MediaPipe / THA3 / THA4 训练 / NN 后处理）
 ├── RESET_ADDON.bat           ← 卸载单个可选包
 ├── EasyVtuberStudio.exe      ← 主入口（双击启动）
@@ -151,7 +159,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 │   ├── launch/               ← bat 启动器（run、THA4Train、DownloadAssets…）
 │   └── maint/                ← develop→fork 同步、路径验收
 ├── tools/training/
-└── workspace/                ← 用户可写状态（ui state、deploy.log）
+└── workspace/                ← 用户可写状态；发布种子含 ui state / basic_layers / wobble 掩膜
 ```
 
 ## 环境兼容策略
@@ -179,7 +187,9 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 
 | 提交 / 日期 | 说明 |
 |-------------|------|
-| `2026-06-24` | **发布版去除 debug 脚手架**（NDJSON / longrun 诊断）；**OpenSeeFace** 面捕（DEPLOY [2]）；OSF 眨眼/单眼 wink 管线；ULW 线程投递与长跑卡顿缓解 |
+| `2026-07-25` | **种子 UI 记忆入库**；长时诊断最小化；OSF 近远 `face_size` / wink·blink 修正 |
+| `2026-07-22` | **区域晃动（动耳）**等图层/立绘局部晃动；同步双发布仓 |
+| `2026-06-24` | **发布版去除旧 debug 脚手架**；**OpenSeeFace** 面捕（DEPLOY [2]）；ULW 线程投递与长跑卡顿缓解 |
 | `2026-06-15` | **图层圆周运动**（轨道编辑、辅助槽 z 序、L2 槽位增删）；**鼠标三区校准**与 ix-025；**窗口捕获**长时卡顿优化；`CODEBASE_MAP` / BUG 热点清单 |
 | `3a32f04` · 2026-06-13 | **透明 ULW 真 alpha 输出**、wx-free 合成；图层**绑定随躯干倾斜**；背景下拉四档重构 |
 | `f81363b` · 2026-06-04 | **Mouse + Audio** 布局补全；三栏分割持久化 |

@@ -89,7 +89,7 @@ scripts\launch\run_load_preview_puppeteer.bat
 | [camfix/CAMERA_CHANGES_SUMMARY.md](camfix/CAMERA_CHANGES_SUMMARY.md) | 摄像头/DroidCam 改动摘要 |
 | [../README.md](../README.md) | Fork 总览、双环境策略 |
 
-### 0.5 当前进度（2026-06-24）
+### 0.5 当前进度（2026-07-25）
 
 **已完成（面向发布 / 日常开发）**
 
@@ -97,18 +97,23 @@ scripts\launch\run_load_preview_puppeteer.bat
 - **三种面捕**：OpenSeeFace（DEPLOY [2]）· MediaPipe / 窗口捕获（[3]）· Mouse + Audio（[1] 即可）
 - THA3 / THA4 Student 双图像源；**输出动态增强校准**；窗口捕获 **后台 worker**
 - **图层 L2**：动态槽位增删；简单摇摆、圆周运动、环绕跟随（orbit host）；绑定随躯干倾斜
+- **区域晃动（region wobble）**：立绘局部网格晃动（动耳等）；掩膜随种子记忆发布
 - **输出增强**（f-055）：SR / RIFE / TRT 可选链，默认恒等；DEPLOY [6]
 - **长跑稳定性**：ULW 独立线程投递；`output_stall_watch_timer` 输出停滞自愈；infer worker stuck 愈合
-- **2026-06-24 发布版**：已去除 `longrun_freeze_debug` 等 NDJSON 诊断脚手架（不再默认写 `debug-3353ed.log`）
+- **种子持久化记忆**：`workspace/load_preview_ui_state.json`、`basic_layers/`、`region_wobble_mask*.png` 随 GitHub CORE / HF Bucket 入库
+- **诊断**：默认不刷盘；可选 `EVS_LONGRUN_DIAG` / `EVS_DIAG_TILT` / `EVS_DIAG_EYE`（`longrun_diag.py`）。2026-06-24 已去除旧版 `longrun_freeze_debug` NDJSON 脚手架
+- **OSF（2026-07）**：近远 `face_size` 符号修正；眨眼 / 单眼 wink 分类与 hold 行为修正
 
 **自检脚本（develop / main，`face-puppeteer-ui-enhancements-ai-code` 下）**
 
 | 领域 | 脚本 |
 |------|------|
 | 图层 | `smoke_layer_runtime.py` |
+| 区域晃动 | `smoke_region_wobble.py` |
 | 鼠标面捕 | `smoke_mouse_mocap.py` |
 | OpenSeeFace | `smoke_openseeface_mocap.py`、`smoke_openseeface_preview.py` |
 | 窗口捕获 | `smoke_window_capture.py` |
+| 输出帧率 | `smoke_output_fps.py` |
 | 后处理 | `smoke_output_enhancement.py` |
 
 **仍在推进 / 范围外**
@@ -117,8 +122,9 @@ scripts\launch\run_load_preview_puppeteer.bat
 |--------|------|
 | 中 | L2/L3 手动长测（GIF/视频图层、复杂绑定链） |
 | 低 | 外挂 bridge 已永久移除；见 `plans/EXTERNAL_LAYER_INTERFACE.md` |
+| 可选 | Pose「预测人」见设计手册 f-069（P3，未做产品默认） |
 
-历史 §0.5（2026-05-29）中「L2 占位」「OutputFrame 始终可见」等描述已过时；以本节与 [CHANGELOG.md](CHANGELOG.md) 为准。
+历史 §0.5（2026-05-29 / 2026-06-24）中过时描述以本节与 [CHANGELOG.md](CHANGELOG.md) §2026-07-25 为准。
 
 ### 0.6 UI 弹窗安全（高危）
 

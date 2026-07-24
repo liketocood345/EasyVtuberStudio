@@ -1248,6 +1248,8 @@ class MainFrame(wx.Frame):
         self._layer_drag_slot_id: Optional[int] = None
         self._layer_drag_last_pos: Optional[tuple[int, int]] = None
         self._layer_drag_canvas_size: tuple[int, int] = (1, 1)
+        self._layer_drag_redraw_pending = False
+        self._layer_drag_redraw_scheduled = False
         self._layer_edit_mode = LayerEditMode.NONE
         self._layer_edit_panel: Optional[wx.Window] = None
         # (slot_id, ResolvedLayerRect, rotation_deg, canvas_w, canvas_h) of the
@@ -4725,15 +4727,12 @@ class MainFrame(wx.Frame):
         return self.begin_layer_edit_at(x, y, canvas_w, canvas_h)
 
     def _overlay_edit_motion(self, x: int, y: int) -> None:
-        # _apply_layer_edit_motion -> on_layer_state_changed already pushes the
-        # ULW frame; no extra schedule needed here.
+        # Motion coalesces ULW redraw via _flush_layer_drag_redraw (CallAfter).
         self.apply_layer_edit_at(x, y)
 
     def _overlay_edit_end(self) -> None:
-        # _end_layer_edit only persists state (no on_layer_state_changed), so
-        # push one final frame so the selection chrome/handle settles.
+        # _end_layer_edit paints once, persists, and refreshes the layer window.
         self.end_layer_edit_external()
-        self._maybe_schedule_transparent_capture_update(immediate=True)
 
     def _overlay_key_nudge(self, dx: float, dy: float) -> bool:
         # nudge_selected_layer -> on_layer_state_changed pushes the ULW frame.
@@ -11094,12 +11093,40 @@ class MainFrame(wx.Frame):
             offset_dx, offset_dy = self._panel_to_layer_delta(dx, dy, canvas_w, canvas_h)
             apply_move_delta(layer, offset_dx, offset_dy)
         self._layer_drag_last_pos = pos
-        self.on_layer_state_changed()
+        # Coalesce present: apply offsets every move, paint latest-wins via CallAfter.
+        # (Per-move on_layer_state_changed was ~375ms: refresh_all + dual persist.)
+        self._layer_drag_redraw_pending = True
+        if not self._layer_drag_redraw_scheduled:
+            self._layer_drag_redraw_scheduled = True
+            wx.CallAfter(self._flush_layer_drag_redraw)
+
+    def _flush_layer_drag_redraw(self) -> None:
+        self._layer_drag_redraw_scheduled = False
+        if getattr(self, "_is_closing", False) or not self._layer_drag_active:
+            self._layer_drag_redraw_pending = False
+            return
+        if not self._layer_drag_redraw_pending:
+            return
+        self._layer_drag_redraw_pending = False
+        self.notify_layer_composite_dirty(immediate_capture=True)
+        if (
+                self._layer_drag_active
+                and self._layer_drag_redraw_pending
+                and not self._layer_drag_redraw_scheduled):
+            self._layer_drag_redraw_scheduled = True
+            wx.CallAfter(self._flush_layer_drag_redraw)
 
     def _end_layer_edit(self) -> None:
         if not self._layer_drag_active:
             return
+        # Cancel coalesced paints; do one final present + persist + layer UI refresh.
+        self._layer_drag_redraw_pending = False
+        self._layer_drag_redraw_scheduled = False
+        self.notify_layer_composite_dirty(immediate_capture=True)
         self.persist_basic_layers_state()
+        self.refresh_basic_layer_window_if_visible()
+        self.refresh_layer_blend_status()
+        self.save_persistent_ui_state()
         self._layer_drag_active = False
         self._layer_drag_slot_id = None
         self._layer_drag_last_pos = None
@@ -11173,7 +11200,6 @@ class MainFrame(wx.Frame):
             return False
         layer = self.basic_layers_state.get_slot(slot_id)
         nudge_layer(layer, dx, dy)
-        self.persist_basic_layers_state()
         self.on_layer_state_changed()
         return True
 

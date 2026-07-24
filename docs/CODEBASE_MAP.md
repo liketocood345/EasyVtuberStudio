@@ -2,8 +2,8 @@
 
 > **编制方式**：以 CodeGraph 索引为核心（`codegraph status` / `files` / `context` / `callers` / `callees` / `impact`），辅以仓库既有文档。  
 > **索引根**：`e:\easyvtuberstudio-develop`（**勿**用工作区根 `E:\`）。  
-> **编制日期**：2026-06-15  
-> **索引快照**：504 files · 10,125 nodes · 22,391 edges · DB ~23 MB（`codegraph status`）
+> **编制日期**：2026-07-25（模块表已对齐；索引数值仍为上次快照，需 `codegraph init`/`sync` 后刷新）  
+> **索引快照**：504 files · 10,125 nodes · 22,391 edges · DB ~23 MB（`codegraph status`，2026-06-15）
 
 本图回答三件事：**仓库分区干什么**、**从哪进**、**改一条链路会牵动谁**。函数级 UI 对照见同目录实验下的 [CUSTOM_FUNCTION_INDEX.md](../face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/CUSTOM_FUNCTION_INDEX.md)。
 
@@ -118,6 +118,9 @@ flowchart TB
 |------|------|------|
 | **主 UI** | `experiments/puppeteer_load_preview/character_model_mediapipe_puppeteer_load_preview.py` | `MainFrame` + ULW `TransparentCaptureWindow` + `ControlsFrame`；日常开发主入口 |
 | **OpenSeeFace** | `openseeface_mocap_driver.py`、`openseeface_runtime.py` | UDP 面捕、pacer、眼部 motion 管线 |
+| **区域晃动** | `region_wobble.py`、`region_wobble_host.py`、`region_wobble_layer_ui.py` | 立绘局部网格晃动、掩膜与岛参数 |
+| **Present 缓存** | `present_compose_cache.py` | 合成/仿射缓存，服务输出帧率 |
+| **长时诊断** | `longrun_diag.py` | 可选 NDJSON（`EVS_LONGRUN_DIAG` / `EVS_DIAG_*`，默认关洪泛） |
 | **启动器** | `packaging/launcher/launch_face_puppeteer.py` | 打包 exe 调用的 Python 入口 |
 | **训练入口** | `packaging/launcher/launch_tha4train.py` | DEPLOY [5] THA4 训练工具 |
 | **批处理** | `scripts/launch/run_load_preview_puppeteer.bat` | develop 一键启动（见 HANDOVER） |
@@ -140,6 +143,9 @@ flowchart TB
 | **输出后端** | `output_backends.py` | 真透 / 色键 / Spout2 占位 |
 | **窗口捕获** | `window_capture.py` | PrintWindow / BitBlt 抓 Win32 窗口 |
 | **鼠标面捕** | `mouse_mocap_driver.py` | EasyVtuber 风格鼠标+音频 |
+| **区域晃动** | `region_wobble.py` 等 | 局部网格晃动（动耳等） |
+| **Present 缓存** | `present_compose_cache.py` | compose / warp 缓存 |
+| **长时诊断** | `longrun_diag.py` | 可选长跑探针（默认不洪泛） |
 | **中心区 UI** | `mouse_zone_panel.py` | 屏幕/中心区示意图 |
 | **姿态插帧** | `frame_interpolation.py` | pose-space lerp + 真实 `poser.pose()` |
 | **THA3 引擎** | `tha3_engine.py` | ONNX DirectML 立绘黑盒 |

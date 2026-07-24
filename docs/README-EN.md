@@ -44,12 +44,15 @@ Other launchers under `scripts\launch\` (e.g. `THA4Train.exe`, `THA4_DownloadAss
 - Troubleshooting: [TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md)
 - Handover: [HANDOVER.md](HANDOVER.md)
 
-## Current Direction (2026-06-24)
+## Current Direction (2026-07-25)
 
 - **Three mocap modes:** OpenSeeFace · MediaPipe (camera / window / file) · Mouse + Audio (no camera)
 - **Single ULW output window** (`easyvtuberstudio_output`) for transparent + solid backgrounds; layer edit on overlay
 - **Layer system L2:** dynamic slots, swing / circular / orbit-follow motion, binding with torso lean
+- **Region wobble:** local mesh wobble on the portrait (e.g. ear motion); mask + params in `workspace/`
+- **Shipped seed UI memory:** `workspace/load_preview_ui_state.json`, `basic_layers/`, `region_wobble_mask*.png` on GitHub CORE and HF Bucket
 - **Optional output enhancement:** SR / RIFE / TensorRT pipeline (tier [6])
-- **Release builds:** long-run NDJSON debug scaffolding removed; production ULW threading and stall heal retained
+- **Diagnostics:** opt-in only (`EVS_LONGRUN_DIAG` / `EVS_DIAG_*`); older NDJSON longrun scaffolding removed (2026-06-24)
+- **OSF fixes (2026-07):** depth `face_size` sign; blink vs wink classification
 
-See [CHANGELOG.md](CHANGELOG.md) and [../plans/PORTABLE_RELEASE.plan.md](../plans/PORTABLE_RELEASE.plan.md).
+See [CHANGELOG.md](CHANGELOG.md) §2026-07-25 and [../plans/PORTABLE_RELEASE.plan.md](../plans/PORTABLE_RELEASE.plan.md).

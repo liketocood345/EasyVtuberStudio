@@ -2,12 +2,12 @@
   "slot_id": 1,
   "enabled": true,
   "visible": true,
-  "asset_path": null,
+  "asset_path": "data/character_models/baiten_from_project_forlon9/bai_450k/parts/beitou.gif",
   "z_order": 3,
   "occlusion": "in_front_of_character",
   "transform": {
-    "offset_x": -44.666666666666664,
-    "offset_y": 65.33333333333334,
+    "offset_x": -50.66666666666664,
+    "offset_y": 73.33333333333331,
     "scale": 0.22,
     "rotation_deg": 0.0
   },
