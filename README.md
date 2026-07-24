@@ -29,6 +29,7 @@
 
 https://github.com/user-attachments/assets/f282fbef-212c-4839-8cf5-1793cd1926d5
 
+示例白腾，包含 student 模型与立绘（白腾设定是白猫，这里穿着白短袖，不是这个项目只能放白模）
 
 
 ## 仓库与路径
