@@ -132,7 +132,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 - 文档：`docs/HANDOVER.md`、`docs/TROUBLESHOOTING_QA.md`、`docs/DOC_INDEX.md`、`docs/CHANGELOG.md` 等
 - `his/`：按时间归档的历史快照
 
-**发布版说明（2026-07-25）：** 长时诊断默认关闭（可选 `EVS_LONGRUN_DIAG` / `EVS_DIAG_*`）；OSF 近远缩放与眨眼/wink 分类已修正；种子 UI 记忆随 GitHub/HF 发布。更早的 2026-06-24 已去除旧版 `longrun_freeze_debug` NDJSON 脚手架。详见 [docs/CHANGELOG.md](docs/CHANGELOG.md) §2026-07-25。
+
 
 “这不是我的选择，但是我选择的。”白腾总是如是说道。
                                     ——————————本项目由小说《代号：九星独行》友情赞助
