@@ -59,6 +59,9 @@ def switch_image_source(main_frame, new_mode: str, *, autoload_asset: bool = Tru
     main_frame.active_image_source.stop(main_frame)
     main_frame.active_image_source = create_image_source(normalized)
     main_frame.image_source_mode = normalized
+    reset_smooth = getattr(main_frame, "_reset_pose_smooth_buffer", None)
+    if callable(reset_smooth):
+        reset_smooth()
     _sync_image_source_mode_choice(main_frame, normalized)
     main_frame.active_image_source.start(main_frame)
     main_frame.refresh_image_source_ui_visibility()

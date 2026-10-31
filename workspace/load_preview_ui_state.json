@@ -170,5 +170,6 @@
   "target_frame_rate_fps": 75,
   "mouth_infer_cap_kept_low": false,
   "mocap_frame_rate_mode": "adaptive",
-  "mocap_fixed_fps": 30
+  "mocap_fixed_fps": 30,
+  "pose_smooth_frames": 1
 }
