@@ -1,5 +1,11 @@
 """Shared layer edit gestures for source preview and output panel."""
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import math
 from enum import Enum
@@ -212,6 +218,11 @@ def apply_move_delta(layer: BasicLayerSlot, dx: float, dy: float) -> None:
     layer.transform.offset_y += dy
 
 
+# EVS-DESIGN-AUDIT EVS-A105 BEGIN
+# 设计[UI-A×01, UI-A×05.4] [静态关联 / 调用门控]
+# 几何拖动工具本身不知道选集；只允许单选缩放由主窗/图层窗入口保证，不可把此通用工具可缩放任意 rect 认定违反规则。
+# 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A105 END
 def apply_scale_from_drag(
         layer: BasicLayerSlot,
         pointer_x: float,

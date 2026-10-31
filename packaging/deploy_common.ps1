@@ -1,11 +1,14 @@
-# Shared DEPLOY session helpers (TLS, logging, portable root checks).
+﻿# Shared DEPLOY session helpers (TLS, logging, portable root checks).
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'portable_environment.ps1')
 
 function Initialize-DeploySession {
     param(
         [Parameter(Mandatory = $true)]
         [string]$PortableRoot
     )
+    . (Join-Path $PSScriptRoot 'portable_environment.ps1')
+    Initialize-LocalProcessEnvironment $PortableRoot
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
     } catch {

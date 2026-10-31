@@ -51,13 +51,22 @@ if ($OnlyAssetIds.Count -gt 0) {
 
 $releaseAssets = @()
 $upstreamAssets = @()
+$bootstrapAssets = @()
 foreach ($asset in $assets) {
     $source = [string]$asset.source
-    if ($source -eq "upstream" -or -not [string]::IsNullOrWhiteSpace([string]$asset.upstream_package)) {
+    if ($source -eq 'bootstrap') {
+        $bootstrapAssets += $asset
+    } elseif ($source -eq "upstream" -or -not [string]::IsNullOrWhiteSpace([string]$asset.upstream_package)) {
         $upstreamAssets += $asset
     } else {
         $releaseAssets += $asset
     }
+}
+
+foreach($asset in $bootstrapAssets) {
+    $script=if($asset.id -eq 'face_puppeteer_runtime'){'bootstrap_portable.ps1'}elseif($asset.id -eq 'tha4_teacher_training'){'bootstrap_tha4_teacher.ps1'}else{throw "Unknown bootstrap asset: $($asset.id)"}
+    & (Join-Path $PSScriptRoot $script) -PortableRoot $PortableRoot
+    if($LASTEXITCODE -ne 0){throw "Portable bootstrap failed: $($asset.id)"}
 }
 
 foreach ($asset in $upstreamAssets) {
@@ -71,9 +80,9 @@ foreach ($asset in $upstreamAssets) {
 }
 
 if ($releaseAssets.Count -eq 0) {
-    if ($upstreamAssets.Count -gt 0) {
+    if ($upstreamAssets.Count -gt 0 -or $bootstrapAssets.Count -gt 0) {
         Write-Host ""
-        Write-Host "Upstream download complete."
+        Write-Host "Portable asset preparation complete."
         Write-Host ""
         exit 0
     }

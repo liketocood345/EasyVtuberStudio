@@ -53,15 +53,28 @@ class FiveStepPoserComputationProtocol(CachedComputationProtocol):
         super().__init__()
         self.eyebrow_morphed_image_index = eyebrow_morphed_image_index
         self.cached_batch_0 = None
+        self.cached_source_token = None
         self.cached_eyebrow_decomposer_output = None
 
     def compute_func(self) -> TensorListCachedComputationFunc:
         def func(modules: Dict[str, Module],
                  batch: List[Tensor],
                  outputs: Dict[str, List[Tensor]]):
+            # EVS-PERF-20261029: immutable PNG tensors are reused until reload.
+            # Identity + mutation version is exact; do not synchronize CUDA just
+            # to compare every pixel. Inference tensors without versions retain
+            # the conservative content-comparison fallback.
+            try:
+                source_token = (batch[0].data_ptr(), batch[0]._version,
+                                tuple(batch[0].shape), tuple(batch[0].stride()),
+                                batch[0].dtype, batch[0].device)
+            except RuntimeError:
+                source_token = None
             if self.cached_batch_0 is None:
                 new_batch_0 = True
-            elif batch[0].shape[0] != self.cached_batch_0.shape[0]:
+            elif source_token is not None:
+                new_batch_0 = source_token != self.cached_source_token
+            elif batch[0].shape != self.cached_batch_0.shape:
                 new_batch_0 = True
             else:
                 new_batch_0 = torch.max((batch[0] - self.cached_batch_0).abs()).item() > 0
@@ -70,6 +83,7 @@ class FiveStepPoserComputationProtocol(CachedComputationProtocol):
             output = self.get_output(Branch.all_outputs.name, modules, batch, outputs)
             if new_batch_0:
                 self.cached_batch_0 = batch[0]
+                self.cached_source_token = source_token
                 self.cached_eyebrow_decomposer_output = outputs[Network.eyebrow_decomposer.outputs_key]
             return output
 

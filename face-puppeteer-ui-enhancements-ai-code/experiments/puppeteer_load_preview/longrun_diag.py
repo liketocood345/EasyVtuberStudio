@@ -7,6 +7,13 @@
 # -*- coding: utf-8 -*-
 """Lightweight long-run diagnostic hooks (opt-in; never block the game loop)."""
 from __future__ import annotations
+from portable_process_env import debug_log_path
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import json
 import os
@@ -14,7 +21,7 @@ import time
 from typing import Any, Optional
 
 _SESSION_ID = "d095ab"
-_DEFAULT_LOG = r"e:\debug-d095ab.log"
+_DEFAULT_LOG = debug_log_path('d095ab')
 
 _last_emit_mono: dict[str, float] = {}
 _session_started_mono: float = 0.0
@@ -44,6 +51,11 @@ def log_path() -> str:
     return os.environ.get("EVS_LONGRUN_DIAG_LOG", _DEFAULT_LOG).strip() or _DEFAULT_LOG
 
 
+# EVS-DESIGN-AUDIT EVS-A085 BEGIN
+# 设计[f-069] [静态符合（保留最小诊断）；长测未做]
+# 长运行诊断可受开关/节流控制，保留以排查周期性卡顿；不是默认上线 Pose Predictor 的授权。需十分钟以上内存/句柄/帧间隔样本，注释不代表长测完成。
+# 历史 bug 热点 #1,#2：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A085 END
 def emit(
         location: str,
         message: str,

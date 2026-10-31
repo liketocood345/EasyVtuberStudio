@@ -7,6 +7,7 @@ from output_enhancement.antialiasing import (
     normalize_antialias_strength,
 )
 from output_enhancement.config import (
+    INFER_BACKEND_DML,
     INFER_BACKEND_LABELS,
     INFER_BACKEND_ORT,
     INFER_BACKEND_PYTORCH,
@@ -35,6 +36,7 @@ from output_enhancement.runtime import OutputEnhancementRuntime
 __all__ = [
     "EnhancementPipeline",
     "FrameSourceTag",
+    "INFER_BACKEND_DML",
     "INFER_BACKEND_LABELS",
     "INFER_BACKEND_ORT",
     "INFER_BACKEND_PYTORCH",

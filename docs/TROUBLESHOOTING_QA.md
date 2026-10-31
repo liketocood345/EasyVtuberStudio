@@ -1,9 +1,9 @@
 # EasyVtuberStudio — 排障与常见误解 Q&A / Troubleshooting FAQ
 
-基于 EasyVtuberStudio 面捕增强版、camfix 隔离测试与排障经历整理。  
-**文档权威副本（本文件）：** `E:\easyvtuberstudio-main\` · **活跃代码开发：** `E:\easyvtuberstudio-develop\`（稳定后合并到 fork 再 push）。
+基于 EasyVtuberStudio 面捕增强版与排障经历整理（含早期 camfix 隔离测试结论，见 [camfix/CAMERA_CHANGES_SUMMARY.md](camfix/CAMERA_CHANGES_SUMMARY.md)）。  
+**文档权威副本（本文件）：** `E:\easyvtuberstudio-main\` · **活跃代码开发：** `E:\easyvtuberstudio-develop\`（稳定后用 `scripts\maint\sync_develop_to_fork.ps1` 同步到 fork 再 push；**根目录 `README.md` 仅在 fork 维护，不会被该脚本覆盖**）。
 
-相关文档：[HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md) · [BACKUP.md](BACKUP.md) · [CHANGELOG.md](CHANGELOG.md) · [DOC_INDEX.md](DOC_INDEX.md)
+相关文档：[HARDWARE_REQUIREMENTS.md](HARDWARE_REQUIREMENTS.md) · [BACKUP.md](BACKUP.md) · [CHANGELOG.md](CHANGELOG.md) · [DOC_INDEX.md](DOC_INDEX.md) · [DEPLOY.md](DEPLOY.md)
 
 ---
 
@@ -28,40 +28,41 @@
 | `E:\easyvtuberstudio-main\scripts\launch\run_load_preview_puppeteer.bat` 或根目录 **EasyVtuberStudio.exe** | **发布总库**（定制客户部署、GitHub 推送） |
 | `E:\easyvtuberstudio-develop\scripts\launch\run_load_preview_puppeteer.bat` | **研发主仓**（日常改代码） |
 
-两者脚本路径、`PYTHONPATH` 不同，**不要混用**后抱怨「改了代码没生效」。~~`E:\THA4_bundle_bai_custom`~~ 已废弃。
+两者脚本路径、`PYTHONPATH` 不同，**不要混用**后抱怨「改了代码没生效」。~~旧训练目录~~ 已废弃。
 
 ---
 
-### Q2：我改了 fork 里的代码，为什么运行 develop 没变化（或反过来）？
+### Q2：`EasyVtuberStudio.exe` 和 `run_load_preview_puppeteer.bat` 有什么区别？
 
-**A：** fork 与 develop 是两套目录。日常开发在 **`E:\easyvtuberstudio-develop`**；稳定后手动合并到 **`E:\easyvtuberstudio-main`** 再 push。只改其中一侧不会自动同步到另一侧。
+**A：** 功能同一套主程序；差别在启动方式。
+
+| 方式 | 说明 |
+|------|------|
+| **EasyVtuberStudio.exe** | 发布入口；未装好基础环境时会提示先跑 **`DEPLOY.bat`**；日志优先看 **`workspace\launch.log`** |
+| **`scripts\launch\run_load_preview_puppeteer.bat`** | 直接调便携/系统 Python 跑主脚本；失败信息多在**该黑窗**，未必写 `launch.log` |
+
+日常用户用 exe；改代码调试可用 bat（指向你正在改的那份仓库）。
 
 ---
 
 ### Q3：启动黑窗闪退，日志在哪？
 
-**A：** 看 bat 里 `LOG_FILE`。常见位置：
+**A：** 优先看当前仓库根下：
 
-- **fork：** `E:\easyvtuberstudio-main\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\run_load_preview_runtime.log`
-- **develop：** `E:\easyvtuberstudio-develop\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\run_load_preview_runtime.log`
+| 场景 | 日志 |
+|------|------|
+| **EasyVtuberStudio.exe** | `workspace\launch.log`（fork / develop 各自目录下） |
+| **DEPLOY** | `workspace\deploy.log` |
+| **bat 直接跑** | 黑窗输出；一般**不再**写旧的 `run_load_preview_runtime.log` |
 
-先查 **CUDA / 模型路径 / MediaPipe .task 是否存在**。
-
----
-
-### Q3b：fork 瘦包反复弹「无法初始化 MediaPipe 面捕」？
-
-**A：** 旧版 bug：持久化为面捕模式 + capture 定时器每 66ms 重试并弹窗。新版行为：
-
-1. 未装 `face_puppeteer` 时启动即回退 **Mouse + Audio**
-2. 定时器路径不再弹窗；仅用户手动切面捕时提示一次（经 `ui_dialog_guard` 限频）
-3. 若仍异常，删除或编辑 `workspace/load_preview_ui_state.json` 中 `"mocap_input_mode": "mouse_audio"`
-
-详见 [UI_DIALOG_SAFETY.md](UI_DIALOG_SAFETY.md)。
+先查 **CUDA / 模型路径**；用 MediaPipe 面捕时再查 `.task` 是否已由 **DEPLOY [3]** 装好。
 
 ---
 
-### Q3c：`f-057` 说的「启动 ≤10 秒」到底量什么？
+
+### Q3c：`f-057`启动时间硬约束与启动验收 说的「启动 ≤10 秒」到底量什么？
+
+
 
 **A：** 只量 **主 UI 界面壳就绪**（控制窗 + 输出窗可见、控件可点），**不含**：
 
@@ -78,7 +79,7 @@
 ### Q4：提示找不到 CUDA 或 `cuda:0` 报错？
 
 **A：** 脚本默认 **`torch.device("cuda:0")`**，需要 NVIDIA 显卡与 CUDA 版 PyTorch。无独显时需改代码改 CPU，**通常无法实时面捕**，属环境限制而非 UI bug。
-
+        简单来说，你没英伟达显卡或显卡驱动程序
 ---
 
 ### Q5：Python 运行环境在哪？
@@ -99,7 +100,7 @@
 
 ## 一点五、DEPLOY 与可选包
 
-> **新手先看下面三条**，再查后面的档位说明与技术向 Q&A。
+
 
 ### Q5e：安装时终端提示「源失效」「无法下载」或一片红字，是不是坏了？
 
@@ -121,7 +122,7 @@
 
 ### Q5f：解压后为什么不能直接启动？一定要 DEPLOY 吗？
 
-**A：** **GitHub ZIP（CORE）里不带 Python 运行时。** 解压后只有程序、代码和示例角色，还没有 PyTorch、wx 等运行库。
+**A：** **GitHub ZIP（CORE）里不带 Python 运行时。** 解压后只有程序、代码和示例角色，还没有 PyTorch、wx 等运行库，github有大小限制。
 
 - 双击 **`EasyVtuberStudio.exe`**：若本机**尚未**装好基础环境，会提示你去运行 **`DEPLOY.bat`**，**不会**在后台偷偷自动下载（避免误装、占磁盘）。
 - **至少**要在 DEPLOY 里安装档位 **[1] basic_run**（直接按 Enter 默认即可），装完 `workspace\student_venv` 后才能正常启动 **Mouse + THA4 Student** 模式。
@@ -180,11 +181,11 @@
 2. 需要可靠眨眼展示时，用 **Mouse + Audio** 模式的程序化眨眼，或放慢眨眼幅度/时长
 3. 不要为「必捕每一次快眨」单独加 bug 单——除非在提高 FPS 后仍 **稳定** 复现同一输入无输出
 
-**2026-06-18 补充（单眼 wink 丢失修复）：**
+**已落地的眨眼/wink 修复（仍受上表低 fps 取舍约束）：**
 
-- **根因**：`OSF_EYE_ACTIVE_THRESHOLD` 过高（0.32）使轻 wink 被判为 `open`；`refine_osf_eye_motion_temporal` 曾把非对称闭眼合并为 `blink_both`；pacer 线性插值 + 低 fps 抹掉峰值。  
-- **已修**：先判左右不对称再判双眼；wink 不参与双眼时序合并；眨眼 blendshape **hold**（wink 0.20s / blink 0.11s）；pacer lerp 对 `eyeBlinkLeft/Right` 取 **max**；OSF 推理在眼/头变化时立即触发。  
-- 极快眨仍可能漏（见上表取舍）；**刻意单眼 wink** 应可再现。
+- **2026-06-18**：降低误判门槛；先判左右不对称再判双眼；wink 不并入双眼时序；眨眼 blendshape **hold**；pacer 对眨眼通道取 **max** 等。  
+- **2026-07-25**：眨眼/wink 分类改用 peer 开度 + dominance；**wink hold 不继承 blink**；另修近远 `face_size` 符号。详见 [CHANGELOG.md](CHANGELOG.md) §2026-07-25 R2。  
+- 极快眨仍可能漏（见上表取舍）；**刻意单眼 wink** 在当前版本应可再现。
 
 ---
 
@@ -205,12 +206,12 @@
 
 ---
 
-### Q5g：后处理 NN 超分 / RIFE 灰色或提示缺 [5]？
+### Q5j：后处理 NN 超分 / RIFE 灰色或提示缺档位？
 
-**A：** 后处理 **SuperResolution (NN)** / **Frame Interpolation (NN)** 需 **DEPLOY [5] output_enhancement**。
+**A：** 后处理 **SuperResolution (NN)** / **Frame Interpolation (NN)** 需 **DEPLOY [6] output_enhancement**（**不是** [5]；[5] 是 `tha4_training`）。
 
-- **从 GitHub 瘦包安装：** CORE **不含** `data\ezvtb_nn\` ONNX；档位 [5] 装 pip 并从 HF Bucket（`liketocode789/EasyVtuberStudio`）拉取到 `addons\output_enhancement\ezvtb_data\`（失败回退 Google Drive 导入脚本）。  
-- **从 HF Bucket 整目录同步：** 桶内已含 `data\ezvtb_nn\`，装 [5] 时主要补 pip 包。
+- **从 GitHub 瘦包安装：** CORE **不含** `data\ezvtb_nn\` ONNX；档位 **[6]** 装 pip 并从 HF Bucket（`liketocode789/EasyVtuberStudio`）拉取到 `addons\output_enhancement\ezvtb_data\`（失败回退 Google Drive 导入脚本）。  
+- **从 HF Bucket 整目录同步：** 桶内已含 `data\ezvtb_nn\`，装 **[6]** 时主要补 pip 包。
 
 启用 NN 后请将 **NN 推理后端** 设为 **ONNX Runtime** 或 **TensorRT**。详见 [HF_BUCKET_MIRROR.md](HF_BUCKET_MIRROR.md)、[DEPLOY.md](DEPLOY.md)。
 
@@ -233,17 +234,12 @@ python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtu
 
 **A：** 首次选 **TensorRT** 后端时会编译 SR/RIFE 引擎，缓存于 `workspace\ezvtb_engines\`；进度条会提示「一次性，下次秒开」。编译失败会回退 ONNX Runtime 并写入 `workspace\deploy.log`。无 NVIDIA / 无 tensorrt wheel 时请用 **ONNX Runtime** 后端。
 
----
-
-### Q5b：已装 [1] basic_run，再勾选 [2] 面捕，DEPLOY 失败？
-
-**A：** 旧版 bug：从 `student_venv` 复制到 `face_puppeteer\venv` 后，`pip.exe` 仍指向 student 路径，mediapipe 装错位置。新版 `bootstrap_portable.ps1` 使用 **`python -m pip`** 并在复制后 **`python -m venv --upgrade`**。查看 `workspace\deploy.log` 中 `Runtime verification failed (torch / wx / mediapipe)` 一行。
 
 ---
 
 ### Q5c：DEPLOY 显示成功，但切换面捕模式闪退 / NameError？
 
-**A：** 2026-05-31 前 CORE 曾缺 `MOCAP_INPUT_MODE_MEDIAPIPE` 导入。更新仓库或重新下载 ZIP。日志见 `workspace\launch.log`。
+**A：** 极旧 CORE（约 2026-05-31 前）曾缺面捕模式常量导入。**现行发布包已含修复**——请更新到最新 ZIP / 同步最新代码后再试；日志见 `workspace\launch.log`。
 
 ---
 
@@ -278,75 +274,66 @@ python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtu
 **推荐操作（fork / develop 相同）：**
 
 1. 打开 DroidCam，确认 **电脑端预览窗** 已是手机画面；
-2. 在 THA4 视频源区点 **「选择窗口捕获 / Pick Window Capture」**，选中 **DroidCam** 预览窗；
-3. 需要彻底退出 DroidCam 用户态进程时，可用 `E:\doridcam-oprate\Stop-DroidCam.bat` / `Start-DroidCam.bat`（见下文「关掉 DroidCam…」）。
+2. 在视频源区点 **「选择窗口捕获 / Pick Window Capture」**，选中 **DroidCam** 预览窗；
+3. 需要彻底退出 DroidCam 时：托盘退出后仍占设备，可在任务管理器结束相关进程，或（若本机有自备脚本）运行本地的 Stop/Start 批处理。
 
 下拉列表第一项通常为 **「窗口捕获 / Window: …」**；摄像头仍可通过「刷新设备列表」使用，但 **不推荐** 再优先选 DroidCam 虚拟摄像头。
 
----
-
-### 关掉 DroidCam 托盘/窗口后，进程或虚拟摄像头还在？
-
-**A：** 常见。托盘退出 ≠ 完全退出，可能残留 `adb` 与内核驱动 `droidvcam0_v` / `droidvcam0_a`。**双击**（纯 CMD，不依赖 PowerShell）：
-
-- `E:\doridcam-oprate\Stop-DroidCam.bat`
-- `E:\doridcam-oprate\Start-DroidCam.bat`
-
-停脚本后设备列表里仍可能有 DroidCam 项 → 重启或设备管理器禁用虚拟摄像头；THA4 内 **刷新设备列表** 后再选源。
+停客户端后设备列表里仍可能有 DroidCam 项 → 重启或设备管理器禁用虚拟摄像头；程序内 **刷新设备列表** 后再选源。
 
 ---
 
 ### DroidCam 连不上、无画面、WiFi 一直卡住——只重启电脑够吗？
 
-**A：** **不够。** 实测：电脑端进程在跑、驱动也在，但 WiFi 模式下手机 IP  ping 不通、TCP **4747** 握手卡在 SynSent、`adb devices` 为空——**重启手机后才恢复**。
+**A：** **不够。** 实测：电脑端进程在跑、驱动也在，但 WiFi 模式下手机 IP ping 不通、TCP **4747** 握手卡在 SynSent、`adb devices` 为空——**重启手机后才恢复**。
 
 彻底重置 DroidCam 时，**电脑端和手机端都要「硬重启」**，不能只做托盘退出或划掉 App：
 
-1. **电脑端**：`E:\doridcam-oprate\Stop-DroidCam.bat` → 确认 `droidcam` / `adb` 已退出；仍异常则 **重启电脑**，再 `Start-DroidCam`。
-2. **手机端**：划掉 DroidCam 或断 WiFi **往往不够**——需要 **完全重启手机**（关机再开），再打开 DroidCam App 重新连接。
-3. 两侧都重启后，在 THA4 里 **刷新设备列表** 或重选 **窗口捕获**。
+1. **电脑端**：结束 `droidcam` / `adb` 相关进程；仍异常则 **重启电脑**，再开 DroidCam 客户端。  
+2. **手机端**：划掉 DroidCam 或断 WiFi **往往不够**——需要 **完全重启手机**（关机再开），再打开 DroidCam App 重新连接。  
+3. 两侧都重启后，在程序里 **刷新设备列表** 或重选 **窗口捕获**。
 
 ---
 
 ### 设备列表里没有 DroidCam？
 
-**A：** 先 **打开 DroidCam 客户端**（手机端 + PC 端），再点「刷新设备列表」。未启动时 DirectShow/WMI 可能列不出虚拟摄像头。建议安装 **`pygrabber`**（在 THA4 venv 内）以获取 DirectShow 名称列表。
+**A：** 先 **打开 DroidCam 客户端**（手机端 + PC 端），再点「刷新设备列表」。未启动时 DirectShow/WMI 可能列不出虚拟摄像头。建议在已安装的面捕/基础 venv 内安装 **`pygrabber`**，以便列出 DirectShow 名称。
 
 ---
 
 ### Q7：选 DroidCam 后程序闪退或卡死？
 
-**A：** 实测上 **OpenCV `CAP_DSHOW` + DroidCam 索引** 易异常；实验版对名称含 `droidcam` 的项 **优先 MSMF、避免 DSHOW 回退**，并在子线程打开摄像头减轻 UI 冻结。若仍闪退：更新 DroidCam、换 USB/WiFi 模式，或改用 **窗口捕获**（第二节）。历史 camfix 结论见 [docs/camfix/CAMERA_CHANGES_SUMMARY.md](docs/camfix/CAMERA_CHANGES_SUMMARY.md)。
+**A：** 实测上 **OpenCV `CAP_DSHOW` + DroidCam 索引** 易异常；现行版对名称含 `droidcam` 的项 **优先 MSMF、避免 DSHOW 回退**，并在子线程打开摄像头减轻 UI 冻结。若仍闪退：更新 DroidCam、换 USB/WiFi 模式，或改用 **窗口捕获**（第二节）。历史隔离结论见 [camfix/CAMERA_CHANGES_SUMMARY.md](camfix/CAMERA_CHANGES_SUMMARY.md)。
 
 ---
 
 ### Q8：有画面但是雪花、花屏、全绿？
 
-**A：** 多为 **错误分辨率/像素格式** 或虚拟摄像头未就绪。camfix/实验版会试 MJPG/YUY2、640×480。若 camfix 也花屏 → 优先查 **DroidCam/OBS 虚拟摄像头配置与驱动**，不一定是 THA4 UI。
+**A：** 多为 **错误分辨率/像素格式** 或虚拟摄像头未就绪。程序会试 MJPG/YUY2、640×480 等。若窗口捕获正常而虚拟摄像头花屏 → 优先查 **DroidCam/OBS 虚拟摄像头配置与驱动**，不一定是本 UI。
 
 ---
 
 ### Q9：选 DroidCam 却显示 OBS 或其它设备的画面？
 
-**A：** **pygrabber 列表索引 ≠ OpenCV 索引**，不能单靠数字对齐。用 **设备名称** 匹配；列表里选带 `DroidCam` 字样的项。隔离测试结论：无画面/错设备 **经常是虚拟摄像头软件问题**，不单是 puppeteer。
+**A：** **pygrabber 列表索引 ≠ OpenCV 索引**，不能单靠数字对齐。用 **设备名称** 匹配；列表里选带 `DroidCam` 字样的项。隔离测试结论：无画面/错设备 **经常是虚拟摄像头软件问题**，不单是本程序。
 
 ---
 
 ### Q10：摄像头预览黑屏，但状态写「已连接」？
 
-**A：** 可能 **已打开但读帧无效**（实验版会提示 invalid frame）。点刷新、换后端、降分辨率；DroidCam 重连手机端。若仍无帧，见上条 **「只重启电脑够吗」**——**手机也需完全重启**。
+**A：** 可能 **已打开但读帧无效**（会提示 invalid frame）。点刷新、换后端、降分辨率；DroidCam 重连手机端。若仍无帧，见上条 **「只重启电脑够吗」**——**手机也需完全重启**。
 
 ---
 
-### Q11：camfix 正常，实验版不正常，说明什么？
+### Q11：以前听说 camfix 正常、增强版不正常，还适用吗？
 
-**A：** 按 camfix 设计：**摄像头链路 OK**，问题更可能在实验版的 **非摄像头功能**（双窗、自动平移缩放、输出合成、抗锯齿等）。逐项关闭自动变换、AA=1.0 排查。
+**A：** **camfix 隔离脚本已归档**，不再作为日常排障入口。若「摄像头本身 OK、角色输出怪」：优先关自动平移缩放、AA=1.0、换窗口捕获。历史对照思路见 [camfix/CAMERA_CHANGES_SUMMARY.md](camfix/CAMERA_CHANGES_SUMMARY.md)。
 
 ---
 
-### Q12：camfix 也不正常，说明什么？
+### Q12：摄像头与窗口捕获都不正常，说明什么？
 
-**A：** 优先查 **DroidCam/驱动/OpenCV 后端**；THA4 原版 `VideoCapture(0)` 也可能同样失败。
+**A：** 优先查 **DroidCam/驱动/OpenCV 后端/设备占用**；原版 THA4 `VideoCapture(0)` 也可能同样失败——更像环境问题而非本 UI 独有。
 
 ---
 
@@ -366,13 +353,21 @@ python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtu
 
 ### Q15：没开摄像头，立绘会动吗？
 
-**A：** 加载模型后有 **默认 pose 静态预览**；实时表情需摄像头或视频源 + MediaPipe 检测到脸。无人脸时 head 数值可能不变，**正常**。
+**A：** 加载模型后有 **默认 pose 静态预览**。实时表情取决于面捕模式：
+
+| 模式 | 需要 |
+|------|------|
+| **Face capture (MediaPipe)** | 摄像头/窗口捕获/视频文件 + 检测到脸（DEPLOY **[3]**） |
+| **Face capture (OpenSeeFace)** | facetracker 采摄像头（DEPLOY **[2]**） |
+| **Mouse + Audio** | 无需摄像头；鼠标驱动头/眼，麦克风驱动口型（仅 **[1]** 即可） |
+
+无人脸且非 Mouse+Audio 时 head 可能不变，**正常**。
 
 ---
 
 ### Q15b：为什么耳朵不会动？
 
-**A：** 原作者 **没有设计 AI 绘画动耳** 功能（THA 管线里没有对应的耳朵 blendshape / 姿态通道）。若需要会动的耳朵，可考虑使用 **图层系统**（例如单独准备耳朵/耳饰贴图图层，随头转或自行编排动画）。
+**A：** 耳朵等局部晃动靠 **区域晃动（region wobble）**，不是默认面捕就会动。在图层/角色相关入口启用区域晃动并配置掩膜（种子记忆可含 `workspace/region_wobble_mask*.png`）。未启用时耳朵静止属预期。
 
 ---
 
@@ -433,25 +428,25 @@ python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtu
 
 ### Q18：切到完整窗后，采集还在跑吗？
 
-**A：** **会。** 定时器与 MediaPipe/GPU 推理在紧凑窗时也在跑，只是部分控件尚未创建；用 `ValueState` 等占位保证逻辑不崩。
+**A：** **会。** 定时器与面捕/GPU 推理在紧凑窗时也在跑，只是部分控件尚未创建；用 `ValueState` 等占位保证逻辑不崩。
 
 ---
 
 ### Q19：为什么有两个（或更多）窗口？
 
-**A：** 增强版将 **角色输出** 放到 **独立无边框输出窗**（可拖动），主窗/完整窗用于调参和摄像头预览。输出窗可单独给 OBS「窗口采集」。
+**A：** **调参/预览** 在控制窗（完整调参窗或精简小窗）；**角色画面** 统一在分层窗 **ULW**（标题 **`easyvtuberstudio_output`**），可拖动位置，供 OBS 等采集。开启图层混合时还可能多一个 **图层系统窗**。已无「外挂图层输出」第二套输出链路。
 
 ---
 
 ### Q20：输出窗拖不动？
 
-**A：** 应在 **输出图画布区域** 拖动；若只点到边框外无效。无边框窗需点击图像区域。
+**A：** 在 **`easyvtuberstudio_output`** 的 **画面区域** 拖动；点到边缘外或被其它窗挡住时无效。透明档用 OBS 时请用 **WGC/游戏捕获**（见 Q30），不要用 BitBlt 窗口捕获。
 
 ---
 
 ### Q21：未加载模型时控件是灰的？
 
-**A：** 实验版可 **锁定未加载模型时的交互**（设计行为）。camfix **不锁定**，便于只测摄像头。若需 camfix 行为，用 camfix 脚本。
+**A：** **设计行为**：未加载模型时锁定部分交互，避免误操作。加载 THA4/THA3 后再调参。
 
 ---
 
@@ -463,7 +458,7 @@ python -m huggingface_hub.cli.hf buckets sync hf://buckets/liketocode789/EasyVtu
 
 ### Q23：镜像开关切换后角色「卡住」不动？
 
-**A：** 曾修复：镜像应作为 **最后独立步骤**，且切换时不应冻结。若旧版仍卡住，更新到 **develop 最新** 并合并到 fork。
+**A：** 曾修复：镜像应作为 **最后独立步骤**，且切换时不应冻结。若仍卡住，更新到 **当前最新发布包 / 最新代码** 后再试。
 
 ---
 
@@ -547,7 +542,7 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 
 ### Q33：CPU 100% 但 GPU 不高？
 
-**A：** **MediaPipe + OpenCV + 多窗 wx** 主要在 CPU；GPU 只在 `poser.pose` 时繁忙。降摄像头分辨率、关曲线频繁刷新、紧凑窗时仍会跑检测（CPU 仍占）。
+**A：** **面捕（MediaPipe/OSF）+ OpenCV + 多窗 wx** 主要在 CPU；GPU 主要在 `poser.pose` 时繁忙。降摄像头分辨率、关曲线频繁刷新；紧凑窗时检测仍可能在跑（CPU 仍占）。
 
 ---
 
@@ -571,16 +566,17 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 
 ---
 
-### Q37：如何从 develop 合并到 fork？`sync_from_bai_custom.ps1` 还有用吗？
+### Q37：如何从 develop 同步到 fork？`sync_from_bai_custom.ps1` 还有用吗？
 
-**A：** **`sync_from_bai_custom.ps1` 已废弃**（仅打印提示）。当前流程：
+**A：** **`sync_from_bai_custom.ps1` 已废弃**。请用：
 
-1. 在 **`E:\easyvtuberstudio-develop`** 完成开发与自测；  
-2. 将变更文件复制或 diff 合并到 **`E:\easyvtuberstudio-main`** 对应路径；  
-3. 更新 fork 根目录文档（尤其本 Q&A、`README.md`）；  
-4. `git add` → `commit` → `push origin main`。
+```powershell
+powershell -ExecutionPolicy Bypass -File E:\easyvtuberstudio-develop\scripts\maint\sync_develop_to_fork.ps1
+```
 
-**不会**因合并而自动覆盖的 fork 维护文档：`CHANGELOG.md`、`BACKUP.md`、本 `TROUBLESHOOTING_QA.md`（需手动同步内容）。
+该脚本会把 develop 的 **代码、`docs/`、packaging、scripts** 等镜像到 fork（含本 Q&A），并拷贝种子 `workspace` 记忆；**不会**覆盖 fork 根目录 **`README.md`**（GitHub 首页说明只在 main 维护）。
+
+之后在 **`E:\easyvtuberstudio-main`**：`git add` → `commit` → `push`。双发 HF 等见 [PREP_PUSH.md](PREP_PUSH.md)、[HF_BUCKET_MIRROR.md](HF_BUCKET_MIRROR.md)。
 
 ---
 
@@ -617,14 +613,14 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 | N10 | 设备列表第一项是「窗口捕获 / Window: …」 | 记忆上次窗口并优先于摄像头；用于 DroidCam 预览窗绕行 |
 | N10b | 设备列表里有「视频文件…」 | 增强版支持文件源，非误加入的摄像头 |
 | N11 | 刷新设备时短暂卡顿 | 多索引/多后端探测在 CPU 上执行，属一次性开销 |
-| N12 | 日志写在 .log 里终端不刷屏 | bat 将 stdout 重定向到日志文件 |
+| N12 | 启动失败要找日志 | exe 看 `workspace\launch.log`；bat 多看黑窗（见 Q3） |
 | N13 | 启动即弹出「完整大窗」 | **当前默认行为**（`startup_show_full_controls`），非异常 |
 | N14 | 分割条位置下次还在 | 部分 splitter 位置会持久化 |
 | N15 | 原版 puppeteer 无视频源下拉 | 原版仅 `VideoCapture(0)`，**不是**增强版回退 |
-| N16 | camfix 无自动平移/双窗 | camfix **刻意省略** 非摄像头功能，用于对比 |
+| N16 | 旧文档提 camfix 双窗对比 | camfix **已归档**；日常请用现行 EasyVtuberStudio + 第二节 |
 | N17 | 面捕时音频设备名仍显示 | 状态栏刷新逻辑可能显示设备信息，但不驱动嘴型 |
 | N18 | GPU 占用周期性波动 | 约 30FPS 推理 + UI 刷新，波形正常 |
-| N19 | 加载模型后 CPU 占用上升 | 模型与 MediaPipe 常驻，正常 |
+| N19 | 加载模型后 CPU 占用上升 | 模型与面捕后端常驻，正常 |
 | N20 | 12GB 写在文档但 8GB 卡能 solo 跑 | 12GB 针对 **多软件同开**，见硬件文档第 8 节 |
 
 ---
@@ -633,7 +629,7 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 
 本节面向**已交付的定制环境**：用户按培训流程正常使用即可，**不包括**反复狂点校准、快速切换源等压力式操作。下列为**已知现象与误解**，当前以文档说明为主，**暂不单独排期修复**。
 
-### Q36：重启能解决所有界面/路径问题吗？
+### Q44：重启能解决所有界面/路径问题吗？
 
 **A：** **不能。** 分两类：
 
@@ -644,7 +640,7 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 
 ---
 
-### Q37：为什么有「上次模型 / 上次立绘」，点 Load Last 却说路径无效？
+### Q45：为什么有「上次模型 / 上次立绘」，点 Load Last 却说路径无效？
 
 **A：** 持久化记的是**上次成功保存时的路径字符串**，启动时**不会**逐个检查文件是否还在。
 
@@ -652,44 +648,44 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 
 1. 模型文件被移动、删除，或换电脑后路径不存在；  
 2. 曾在 **develop / 另一仓库目录** 下加载，json 里留下 **绝对路径**，在 fork 发布目录下无效；  
-3. 相对路径是相对 **当前 fork 根目录** 解析的，模型实际只放在别的目录。
+3. 相对路径是相对 **当前仓库根目录** 解析的，模型实际只放在别的目录。
 
 **正常处理：** 点一次 Load Last，程序会提示并**清空该条无效记忆**（THA4 / THA3 均如此）；或手动备份后删除 `workspace/load_preview_ui_state.json` 再启动。  
 **不是** json 读失败——文件往往「读得挺好，只是里面的路径不对」。
 
 ---
 
-### Q38：「上次窗口捕获: xxx」显示着，但预览连不上？
+### Q46：「上次窗口捕获: xxx」显示着，但预览连不上？
 
 **A：** 记的是**窗口标题**（和 hwnd）；目标程序已关、窗口改名或尚未启动时，会**自动回退摄像头**或提示失效。标题行可能仍显示旧名字，直到你**重新选窗口捕获**并成功连接后才会更新。重启不能「修好」已关闭的第三方窗口。
 
 ---
 
-### Q39：输出动态增强校准 / 标定朝向后，角色不是立刻回正？
+### Q47：输出动态增强校准 / 标定朝向后，角色不是立刻回正？
 
 **A：** 在开启 **「启用自动移动缩放」** 时，显示层会按 **Smoothing** 做**平滑过渡**（含左右归中、缩放与倾斜基准更新），**不是 bug**。若需立即到位，可暂时关闭自动移动缩放再校准，或等待数秒观察。定制培训中说明一次即可，**无需反复点击校准**。
 
 ---
 
-### Q40：声音张嘴比说话慢半拍？
+### Q48：声音张嘴比说话慢半拍？
 
 **A：** **正常现象。** 音频驱动嘴型经过设备缓冲与 Attack/Release 平滑；界面已注明「有少量延时」。调「张嘴速度 / 闭嘴速度」可略改善，无法做到零延时面捕同等响应。
 
 ---
 
-### Q41：THA3 模式下后处理区控件挤在一起？
+### Q49：THA3 模式下后处理区控件挤在一起？
 
 **A：** 右侧栏**过窄**时，长双语标签可能与下拉、按钮叠行。拉宽 **主分割条** 增加右侧宽度即可。**THA3 模型变体**下拉仍在后处理栏；**标定朝向 / 输出动态增强校准**已迁至预览行**最右侧校准列**（2026-06-04），不再占后处理垂直空间。极窄时后处理区仍可能显得紧，属布局限制而非功能失效。
 
 ---
 
-### Q42：完整调参窗四边拖不动或只能缩小？
+### Q50：完整调参窗四边拖不动或只能缩小？
 
-**A：** 若最小客户区宽度被设得过大（旧版曾 ≈2060px），在常见分辨率下会出现 **min≈max** 无法缩放。现行版 `CONTROLS_MIN_CLIENT_WIDTH` 约 **1124px**，四边应可拖动。若仍异常：确认运行的是 develop/main **2026-06-04 之后**构建；临时删除 json 中 `controls_frame_w/h` 后重启。
+**A：** 若最小客户区宽度被设得过大（旧版曾 ≈2060px），在常见分辨率下会出现 **min≈max** 无法缩放。现行版 `CONTROLS_MIN_CLIENT_WIDTH` 约 **1124px**，四边应可拖动。若仍异常：确认运行的是 **2026-06-04 之后**构建；临时删除 json 中 `controls_frame_w/h` 后重启。
 
 ---
 
-### Q43：窗口捕获用久了偶尔卡一下？
+### Q51：窗口捕获用久了偶尔卡一下？
 
 **A：** Win32 `PrintWindow` / BitBlt 在目标窗 GPU 合成或遮挡时可能**单次抓取耗时很长**；现行版已在 **后台 worker** 抓取（UI 只读缓存帧），并做：**抓取方式缓存**（稳定后不再每帧三连试）、**长边缩至 1280** 再面捕、**卡顿后换抓取路径**。若仍偶发：略缩小目标窗分辨率、避免捕获全屏游戏/OBS 预览等大窗；预览卡顿但输出仍动 → 多为面捕线程负载，可关完整窗摄像头预览或换较小捕获源。详见 [CHANGELOG.md](CHANGELOG.md) §2026-06-15 W1–W2。
 
@@ -702,21 +698,21 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 | 首次部署、未复制模型 | Load Last 不可用 → 用 Load Other 选 yaml / THA3 立绘 |
 | 从 develop 拷 json 到 fork | 检查路径是否在本机 fork 内，否则删 json 或重选模型 |
 | DroidCam：优先窗口捕获 | 虚拟摄像头项仍可能异常，见第二节 |
-| 勾选「向外挂图层输出」 | 内置输出窗隐藏，属设计行为 |
-| 换显示器 / 缩放比 | 输出窗若跑到屏外，拖回或删 json 里 `output_frame_*` 坐标 |
+| 透明输出给 OBS | 采 ULW `easyvtuberstudio_output`，用 WGC/游戏捕获（见 Q30） |
+| 换显示器 / 缩放比 | 输出窗若跑到屏外，拖回或删 json 里输出窗坐标字段 |
 
 ---
 
 ## 十、建议排障顺序（速查）
 
 ```text
-1. 确认运行的 exe / bat 路径（fork 发布：根目录 `EasyVtuberStudio.exe` 或 `scripts\launch\run_load_preview_puppeteer.bat`）
-2. 查 run_load_preview_runtime.log
-3. 视频输入：优先「窗口捕获」抓 DroidCam 预览窗 → 再 camfix/摄像头列表；勿死磕 DroidCam 虚拟摄像头
-4. 模型：能否 Load Other THA4 Student；yaml 与 .pt 是否完整；路径问题见第九节 Q37
-5. 性能：AA=1.0、缩小输出窗、solo 运行 THA4
-6. 音频：模式、阈值、是否被 OBS 占用
-7. 对比原版 puppeteer：区分「增强功能」与「基础链路」问题
+1. 确认运行的 exe / bat 路径（fork 发布：根目录 EasyVtuberStudio.exe 或 scripts\launch\run_load_preview_puppeteer.bat）
+2. 查 workspace\launch.log（或 bat 黑窗）；DEPLOY 问题查 workspace\deploy.log
+3. 视频输入：优先「窗口捕获」抓 DroidCam 预览窗 → 再摄像头列表；勿死磕 DroidCam 虚拟摄像头
+4. 模型：能否 Load Other THA4 Student；yaml 与 .pt 是否完整；路径问题见第九节 Q45
+5. 性能：AA=1.0、缩小输出窗、solo 运行
+6. 音频：模式、设备、是否被 OBS 占用
+7. 对比：换 Mouse+Audio / 换窗口捕获，区分「面捕源」与「输出合成」问题
 8. 路径/记忆异常：先尝试 Load Last 清无效项，或备份后删 load_preview_ui_state.json（见第九节）
 ```
 
@@ -724,12 +720,12 @@ THA4 输出虽然可在本地显示透明背景选项，但最终是否“真透
 
 ## 十一、仍无法解决时建议收集的信息
 
-- 运行的 **bat 完整路径** 与 `LOG_FILE` 末尾 50 行  
+- 运行的 **exe/bat 完整路径** 与 `workspace\launch.log`（或黑窗）末尾约 50 行  
 - GPU 型号、显存、是否同开 OBS/快手  
-- 摄像头名称与是否 DroidCam  
-- 实验版 / 原版 / camfix 哪一种可复现  
+- 摄像头名称与是否 DroidCam；面捕模式（MediaPipe / OpenSeeFace / Mouse+Audio）  
+- 能否用窗口捕获复现  
 - `load_preview_ui_state.json` 是否损坏（可临时改名备份后删除试默认）
 
 ---
 
-*文档版本：2026-07-25 · 含预览行校准列、分割条比例防抖持久化、窗口捕获、DroidCam 绕行、定制化持久化预期（第九节）、种子 UI 记忆随 CORE/HF 发布。活跃代码在 `E:\easyvtuberstudio-develop`；**本文档以 fork 根目录 `docs/` 为权威副本**。*
+*文档版本：2026-07-25 · 清理过时项（日志路径、DEPLOY [6]、ULW 唯一输出、sync_develop_to_fork、外挂图层已移除、camfix 归档说明、OSF wink 2026-07 补充）。活跃代码在 `E:\easyvtuberstudio-develop`；**本文档以 fork 根目录 `docs/` 为权威副本**（develop→fork 同步会覆盖 `docs/`，改文档后请两边一致）。*

@@ -27,21 +27,21 @@ set PYTHONPATH=%cd%\src
 set "PYTHON_EXE="
 call "%~dp0_resolve_portable_python.bat"
 
-set "PYTHON_CMD="
-if defined PYTHON_EXE (
-  set "PYTHON_CMD=%PYTHON_EXE%"
-) else (
-  where python >nul 2>nul && set "PYTHON_CMD=python"
-  if not defined PYTHON_CMD (
-    where py >nul 2>nul && set "PYTHON_CMD=py -3"
-  )
-)
-
-if not defined PYTHON_CMD (
+if not defined PYTHON_EXE (
   echo ERROR: cannot find Python runtime under %REPO_ROOT%
-  echo   Expected addons\face_puppeteer\venv, runtime\venv, or workspace\student_venv
+  echo   Expected a folder-local THA3, Face or Student environment.
   echo   Run DEPLOY.bat tier [1] basic_run or [2] face_puppeteer first.
   exit /b 1
+)
+
+if /I not "%EVS_EARLY_SPLASH%"=="1" (
+  set "SPLASH_PY=%REPO_ROOT%\face-puppeteer-ui-enhancements-ai-code\experiments\puppeteer_load_preview\start_with_splash.py"
+  set "PYTHONW=%PYTHON_EXE%"
+  if defined PYTHONW set "PYTHONW=!PYTHONW:python.exe=pythonw.exe!"
+  if exist "!SPLASH_PY!" if exist "!PYTHONW!" (
+    start "" "!PYTHONW!" "!SPLASH_PY!"
+    exit /b 0
+  )
 )
 
 echo Load Preview experiment puppeteer
@@ -49,5 +49,5 @@ echo Repo root: %REPO_ROOT%
 echo Demo root: %DEMO_ROOT%
 echo.
 
-call %PYTHON_CMD% "%EXP_SCRIPT%"
+"%PYTHON_EXE%" "%EXP_SCRIPT%"
 exit /b %ERRORLEVEL%

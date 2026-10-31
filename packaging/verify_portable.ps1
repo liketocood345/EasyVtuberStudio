@@ -1,5 +1,5 @@
 param(
-    [string]$PortableRoot = Resolve-PortableRoot (Join-Path $PSScriptRoot ".."),
+    [string]$PortableRoot = (Join-Path $PSScriptRoot ".."),
     [switch]$Strict
 )
 
@@ -41,8 +41,8 @@ foreach ($check in $checks) {
 }
 
 $mediapipeCandidates = @(
-    Join-Path $PortableRoot "addons\face_puppeteer\mediapipe\face_landmarker_v2_with_blendshapes.task",
-    Join-Path $PortableRoot "data\thirdparty\mediapipe\face_landmarker_v2_with_blendshapes.task"
+    (Join-Path $PortableRoot "addons\face_puppeteer\mediapipe\face_landmarker_v2_with_blendshapes.task"),
+    (Join-Path $PortableRoot "data\thirdparty\mediapipe\face_landmarker_v2_with_blendshapes.task")
 )
 $mediapipe = $mediapipeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($mediapipe) {

@@ -1,9 +1,30 @@
+# =============================================================================
+# GitHub CORE scope (2026-10-31, user quote)
+# IN:  code, DEPLOY, EasyVtuberStudio.exe, example character (bai), seed memory,
+#      pip lists, docs, packaging scripts.
+# OUT: runtime / Python / torch, add-on packs, THA3/THA4 teacher weights,
+#      local workspace, experiment dumps, secrets, CodeGraph, history.
+# HF ark (not this repo): THA3 weights, teacher zip (exe+src+5.pt+pose, no
+#      Python/torch), OSF Binary/models, ONNX extras, low-heat public copies.
+# =============================================================================
+
 # Compiled class file
 *.class
 
 # Log file
 *.log
 run_load_preview_runtime*.log
+*.jsonl
+
+# Secrets / local identity — never publish
+.env
+.env.*
+*.pem
+hf_token.txt
+**/*token*.txt
+**/credentials.json
+**/.huggingface/
+**/.cache/huggingface/
 
 # BlueJ files
 *.ctxt
@@ -42,6 +63,7 @@ build/
 !/data/tha4/**
 !/data/ezvtb_nn/
 !/data/ezvtb_nn/**
+/data/ezvtb_nn/**/*.onnx
 !/data/thirdparty/
 !/data/thirdparty/**
 .idea/*
@@ -69,16 +91,26 @@ venv/*
 # Legacy repo-root venv (do not use; see addons/face_puppeteer or workspace/student_venv)
 /venv/
 
-# Portable release (large runtime stays out of Git)
+# Portable release (large runtime stays out of Git). common venv lives here.
 runtime/
+runtime/venvs/
 workspace/student_venv/
 addons/face_puppeteer/
 addons/tha3_models/
 addons/tha4_training/
+addons/openseeface/
+addons/output_enhancement/
 !addons/README.md
 !addons/.gitkeep
 # workspace: keep empty by default, but ship seed UI persistence (GitHub + HF).
+# Explicit denylist is documentation; `workspace/*` already covers these.
 workspace/*
+workspace/tools/
+workspace/validation/
+workspace/cache/
+workspace/logs/
+workspace/diagnostics/
+workspace/asset_downloads/
 !workspace/.gitkeep
 !workspace/load_preview_ui_state.json
 !workspace/basic_layers/
@@ -86,10 +118,16 @@ workspace/*
 !workspace/region_wobble_mask.png
 !workspace/region_wobble_mask_*.png
 
-# Allow portable training wrappers (ignore other generated tools output)
+# Allow portable training wrappers + teacher SOURCE (no PyInstaller _internal,
+# no .pt). Teacher weights / standalone zip go to HF, not GitHub.
 tools/*
 !tools/training/
 !tools/training/**
+!tools/tha4_teacher_portable/
+!tools/tha4_teacher_portable/**
+tools/tha4_teacher_portable/_internal/
+tools/tha4_teacher_portable/**/*.pt
+tools/tha4_teacher_portable/**/*.onnx
 
 # Launcher build artifacts
 packaging/launcher/build/
@@ -108,6 +146,8 @@ packaging/launcher/*.spec
 **/his/
 docs/training/
 docs/oid.md
+/plans/
+/record/
 
 # THA3 model weights (large; upstream via DEPLOY.bat or in-app prompt)
 deps/tha3/models/**/*.onnx
@@ -124,3 +164,35 @@ deps/tha3/models/**/*.pt
 
 # Legacy UI state path (pre-portable); real seed is workspace/load_preview_ui_state.json
 face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/load_preview_ui_state.json
+# 2026-10-31: final CORE allow-list (also consumed by core_release.py)
+/addons/*
+!/addons/README.md
+!/addons/.gitkeep
+/data/character_models/*
+!/data/character_models/baiten_from_project_forlon9/
+/data/character_models/baiten_from_project_forlon9/*
+!/data/character_models/baiten_from_project_forlon9/bai_450k/
+/data/distill_examples/
+**/lambda_00*
+**/lambda_01*
+tools/tha4_teacher_portable/release/
+tools/tha4_teacher_portable/runtime/
+*.whl
+*.nupkg
+
+# 2026-10-31: private handoffs and sample build provenance stay local
+/docs/HANDOVER.md
+/docs/BACKUP.md
+/docs/deployment-design-20261031/阶段1-完整develop基线.md
+/docs/deployment-design-20261031/阶段2-给Cursor的提示词.md
+/scripts/maint/refresh_bug_hotspot_checklist.ps1
+/scripts/maint/migrate_from_bai_custom.ps1
+/scripts/maint/restore_develop_full_install.ps1
+/scripts/maint/verify_path_refs.ps1
+/data/character_models/baiten_from_project_forlon9/bai_450k/PACKAGING_README.txt
+/data/character_models/baiten_from_project_forlon9/bai_450k/TRAINING_NOTES.txt
+/data/character_models/baiten_from_project_forlon9/bai_450k/verify_load.py
+/face-puppeteer-ui-enhancements-ai-code/talking-head-anime-4-demo/data/character_models/
+
+# Embedded checkout/worktree pointers never enter public CORE
+**/.git

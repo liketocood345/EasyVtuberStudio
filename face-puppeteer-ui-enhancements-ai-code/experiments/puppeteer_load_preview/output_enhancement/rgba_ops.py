@@ -67,6 +67,8 @@ def sr_output_to_rgba_uint8(
             np.dstack([alpha_u8, alpha_u8, alpha_u8, alpha_u8]),
             new_w, new_h)[:, :, 0:1].astype(np.float32) / 255.0
         alpha = plane
+    if alpha.ndim == 2:
+        alpha = alpha[:, :, np.newaxis]
     alpha = np.clip(alpha, 0.0, 1.0)
     safe = np.maximum(alpha, 1.0 / 255.0)
     rgb = np.clip(rgb / safe, 0.0, 1.0)
@@ -106,11 +108,16 @@ def upscale_rgba(rgba: np.ndarray, inv_scale: float) -> np.ndarray:
 
 
 def sanitize_transparent_rgb(rgba: np.ndarray) -> np.ndarray:
-    arr = np.ascontiguousarray(rgba, dtype=np.uint8)
-    transparent = arr[:, :, 3] == 0
+    """Zero RGB only where alpha is zero; preserve every visible pixel exactly."""
+    rgba = np.ascontiguousarray(rgba, dtype=np.uint8)
+    if cv2 is not None:
+        # EVS-PERF-20261029: C/SIMD mask path avoids NumPy's large fancy-index copy.
+        mask = cv2.compare(rgba[:, :, 3], 0, cv2.CMP_GT)
+        return cv2.bitwise_and(rgba, rgba, mask=mask)
+    transparent = rgba[:, :, 3] == 0
     if not np.any(transparent):
-        return arr
-    out = arr.copy()
+        return rgba
+    out = rgba.copy()
     out[transparent, 0:3] = 0
     return out
 

@@ -1,3 +1,13 @@
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
+# EVS-DESIGN-AUDIT EVS-A051 BEGIN
+# 设计[doc-009, doc-010, doc-054, doc-040, doc-041, doc-051, doc-053] [非运行功能 / 不作代码符合判定]
+# 这些条目分别约束文档名称/位置、三上游及作者、README 删除线原句、FAQ 核实、硬件评估、上游素材咨询和外部转绘工作流。没有对应运行算法；须在 README/docs/素材流程验收，不能为凑覆盖写成已实现。
+# EVS-DESIGN-AUDIT EVS-A051 END
 # Experimental copy: render one default-pose frame right after Load Model (no camera required).
 # Original: talking-head-anime-4-demo/src/tha4/app/character_model_mediapipe_puppeteer.py
 import math
@@ -15,14 +25,17 @@ import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, List
-import PIL.Image
 
 _EXPERIMENT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _EXPERIMENT_DIR not in sys.path:
     sys.path.insert(0, _EXPERIMENT_DIR)
 
+from portable_process_env import install_local_environment, debug_log_path
+install_local_environment()
+import PIL.Image
+
 # #region agent log
-_AGENT_DEBUG_LOG_PATH = r"e:\debug-d095ab.log"
+_AGENT_DEBUG_LOG_PATH = debug_log_path('d095ab')
 
 
 def _agent_debug_ndjson(
@@ -69,13 +82,18 @@ OUTPUT_BACKGROUND_MODE_LABELS = (
 OUTPUT_CAPTURE_COLORKEY_RGB = (0, 0, 0)
 BUNDLED_TRANSPARENT_BACKGROUND_PATH = os.path.join(
     _EXPERIMENT_DIR, "assets", "backgrounds", "transparent.png")
-MOUTH_INFER_CAP_HZ_VALUES = (10, 15, 30)
+# bh-1 26.10.30 11:05 s
+# Codex Q05: 12/10 is a validation floor, not the product cap. Default 30;
+# 60 lets a strong GPU keep submitting (latest-wins drops surplus).
+MOUTH_INFER_CAP_HZ_VALUES = (10, 15, 30, 60)
 MOUTH_INFER_CAP_HZ_LABELS = (
-    "10 Hz (推荐 / recommended)",
+    "10 Hz (低占用 / low occupancy)",
     "15 Hz",
-    "30 Hz (无节流 / no throttle)",
+    "30 Hz (推荐 / recommended)",
+    "60 Hz (尽量吃满 / fill GPU)",
 )
-MOUTH_INFER_CAP_HZ_DEFAULT = 10
+MOUTH_INFER_CAP_HZ_DEFAULT = 30
+# bh-1 26.10.30 11:05 e
 MOUTH_POSE_QUANT_STEP = 0.05
 # Event-driven Inf bypass: large mouth/wink deltas skip the uniform infer cap once.
 FAST_ACTION_MOUTH_DELTA = 0.18
@@ -123,6 +141,7 @@ sys.path.append(os.getcwd())
 import torch
 import wx
 
+from output_enhancement.target_frame_rate import normalize_target_fps, normalize_target_enabled
 from character_edge_postprocess import (
     CHARACTER_EDGE_MODE_LABELS,
     CHARACTER_EDGE_MODE_VALUES,
@@ -246,6 +265,7 @@ from openseeface_mocap_driver import (
     OSF_CAPTURE_WIDTH_DEFAULT,
     OSF_DEFAULT_FPS,
     OSF_DEFAULT_UDP_PORT,
+    OSF_UDP_DISCONNECT_SEC,
     OSF_VISUALIZE_DEFAULT,
     OpenSeeFaceInputPacer,
     clamp_osf_capture_height,
@@ -255,6 +275,7 @@ from openseeface_mocap_driver import (
     normalize_osf_camera_label,
     osf_capture_preset_index_for_size,
     osf_capture_size_from_preset_index,
+    next_lower_osf_capture_size,
 )
 from openseeface_runtime import (
     OpenSeeFaceRuntime,
@@ -262,6 +283,7 @@ from openseeface_runtime import (
     list_openseeface_cameras,
     mark_facetracker_camera_in_use,
 )
+from agent_cmd_terminal import AgentCmdTerminal
 from ui_dialog_guard import show_rate_limited_message
 from ui_switch_guard import block_events, is_blocked, restore_choice, run_guarded_switch, snapshot_choice
 from ui_alignment_monitor import AlignmentProbe, UiAlignmentMonitor
@@ -710,6 +732,11 @@ class OutputFrame(wx.Frame):
                 0,
                 True)
 
+    # EVS-DESIGN-AUDIT EVS-A136 BEGIN
+    # 设计[UI-A×05, f-068] [静态符合（主关闭入口）]
+    # 关闭输出框会转给 owner_main_frame.Close，触发主窗资源回收链；与只关预览弹窗不同。最终资源是否清完还受主窗串行清理异常/阻塞影响。
+    # 历史 bug 热点 #2,#4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A136 END
     def on_close(self, event: wx.Event):
         if getattr(self.owner_main_frame, "_is_closing", False):
             self.Destroy()
@@ -797,6 +824,11 @@ class ControlsFrame(wx.Frame):
         self.owner_main_frame.on_window_activate_for_layer_selection(event, self)
         event.Skip()
 
+    # EVS-DESIGN-AUDIT EVS-A137 BEGIN
+    # 设计[UI-A×05, f-068] [静态符合（主关闭入口）]
+    # 关闭完整控制窗会转主窗 Close；不是只隐藏控制窗后让后台永久运行。需要结合主窗和 OSF/native worker 的回收风险验收。
+    # 历史 bug 热点 #2,#4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A137 END
     def on_close(self, event: wx.Event):
         if getattr(self.owner_main_frame, "_is_closing", False):
             self.Destroy()
@@ -873,14 +905,116 @@ class WebcamPreviewPopupFrame(wx.Frame):
         draw_h = max(1, int(source_size.y * scale))
         draw_x = (panel_size.x - draw_w) // 2
         draw_y = (panel_size.y - draw_h) // 2
-        dc.DrawBitmap(source_bitmap, draw_x, draw_y, True)
+        # #region agent log
+        try:
+            import json as _json, time as _time
+            _now = _time.monotonic()
+            if _now - float(getattr(self, "_dbg_popup_paint_log_mono", 0.0) or 0.0) >= 2.0:
+                self._dbg_popup_paint_log_mono = _now
+                open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix-dshow", "hypothesisId": "J", "location": "WebcamPreviewPopupFrame.on_paint_preview_panel", "message": "webcam popup paint scale", "data": {"panel": [int(panel_size.x), int(panel_size.y)], "bitmap": [int(source_size.x), int(source_size.y)], "draw": [int(draw_w), int(draw_h)]}, "timestamp": int(_time.time() * 1000)}) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        if draw_w == source_size.x and draw_h == source_size.y:
+            dc.DrawBitmap(source_bitmap, draw_x, draw_y, True)
+        else:
+            scaled = source_bitmap.ConvertToImage().Scale(
+                draw_w, draw_h, wx.IMAGE_QUALITY_HIGH).ConvertToBitmap()
+            dc.DrawBitmap(scaled, draw_x, draw_y, True)
+
+    def on_preview_double_click(self, event: wx.MouseEvent):
+        self.Close()
+        event.Skip()
+
+    # EVS-DESIGN-AUDIT EVS-A138 BEGIN
+    # 设计[UI-A×02] [静态符合（局部窗口）]
+    # 关闭摄像头放大预览只销毁 popup，主应用仍运行；此时主进程存在属于窗口职责，不应直接报成退出残留。
+    # 历史 bug 热点 #4,#5：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A138 END
+    def on_close(self, event: wx.Event):
+        self.owner_main_frame.webcam_preview_popup_frame = None
+        self.Destroy()
+        event.Skip()
+
+
+class SourcePreviewPopupFrame(wx.Frame):
+    POPUP_PREVIEW_SIZE = 640
+
+    def __init__(self, owner_main_frame: "MainFrame"):
+        super().__init__(None, wx.ID_ANY, "Character Source Preview / 立绘源预览")
+        apply_app_icon(self)
+        self.owner_main_frame = owner_main_frame
+        self.SetDoubleBuffered(True)
+
+        popup_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.SetSizer(popup_sizer)
+        self.SetAutoLayout(1)
+
+        popup_side = SourcePreviewPopupFrame.POPUP_PREVIEW_SIZE
+        self.preview_panel = wx.Panel(
+            self,
+            size=(popup_side, popup_side),
+            style=wx.SIMPLE_BORDER)
+        self.preview_panel.SetBackgroundColour(MainFrame.PREVIEW_IDLE_BACKGROUND)
+        self.preview_panel.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self.preview_panel.SetDoubleBuffered(True)
+        self.preview_panel.Bind(wx.EVT_PAINT, self.on_paint_preview_panel)
+        self.preview_panel.Bind(wx.EVT_ERASE_BACKGROUND, self.on_erase_background)
+        self.preview_panel.Bind(wx.EVT_LEFT_DCLICK, self.on_preview_double_click)
+        popup_sizer.Add(self.preview_panel, 1, wx.EXPAND | wx.ALL, 8)
+
+        hint_text = wx.StaticText(
+            self,
+            label="双击预览区关闭 / Double-click preview to close",
+            style=wx.ALIGN_CENTER_HORIZONTAL)
+        popup_sizer.Add(hint_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
+        popup_sizer.Fit(self)
+        fitted_size = popup_sizer.GetMinSize()
+        self.SetClientSize(fitted_size)
+        self.SetMinClientSize(fitted_size)
+        self.Bind(wx.EVT_CLOSE, self.on_close)
+        self.Bind(wx.EVT_ACTIVATE, self.on_activate)
+
+    def on_activate(self, event: wx.Event):
+        self.owner_main_frame.on_window_activate_for_layer_selection(event, self)
+        event.Skip()
+
+    @staticmethod
+    def on_erase_background(event: wx.Event):
+        pass
+
+    def on_paint_preview_panel(self, event: wx.Event):
+        panel = self.preview_panel
+        panel_size = panel.GetClientSize()
+        if panel_size.x <= 0 or panel_size.y <= 0:
+            return
+        dc = wx.BufferedPaintDC(panel)
+        dc.SetBackground(wx.Brush(MainFrame.PREVIEW_IDLE_BACKGROUND))
+        dc.SetBackgroundMode(wx.SOLID)
+        dc.Clear()
+        source_bitmap = self.owner_main_frame.wx_source_image
+        if source_bitmap is None or not source_bitmap.IsOk():
+            return
+        source_size = source_bitmap.GetSize()
+        if source_size.x <= 0 or source_size.y <= 0:
+            return
+        viewport_side = min(panel_size.x, panel_size.y)
+        scale = min(viewport_side / max(1, source_size.x), viewport_side / max(1, source_size.y))
+        draw_w = max(1, int(source_size.x * scale))
+        draw_h = max(1, int(source_size.y * scale))
+        draw_x = (panel_size.x - draw_w) // 2
+        draw_y = (panel_size.y - draw_h) // 2
+        scaled = source_bitmap.ConvertToImage().Scale(
+            draw_w, draw_h, wx.IMAGE_QUALITY_HIGH).ConvertToBitmap()
+        dc.DrawBitmap(scaled, draw_x, draw_y, True)
 
     def on_preview_double_click(self, event: wx.MouseEvent):
         self.Close()
         event.Skip()
 
     def on_close(self, event: wx.Event):
-        self.owner_main_frame.webcam_preview_popup_frame = None
+        self.owner_main_frame.source_preview_popup_frame = None
         self.Destroy()
         event.Skip()
 
@@ -964,6 +1098,12 @@ class MainFrame(wx.Frame):
         "MP4 (*.mp4)|*.mp4|AVI (*.avi)|*.avi|MOV (*.mov)|*.mov|MKV (*.mkv)|*.mkv|"
         "WEBM (*.webm)|*.webm|WMV (*.wmv)|*.wmv|All files (*.*)|*.*")
 
+    # EVS-DESIGN-AUDIT EVS-A001 BEGIN
+    # 设计[f-057, f-067] [部分符合 / 待计时]
+    # 启动有重操作延后路径且未在此直接加载上次模型；但 imports、状态/图层/蒙版读取仍发生于首窗之前。十秒只排除模型/面捕/图层加载，不能据局部 startup_t0 证明端到端达标。
+    # 历史 bug 热点 #1,#2：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-START-01：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A001 END
     def __init__(self,
                  pose_converter: MediaPoseFacePoseConverter00,
                  video_capture,
@@ -987,6 +1127,7 @@ class MainFrame(wx.Frame):
         self.video_source_choice: Optional[wx.Choice] = None
         self.webcam_container: Optional[wx.Panel] = None
         self.webcam_preview_popup_frame: Optional[WebcamPreviewPopupFrame] = None
+        self.source_preview_popup_frame: Optional[SourcePreviewPopupFrame] = None
         self.current_video_capture_api: Optional[int] = None
         self.video_source_status_text: Optional[wx.StaticText] = None
         self.last_window_capture_text: Optional[wx.StaticText] = None
@@ -1098,10 +1239,20 @@ class MainFrame(wx.Frame):
         self._osf_capture_width = OSF_CAPTURE_WIDTH_DEFAULT
         self._osf_capture_height = OSF_CAPTURE_HEIGHT_DEFAULT
         self._osf_camera_enum_in_progress = False
+        self._osf_enum_generation = 0
+        self._osf_last_reconnect_mono = 0.0
+        self._osf_restart_in_progress = False
+        self._osf_preview_camera_opening = False
+        self._osf_preview_camera_next_retry_mono = 0.0
+        self._osf_preview_camera_generation = 0
+        self._last_good_webcam_bgr_mono = 0.0
+        self._tha3_load_in_progress = False
+        self._tha3_load_generation = 0
         self._osf_runtime_error = ""
         self._osf_runtime = OpenSeeFaceRuntime(
             capture_interval_sec=self.CAPTURE_PROCESS_INTERVAL_MS / 1000.0)
         self._osf_started_mono = 0.0
+        self._osf_capture_open_give_up = False
         self._osf_input_pacer = OpenSeeFaceInputPacer(target_fps=self._osf_fps)
         self._osf_pace_keyframe_committed = False
         self._osf_pose_converter_calibrated = False
@@ -1130,6 +1281,17 @@ class MainFrame(wx.Frame):
         self._last_capture_present_time_ns: Optional[int] = None
         self._last_spine_diagram_refresh_time_ns: Optional[int] = None
         self._infer_lock = threading.Lock()
+        # f-070/f-072: serialize mutable Student poser/cache ownership across reloads.
+        self._model_render_lock = threading.RLock()
+        self._infer_worker_busy_since = 0.0
+        self._latest_infer_input_snapshot = None
+        self._latest_infer_input_pose = None
+        self._latest_infer_input_face_meta = (0, 0.)
+        self._pending_infer_face_meta = (0, 0.)
+        self._worker_infer_cap_hz = 30
+        self._worker_tha_fp16 = False
+        self._completed_infer_result = None
+        self._infer_result_apply_scheduled = False
         self._pending_infer_pose: Optional[List[float]] = None
         self._infer_worker_active = False
         self._infer_worker_generation = 0
@@ -1141,6 +1303,32 @@ class MainFrame(wx.Frame):
         # MediaPipe face detection runs on a dedicated worker thread (latest-wins)
         # so the heavy detect_for_video call never blocks the wx UI/render thread.
         self._mediapipe_lock = threading.Lock()
+        from mocap_frame_rate import MocapFrameRatePolicy
+        self._mocap_rate = MocapFrameRatePolicy()
+        self._mediapipe_input_generation = 0
+        self._mediapipe_worker_generation = 0
+        self._mediapipe_job_sequence = 0
+        self._mediapipe_completed_result = None
+        self._mediapipe_result_apply_scheduled = False
+        self._mediapipe_complete_count = 0
+        self._mediapipe_publish_count = 0
+        self._mediapipe_valid_count = 0
+        self._mocap_output_times = []
+        self._mocap_output_hz = 0.0
+        self._mediapipe_complete_times = []
+        self._mocap_completed_hz = 0.0
+        self._latest_face_pose_sequence = 0
+        self._latest_face_sample_mono = 0.0
+        self._latest_face_complete_mono = 0.0
+        self._latest_face_publish_mono = 0.0
+        self._last_model_face_sequence = 0
+        self._last_model_face_sample_mono = 0.0
+        self._camera_capture_sample_mono = 0.0
+        self._camera_capture_times = []
+        self._camera_source_hz = 0.0
+        self._last_scheduled_mediapipe_timestamp_ms = -1
+        self._last_read_capture_sample_mono = 0.0
+        self._last_mediapipe_frame_token = None
         self._pending_mediapipe_job: Optional[tuple] = None
         self._mediapipe_worker_active = False
         # Dirty flag so the animated-UI timer only repaints the scale-curve preview
@@ -1202,6 +1390,8 @@ class MainFrame(wx.Frame):
             self.persistent_ui_state.get("osf_visualize_level", OSF_VISUALIZE_DEFAULT))
         self._osf_fps = clamp_osf_fps(
             self.persistent_ui_state.get("osf_fps", OSF_DEFAULT_FPS))
+        self._mocap_rate.configure(self.persistent_ui_state.get("mocap_frame_rate_mode", "fixed"),
+            self.persistent_ui_state.get("mocap_fixed_fps", self._osf_fps))
         self._osf_capture_width = clamp_osf_capture_width(
             self.persistent_ui_state.get("osf_capture_width", OSF_CAPTURE_WIDTH_DEFAULT))
         self._osf_capture_height = clamp_osf_capture_height(
@@ -1216,6 +1406,12 @@ class MainFrame(wx.Frame):
                 self.mocap_input_mode = MOCAP_INPUT_MODE_MOUSE_AUDIO
             self.persistent_ui_state["mocap_input_mode"] = self.mocap_input_mode
         self._load_mouse_mocap_settings_from_persistent(self.persistent_ui_state)
+        # EVS-DESIGN-AUDIT EVS-A002 BEGIN
+        # 设计[f-057, f-068] [风险待测]
+        # 图层状态读取、迁移和随后 init_region_wobble_on_frame 同步执行。加载预算虽可排除图层，若阻塞首窗仍影响用户看到 UI 的时间；需分别计量，不把它算作已确认超时根因。
+        # 历史 bug 热点 #1,#2：仅为回归关联，非声称本次故障已复现。
+        # 诊断标记 R-START-02：参照文件头诊断报告；本次不修复实际行为。
+        # EVS-DESIGN-AUDIT EVS-A002 END
         self.basic_layers_state = load_basic_layers_state(
             self.get_ui_state_file_path(),
             self.resolve_layer_asset_path)
@@ -1299,6 +1495,12 @@ class MainFrame(wx.Frame):
         self.update_source_image_bitmap()
         wx.CallAfter(self.startup_show_full_controls)
 
+    # EVS-DESIGN-AUDIT EVS-A003 BEGIN
+    # 设计[UI-A03, UI-A04] [静态符合（默认与入口）]
+    # 启动排队显示完整控制窗，保留切换精简窗；早期三按钮默认已被明确更改。这里的计时晚于模块导入和 MainFrame 初始化，不能代表总启动时间。
+    # 历史 bug 热点 #2：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-START-03：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A003 END
     def startup_show_full_controls(self):
         if self._startup_full_controls_shown:
             return
@@ -1308,8 +1510,16 @@ class MainFrame(wx.Frame):
         self.schedule_refresh_controls_scrolling()
         wx.CallAfter(self._ensure_tha3_assets_on_startup)
         wx.CallAfter(self.sync_layer_hotkey_registry)
+        wx.CallAfter(self._start_agent_cmd_pump)
+        wx.CallAfter(self._agent_boot_autoload)
         self._defer_heavy_ui_refresh = False
 
+    # EVS-DESIGN-AUDIT EVS-A135 BEGIN
+    # 设计[f-067, UI-A07, f-057] [条件性缺口（启动回退）]
+    # 启动排队执行此处；THA3 资源检查失败时 switch_image_source(...autoload_asset=True)。若记有有效上次 THA4 路径，factory 会自动加载，并可能触发面捕；这是“不自动加载/加载才连源”的启动例外，需按该条件运行复现。
+    # 历史 bug 热点 #2,#5：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-START-09：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A135 END
     def _ensure_tha3_assets_on_startup(self):
         if self.get_image_source_mode() != IMAGE_SOURCE_THA3:
             return
@@ -1318,6 +1528,123 @@ class MainFrame(wx.Frame):
         if ensure_tha3_assets_available(self, self.tha3_model_variant):
             return
         switch_image_source(self, IMAGE_SOURCE_THA4, autoload_asset=True)
+
+    def _start_agent_cmd_pump(self) -> None:
+        # bh-2 26.10.30 13:40 s
+        if getattr(self, "_agent_cmd_terminal", None) is not None:
+            return
+        self._agent_cmd_terminal = AgentCmdTerminal(
+            get_portable_root(), self._dispatch_agent_cmd)
+        try:
+            self._agent_cmd_terminal.cmd_path.touch(exist_ok=True)
+            self._agent_cmd_terminal.reply_path.touch(exist_ok=True)
+        except OSError:
+            pass
+        # #region agent log
+        try:
+            import json as _json
+            open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                "sessionId": "86a17c",
+                "runId": "post-fix-agent-cmd",
+                "hypothesisId": "CMD",
+                "location": "load_preview.py:_start_agent_cmd_pump",
+                "message": "agent cmd pump ready",
+                "data": {
+                    "cmd": str(self._agent_cmd_terminal.cmd_path),
+                    "reply": str(self._agent_cmd_terminal.reply_path),
+                },
+                "timestamp": int(time.time() * 1000),
+            }) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        # bh-2 26.10.30 13:40 e
+
+    def _agent_boot_autoload(self) -> None:
+        # bh-2 26.10.30 13:40 s
+        if getattr(self, "_is_closing", False) or self.is_model_loaded():
+            return
+        if not self.last_loaded_model_path:
+            return
+        if self.is_openseeface_mocap_mode():
+            self.schedule_active_capture_timer()
+            if self.video_capture is None:
+                self._ensure_osf_preview_camera_stream()
+                tries = int(getattr(self, "_agent_autoload_tries", 0)) + 1
+                self._agent_autoload_tries = tries
+                if tries < 40:
+                    wx.CallLater(400, self._agent_boot_autoload)
+                    return
+        self.load_last_model()
+        # bh-2 26.10.30 13:40 e
+
+    def _poll_agent_cmd_terminal(self) -> None:
+        pump = getattr(self, "_agent_cmd_terminal", None)
+        if pump is None:
+            return
+        pump.poll()
+
+    def _dispatch_agent_cmd(self, cmd: str, payload: dict) -> dict:
+        name = str(cmd or "").strip().lower()
+        from agent_runtime_diagnostics import dispatch
+        extended = dispatch(self, name, payload)
+        if extended is not None:return extended
+        if name in ("status", "stat"):
+            mean = None
+            frame = getattr(self, "_last_good_webcam_bgr_frame", None)
+            if frame is not None:
+                try:
+                    mean = round(float(frame.reshape(-1)[::96].mean()), 2)
+                except Exception:
+                    mean = None
+            return {
+                "ok": True,
+                "model": bool(self.is_model_loaded()),
+                "source": str(self.get_image_source_mode()),
+                "osf_running": bool(getattr(self._osf_runtime.status, "process_running", False)),
+                "osf_packets": int(getattr(self._osf_runtime.status, "packets_received", 0) or 0),
+                "has_capture": self.video_capture is not None,
+                "kind": str(self.video_source_kind),
+                "api": str(getattr(self, "current_video_capture_api", None)),
+                "luma": mean,
+                "inf_fps": round(float(getattr(self, "_inference_fps", 0.0) or 0.0), 2),
+                "in_fps": round(float(getattr(self, "_input_fps", 0.0) or 0.0), 2),
+                "mouth_cap": int(self.get_mouth_infer_cap_hz()),
+                "nn": str(self.get_nn_infer_backend()),
+                "pose_from_vs": bool(getattr(self, "_osf_pose_from_video_source", False)),
+                "has_pose": self.mediapipe_face_pose is not None,
+                "landmarker": self.face_landmarker is not None,
+            }
+        if name in ("tha3", "source_tha3", "tha3_half"):
+            if name == "tha3_half":
+                self.tha3_model_variant = "separable_half"
+            switch_image_source(self, IMAGE_SOURCE_THA3, autoload_asset=True)
+            if name == "tha3_half" and self.get_image_source_mode() == IMAGE_SOURCE_THA3:
+                png = self.last_tha3_character_png
+                if png and os.path.isfile(str(self.resolve_character_model_path(png) or png)):
+                    self.active_image_source.stop(self)
+                    self.active_image_source.start(self)
+                    self.active_image_source.load_asset(
+                        self, self.resolve_character_model_path(png) or png)
+            return {
+                "ok": True,
+                "source": str(self.get_image_source_mode()),
+                "model": bool(self.is_model_loaded()),
+                "variant": str(getattr(self, "tha3_model_variant", "")),
+            }
+        if name in ("tha4", "source_tha4"):
+            switch_image_source(self, IMAGE_SOURCE_THA4, autoload_asset=True)
+            return {
+                "ok": True,
+                "source": str(self.get_image_source_mode()),
+                "model": bool(self.is_model_loaded()),
+            }
+        if name in ("load_last", "load-last", "autoload"):
+            self.load_last_model()
+            return {"ok": True, "model": bool(self.is_model_loaded())}
+        if name in ("ping", "echo"):
+            return {"ok": True, "echo": payload.get("text", "pong")}
+        return {"ok": False, "error": f"unknown cmd {cmd!r}"}
 
     def get_default_pose_list(self) -> List[float]:
         if self._default_pose_list is None:
@@ -1369,6 +1696,12 @@ class MainFrame(wx.Frame):
         except Exception:
             return None
 
+    # EVS-DESIGN-AUDIT EVS-A046 BEGIN
+    # 设计[f-066] [静态符合（妥协机制）；误判风险]
+    # 30 秒采样、相同 fingerprint 则排队重载；这是明确接受的妥协，不是根因修复。缩略摘要相等可能只是静止画面，两个采样相等不能证明连续冻结 60 秒。
+    # 历史 bug 热点 #1,#2：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-STALL-01：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A046 END
     def on_output_stall_watch_timer(self, event: Optional[wx.Event] = None) -> None:
         if getattr(self, "_is_closing", False):
             return
@@ -1449,6 +1782,8 @@ class MainFrame(wx.Frame):
         self.character_edge_mode_state = ValueState(CHARACTER_EDGE_NONE)
         self.character_edge_width_state = ValueState(float(CHARACTER_EDGE_WIDTH_DEFAULT))
         self.character_edge_color_hex_state = ValueState("#FFFFFF")
+        self.target_frame_rate_checkbox = ValueState(normalize_target_enabled(persisted.get("target_frame_rate_enabled", False)))
+        self.target_frame_rate_input = ValueState(normalize_target_fps(persisted.get("target_frame_rate_fps", 60)))
         self.output_frame_interpolation_choice = ValueState(POSE_FRAME_INTERP_OFF)
         self.nn_super_resolution_choice = ValueState(NN_SR_OFF)
         self.nn_frame_interpolation_choice = ValueState(NN_FRAME_INTERP_OFF)
@@ -1461,6 +1796,7 @@ class MainFrame(wx.Frame):
         self._tha_infer_fp16_fallback = False
         self._enhancement_warned_once = False
         self._enhancement_warmup_key = None
+        self._enhancement_warmup_busy = False
 
     @staticmethod
     def _wx_control_alive(control) -> bool:
@@ -1510,6 +1846,11 @@ class MainFrame(wx.Frame):
         return self._safe_checkbox_value(
             "layer_blend_enabled_checkbox", self._layer_blend_enabled_state, default=False)
 
+    # EVS-DESIGN-AUDIT EVS-A132 BEGIN
+    # 设计[f-062] [静态关联 / 默认值边界]
+    # 热键总开关与图层混合开关分别判断；缺省应关闭，持久化用户主动打开并不违反“默认关闭”。当前支持的动作另见 layer_runtime，旧 hold 动作迁移不代表仍提供长按。
+    # 历史 bug 热点 #2,#4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A132 END
     def is_layer_hotkeys_enabled(self) -> bool:
         if not self.is_layer_blend_enabled():
             return False
@@ -2049,6 +2390,11 @@ class MainFrame(wx.Frame):
             return
         self.show_basic_layer_window()
 
+    # EVS-DESIGN-AUDIT EVS-A038 BEGIN
+    # 设计[UI-D04, UI-A×05, UI-D05～D09] [静态符合（窗口触发）；采集待测]
+    # 图层混合开关控制统一图层窗启动，图层窗不应隐藏输出。已取消固定五层/无限层占位；组当前暂不做，不登记为本期缺陷。
+    # 历史 bug 热点 #2,#4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A038 END
     def show_basic_layer_window(self) -> None:
         from basic_layer_window import BasicLayerWindow
         if self._get_basic_layer_window() is None:
@@ -2210,8 +2556,15 @@ class MainFrame(wx.Frame):
         self.save_persistent_ui_state()
         event.Skip()
 
+    # EVS-DESIGN-AUDIT EVS-A026 BEGIN
+    # 设计[f-068, UI-A×05, f-052] [部分符合 / 回收风险]
+    # 图像源 stop、摄像头 release、OSF stop、pose_converter.shutdown 已各自隔离；未显式 close FaceLandmarker，不能据 daemon 线程保证 native 资源已关。
+    # 历史 bug 热点 #2,#4,#5：关闭链早期异常不再跳过 OSF 停止。
+    # EVS-DESIGN-AUDIT EVS-A026 END
     def on_close(self, event: wx.Event):
         self._is_closing = True
+        self._close_live_scene_presenter()
+        self._osf_enum_generation = int(getattr(self, "_osf_enum_generation", 0)) + 1
         with self._infer_lock:
             self._pending_infer_pose = None
         if getattr(self, "output_frame", None) is not None and self.output_frame:
@@ -2223,18 +2576,33 @@ class MainFrame(wx.Frame):
         if hasattr(self, "layer_hotkey_registry"):
             self._teardown_layer_hotkeys()
         self.save_persistent_ui_state()
-        if hasattr(self, "active_image_source"):
-            self.active_image_source.stop(self)
-        self.release_video_capture()
-        if getattr(self, "_osf_runtime", None) is not None:
-            self._osf_runtime.stop()
-        if hasattr(self.pose_converter, "shutdown"):
-            self.pose_converter.shutdown()
+        # bh-2 26.10.29 19:40 s
+        try:
+            if hasattr(self, "active_image_source"):
+                self.active_image_source.stop(self)
+        except Exception:
+            pass
+        try:
+            self.release_video_capture()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_osf_runtime", None) is not None:
+                self._osf_runtime.stop()
+        except Exception:
+            pass
+        try:
+            if hasattr(self.pose_converter, "shutdown"):
+                self.pose_converter.shutdown()
+        except Exception:
+            pass
+        # bh-2 26.10.29 19:40 e
         self.animation_timer.Stop()
         if hasattr(self, "display_timer"):
             self.display_timer.Stop()
         if hasattr(self, "output_enhancement") and self.output_enhancement is not None:
             try:
+                self._close_buffered_scene_renderer()
                 self.output_enhancement.shutdown()
             except Exception:
                 pass
@@ -2247,6 +2615,9 @@ class MainFrame(wx.Frame):
         if getattr(self, "webcam_preview_popup_frame", None) is not None and self.webcam_preview_popup_frame:
             self.webcam_preview_popup_frame.Destroy()
             self.webcam_preview_popup_frame = None
+        if getattr(self, "source_preview_popup_frame", None) is not None and self.source_preview_popup_frame:
+            self.source_preview_popup_frame.Destroy()
+            self.source_preview_popup_frame = None
         if getattr(self, "hover_help_popup", None) is not None and self.hover_help_popup:
             self.hover_help_popup.Destroy()
             self.hover_help_popup = None
@@ -2608,6 +2979,11 @@ class MainFrame(wx.Frame):
         if hasattr(self, "right_sidebar"):
             self.bind_mousewheel_scroll_recursive(self.right_sidebar)
 
+    # EVS-DESIGN-AUDIT EVS-A047 BEGIN
+    # 设计[UI-B×] [静态关联 / 待 GUI 验证]
+    # 轮滚动与 slider 悬停门控需一起核对；一秒悬停要求在实际使用的 FloatSliderControl 实现，不可只看这里有滚轮事件就判通过。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A047 END
     def on_mousewheel_scroll(self, event: wx.MouseEvent) -> None:
         event_object = event.GetEventObject()
         scroll_target = self.find_nearest_scrolled_window(event_object)
@@ -3226,6 +3602,24 @@ class MainFrame(wx.Frame):
             capture_window._last_frame_hash = None
 
     def get_mouth_infer_cap_hz(self) -> int:
+        if self.is_target_frame_rate_enabled():
+            # f-070 latest explicit requirement: maximize real inference first.
+            # A slow postprocess plan must not throttle the independent model.
+            return max(15, self.get_target_frame_rate_fps())
+        return self._get_manual_mouth_infer_cap_hz()
+
+    def _coerce_mouth_infer_cap_hz(self, cap_hz: int) -> int:
+        if cap_hz not in MOUTH_INFER_CAP_HZ_VALUES:
+            return MOUTH_INFER_CAP_HZ_DEFAULT
+        # bh-1 26.10.30 11:05 s
+        # Old installs saved the previous recommended 10Hz. Keep 10 only if
+        # the user picks it again after this policy change.
+        if cap_hz == 10 and not bool(self.persistent_ui_state.get("mouth_infer_cap_kept_low")):
+            return MOUTH_INFER_CAP_HZ_DEFAULT
+        # bh-1 26.10.30 11:05 e
+        return cap_hz
+
+    def _get_manual_mouth_infer_cap_hz(self) -> int:
         choice = getattr(self, "mouth_infer_cap_choice", None)
         if isinstance(choice, wx.Choice):
             selection = choice.GetSelection()
@@ -3236,9 +3630,7 @@ class MainFrame(wx.Frame):
             cap_hz = int(stored)
         except (TypeError, ValueError):
             cap_hz = MOUTH_INFER_CAP_HZ_DEFAULT
-        if cap_hz not in MOUTH_INFER_CAP_HZ_VALUES:
-            cap_hz = MOUTH_INFER_CAP_HZ_DEFAULT
-        return cap_hz
+        return self._coerce_mouth_infer_cap_hz(cap_hz)
 
     def is_smooth_affine_30hz_enabled(self) -> bool:
         checkbox = getattr(self, "smooth_affine_30hz_checkbox", None)
@@ -3246,7 +3638,14 @@ class MainFrame(wx.Frame):
             return checkbox.GetValue()
         return bool(self.persistent_ui_state.get("smooth_affine_30hz", True))
 
+    # EVS-DESIGN-AUDIT EVS-A045 BEGIN
+    # 设计[UI-D×, f-068] [部分符合 / 性能待测]
+    # 呈现上限为 DISPLAY_PRESENT_CAP_HZ=30 或推理档位，不是 14Hz 上限；控件动画另有限频。14 是下限目标，常量 MIN_OUT_PRESENT_HZ=12 及动态负载不能证明达标，需逐模式实测。
+    # 历史 bug 热点 #1：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A045 END
     def get_display_present_cap_hz(self) -> int:
+        if self.is_target_frame_rate_enabled():
+            return self.get_target_frame_rate_fps()
         if self.is_smooth_affine_30hz_enabled():
             return MainFrame.DISPLAY_PRESENT_CAP_HZ
         return max(1, self.get_mouth_infer_cap_hz())
@@ -3348,6 +3747,8 @@ class MainFrame(wx.Frame):
         return False, "", float(max(mouth_max, eye_max))
 
     def get_effective_infer_cap_hz(self) -> int:
+        if self.is_target_frame_rate_enabled():
+            return self.get_mouth_infer_cap_hz()
         base = self.get_mouth_infer_cap_hz()
         if self.is_openseeface_mocap_mode():
             base = max(base, int(self._osf_fps), MainFrame.MIN_OUT_PRESENT_HZ)
@@ -3365,7 +3766,9 @@ class MainFrame(wx.Frame):
             if self._pose_non_mouth_changed(last_pose, current_pose):
                 return True
             now_ns = time.time_ns()
-            interval_ns = int(1e9 / max(1, int(self._osf_fps)))
+            # bh-1 26.10.30 13:08 s
+            interval_ns = int(1e9 / max(1, int(self.get_effective_infer_cap_hz())))
+            # bh-1 26.10.30 13:08 e
             if self._last_pose_infer_time_ns is None:
                 return True
             return now_ns - self._last_pose_infer_time_ns >= interval_ns
@@ -3410,13 +3813,23 @@ class MainFrame(wx.Frame):
             return True
         return now_ns - self._last_pose_infer_time_ns >= min_interval_ns
 
+    def _pull_latest_infer_pose(self) -> Optional[List[float]]:
+        # f-070/f-072: only the UI converts the live camera's face result and
+        # reads controls. Workers consume an immutable snapshot, never wx widgets.
+        pose = self._latest_infer_input_pose
+        return list(pose) if pose is not None else None
+
     def schedule_async_pose_infer(self, pose_list: List[float]) -> bool:
         if self._is_closing or self.poser is None or self.torch_source_image is None:
             return False
         with self._infer_lock:
             self._pending_infer_pose = list(pose_list)
+            self._pending_infer_face_meta = (self._latest_face_pose_sequence, self._latest_face_sample_mono)
+            # bh-1 26.10.30 14:04 s
+            self._note_pose_infer_scheduled()
             if self._infer_worker_active:
                 return True
+            # bh-1 26.10.30 14:04 e
             self._infer_worker_generation += 1
             generation = self._infer_worker_generation
             self._infer_worker_active = True
@@ -3431,18 +3844,110 @@ class MainFrame(wx.Frame):
     def _async_pose_infer_worker(self, generation: int) -> None:
         last_pose: Optional[List[float]] = None
         last_wx_image: Optional[wx.Image] = None
+        self_pull = False
+        last_worker_start_ns = 0
         try:
             while not self._is_closing:
+                if last_worker_start_ns:
+                    remain = 1. / max(1, self._worker_infer_cap_hz) - (time.time_ns() - last_worker_start_ns) / 1e9
+                    if remain > 0.:
+                        time.sleep(min(.008, remain))
+                        continue
                 with self._infer_lock:
                     if generation != self._infer_worker_generation:
                         break
                     pose = self._pending_infer_pose
+                    face_meta = self._pending_infer_face_meta
                     self._pending_infer_pose = None
+                latest = self._latest_infer_input_snapshot
+                if latest is not None:
+                    pose, face_meta = list(latest[0]), latest[1]
+                # （UI infer timer 被 compose 饿死，worker 自抽 pose 保 Inf≥10）26.10.30 14:28 s
                 if pose is None:
-                    break
+                    if self.poser is None or self.torch_source_image is None:
+                        break
+                    interval_ns = int(1e9 / max(1, int(self._worker_infer_cap_hz)))
+                    last_ns = last_worker_start_ns
+                    now_ns = time.time_ns()
+                    if last_ns is not None and now_ns - last_ns < interval_ns:
+                        remain = (interval_ns - (now_ns - last_ns)) / 1e9
+                        time.sleep(max(0.001, min(0.008, remain)))
+                        continue
+                    snapshot = self._latest_infer_input_snapshot
+                    pose = list(snapshot[0]) if snapshot is not None else None
+                    face_meta = snapshot[1] if snapshot is not None else (0, 0.)
+                    if pose is None:
+                        time.sleep(0.008)
+                        continue
+                    self._note_pose_infer_scheduled()
+                    self_pull = True
+                else:
+                    self_pull = False
+                # （UI infer timer 被 compose 饿死，worker 自抽 pose 保 Inf≥10）26.10.30 14:28 e
+                if not self.is_mocap_sample_fresh(face_meta):
+                    time.sleep(.008)
+                    continue
                 try:
-                    last_wx_image = self.render_pose_to_wx_image(pose)
+                    self._last_model_face_sequence, self._last_model_face_sample_mono = face_meta
+                    _tha_t0 = time.perf_counter()
+                    last_worker_start_ns = time.time_ns()
+                    with self._model_render_lock:
+                        with self._infer_lock:
+                            if generation != self._infer_worker_generation:
+                                break
+                            self._infer_worker_busy_since = time.monotonic()
+                        last_wx_image = self.render_pose_to_wx_image(pose)
                     last_pose = list(pose)
+                    # f-070/f-072: one latest-result mailbox, one queued UI delivery.
+                    # Count completed model calls here; UI throughput is a separate rate.
+                    schedule_apply = False
+                    with self._infer_lock:
+                        if generation != self._infer_worker_generation:
+                            break
+                        self._infer_worker_busy_since = 0.0
+                        if last_wx_image is not None:
+                            self._completed_infer_result = (generation, last_pose, last_wx_image)
+                            self._note_inference_fps_tick()
+                            if not self._infer_result_apply_scheduled:
+                                self._infer_result_apply_scheduled = True
+                                schedule_apply = True
+                    if schedule_apply:
+                        wx.CallAfter(self._flush_async_pose_infer)
+                    # #region agent log
+                    self._dbg_last_tha_ms = (time.perf_counter() - _tha_t0) * 1000.0
+                    self._dbg_tha_done_n = int(getattr(self, "_dbg_tha_done_n", 0)) + 1
+                    try:
+                        _now = time.monotonic()
+                        if _now - float(getattr(self, "_dbg_tha_log_mono", 0.0) or 0.0) >= 1.0:
+                            self._dbg_tha_log_mono = _now
+                            import json as _json
+                            open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                                "sessionId": "86a17c",
+                                "runId": "post-fix-inf10",
+                                "hypothesisId": "I1",
+                                "location": "load_preview.py:_async_pose_infer_worker",
+                                "message": "tha infer duration",
+                                "data": {
+                                    "tha_ms": round(float(self._dbg_last_tha_ms), 2),
+                                    "pose_ms": round(float(getattr(self, "_dbg_tha_pose_ms", 0.0) or 0.0), 2),
+                                    "cpu_ms": round(float(getattr(self, "_dbg_tha_cpu_ms", 0.0) or 0.0), 2),
+                                    "wx_ms": round(float(getattr(self, "_dbg_tha_wx_ms", 0.0) or 0.0), 2),
+                                    "inf_fps": round(float(getattr(self, "_inference_fps", 0.0) or 0.0), 2),
+                                    "mouth_cap": int(self.get_mouth_infer_cap_hz()),
+                                    "target_fps": bool(self.is_target_frame_rate_enabled()),
+                                    "tha_n": int(self._dbg_tha_done_n),
+                                    "finish_n": int(getattr(self, "_dbg_finish_n", 0)),
+                                    "infer_ticks": int(getattr(self, "_dbg_infer_tick_calls", 0)),
+                                    "source": str(self.get_image_source_mode()),
+                                    "fp16": bool(self.get_tha_infer_fp16_enabled()),
+                                    "self_pull": bool(self_pull),
+                                    "rife_eff": int(self.output_enhancement.pipeline._effective_nn_multiplier()) if getattr(self, "output_enhancement", None) is not None else 0,
+                                },
+                                "timestamp": int(time.time() * 1000),
+                            }) + "\n")
+                    except Exception:
+                        pass
+                    # #endregion
                 except Exception as exc:
                     if not getattr(self, "_last_infer_worker_error", None):
                         self._last_infer_worker_error = repr(exc)
@@ -3451,22 +3956,27 @@ class MainFrame(wx.Frame):
                             exc,
                             file=sys.stderr)
                     last_wx_image = None
+                    with self._infer_lock:
+                        if generation == self._infer_worker_generation:
+                            self._infer_worker_busy_since = 0.0
                 with self._infer_lock:
                     if generation != self._infer_worker_generation:
-                        break
-                    if self._pending_infer_pose is None:
                         break
         finally:
             with self._infer_lock:
                 if generation == self._infer_worker_generation:
                     self._infer_worker_active = False
                     self._infer_worker_started_mono = 0.0
-        if (
-                not self._is_closing
-                and generation == self._infer_worker_generation
-                and last_pose is not None
-                and last_wx_image is not None):
-            wx.CallAfter(self._finish_async_pose_infer, last_pose, last_wx_image)
+                    self._infer_worker_busy_since = 0.0
+
+    def _flush_async_pose_infer(self) -> None:
+        with self._infer_lock:
+            result = self._completed_infer_result
+            self._completed_infer_result = None
+            self._infer_result_apply_scheduled = False
+            valid = result is not None and result[0] == self._infer_worker_generation
+        if valid:
+            self._finish_async_pose_infer(result[1], result[2])
 
     def _layer_motion_output_active(self) -> bool:
         return (
@@ -3505,7 +4015,9 @@ class MainFrame(wx.Frame):
     def _infer_worker_stuck(self) -> bool:
         if not self._infer_worker_active:
             return False
-        started = float(getattr(self, "_infer_worker_started_mono", 0.0))
+        # f-070: the worker is intentionally continuous. Its lifetime is not
+        # a stall; only an in-flight model call without completion can time out.
+        started = float(getattr(self, "_infer_worker_busy_since", 0.0))
         if started <= 0.0:
             return False
         return (
@@ -3513,10 +4025,15 @@ class MainFrame(wx.Frame):
             >= MainFrame.INFER_WORKER_STUCK_TIMEOUT_SEC)
 
     def _reset_infer_worker_runtime(self) -> None:
+        self._close_live_scene_presenter()
         with self._infer_lock:
             self._infer_worker_generation += 1
             self._infer_worker_active = False
             self._infer_worker_started_mono = 0.0
+            self._infer_worker_busy_since = 0.0
+            self._completed_infer_result = None
+            self._infer_result_apply_scheduled = False
+            self._pending_infer_pose = None
         self._capture_async_active = False
         self._capture_pending_delivery = None
         self._clear_present_compose_dedupe()
@@ -3556,13 +4073,13 @@ class MainFrame(wx.Frame):
             return
         self._infer_stuck_heal_logged = False
         self._output_stall_heal_logged = False
-        self._note_pose_present_time()
+        self._note_cached_affine_present_time()
+        self._dbg_finish_n = int(getattr(self, "_dbg_finish_n", 0)) + 1
         self.last_pose = pose_list
         self.last_output_wx_image = wx_image
         self.last_background_choice = self.get_output_background_signature()
         self.output_enhancement.keyframe_cache.invalidate_image()
         self._advance_pose_interpolation_after_infer(pose_list)
-        self._note_inference_fps_tick()
         # Presenting is left to on_display_timer (throttled to the display present
         # cap + deduped): driving a full synchronous composite here on every
         # inference floods the UI thread (the composite is the hot cost) and
@@ -3606,9 +4123,13 @@ class MainFrame(wx.Frame):
     def _note_cached_affine_present_time(self) -> None:
         self._last_cached_affine_present_time_ns = time.time_ns()
 
+    def _note_pose_infer_scheduled(self) -> None:
+        # bh-1 26.10.30 14:04 s
+        self._last_pose_infer_time_ns = time.time_ns()
+        # bh-1 26.10.30 14:04 e
+
     def _note_pose_present_time(self) -> None:
         now_ns = time.time_ns()
-        self._last_pose_infer_time_ns = now_ns
         self._last_cached_affine_present_time_ns = now_ns
 
     @staticmethod
@@ -3616,13 +4137,20 @@ class MainFrame(wx.Frame):
             timestamps: List[float],
             *,
             window_sec: float = 1.0) -> tuple[List[float], float]:
-        now = time.monotonic()
+        now = time.perf_counter()
         kept = [tick for tick in timestamps if now - tick <= window_sec]
         kept.append(now)
         rate = len(kept) / window_sec
         return kept, rate
 
     def _note_input_fps_tick(self) -> None:
+        token = getattr(self, "_last_read_capture_frame_token", None)
+        camera_owned = (not self.is_openseeface_mocap_mode()
+                        or bool(getattr(self, "_osf_pose_from_video_source", False)))
+        if self.video_source_kind == "camera" and camera_owned and token is not None:
+            if token == getattr(self, "_last_counted_input_frame_token", None):
+                return
+            self._last_counted_input_frame_token = token
         # Stats only; the FPS text is repainted by on_ui_anim_timer (25 fps cap).
         self._input_frame_times, self._input_fps = self._record_rate_in_rolling_window(
             self._input_frame_times)
@@ -3651,16 +4179,21 @@ class MainFrame(wx.Frame):
 
     def _note_actual_output_present(self) -> None:
         """Append a real output present timestamp (display value commits separately)."""
-        now = time.monotonic()
+        now = time.perf_counter()
         self._last_actual_output_present_mono = now
         self._output_present_times.append(now)
         keep = max(2, MainFrame.OUTPUT_FPS_AVG_FRAME_COUNT)
         if len(self._output_present_times) > keep:
             self._output_present_times = self._output_present_times[-keep:]
 
+    # EVS-DESIGN-AUDIT EVS-A044 BEGIN
+    # 设计[UI-D×] [静态符合（采样口径）]
+    # 按实际 present 时间样本估算 Out，每秒更新、五个间隔均值；这是已呈现频率，不是用推理 FPS×插帧倍率虚算。实际计数钩子仍须和最终 ULW 提交核对。
+    # 历史 bug 热点 #1,#4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A044 END
     def _update_output_fps_estimate_if_due(self) -> None:
         """Refresh cached Out FPS at most once per second from the last five frames."""
-        now = time.monotonic()
+        now = time.perf_counter()
         last_commit = getattr(self, "_output_fps_last_commit_mono", 0.0)
         if now - last_commit < MainFrame.OUTPUT_FPS_UPDATE_INTERVAL_SEC:
             return
@@ -3756,6 +4289,14 @@ class MainFrame(wx.Frame):
         return scaled
 
     def get_output_frame_interpolation_multiplier(self) -> int:
+        if self.is_target_frame_rate_enabled():
+            pipe = getattr(self, "output_enhancement", None)
+            if pipe is not None:
+                return 2 if pipe.pipeline._target_plan().method in ("pose", "scene") and pipe.get_model_rate_limit_hz() > 15 else 1
+            return 1
+        return self._get_manual_output_frame_interpolation_multiplier()
+
+    def _get_manual_output_frame_interpolation_multiplier(self) -> int:
         control = getattr(self, "output_frame_interpolation_choice", None)
         if isinstance(control, wx.Choice):
             index = control.GetSelection()
@@ -3784,6 +4325,12 @@ class MainFrame(wx.Frame):
 
     def on_mouth_infer_cap_changed(self, event: wx.Event):
         self._last_cached_affine_present_time_ns = None
+        choice = getattr(self, "mouth_infer_cap_choice", None)
+        if isinstance(choice, wx.Choice):
+            selection = choice.GetSelection()
+            if 0 <= selection < len(MOUTH_INFER_CAP_HZ_VALUES):
+                self.persistent_ui_state["mouth_infer_cap_kept_low"] = (
+                    MOUTH_INFER_CAP_HZ_VALUES[selection] == 10)
         self.save_persistent_ui_state()
         event.Skip()
 
@@ -3791,6 +4338,83 @@ class MainFrame(wx.Frame):
         self._last_cached_affine_present_time_ns = None
         self.save_persistent_ui_state()
         event.Skip()
+
+    def is_target_frame_rate_enabled(self) -> bool:
+        control = getattr(self, "target_frame_rate_checkbox", None)
+        return normalize_target_enabled(control.GetValue() if control is not None else
+            self.persistent_ui_state.get("target_frame_rate_enabled", False))
+
+    def get_target_frame_rate_fps(self) -> int:
+        control = getattr(self, "target_frame_rate_input", None)
+        return normalize_target_fps(control.GetValue() if control is not None else
+            self.persistent_ui_state.get("target_frame_rate_fps", 60))
+
+    def _create_target_frame_rate_controls(self) -> None:
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        enabled = self.is_target_frame_rate_enabled()
+        target = self.get_target_frame_rate_fps()
+        self.target_frame_rate_checkbox = wx.CheckBox(
+            self.postprocess_panel, label="使用目标帧率模式")
+        self.target_frame_rate_checkbox.SetValue(enabled)
+        row.Add(self.target_frame_rate_checkbox, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        row.Add(wx.StaticText(self.postprocess_panel, label="目标帧"),
+                0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 4)
+        self.target_frame_rate_input = wx.SpinCtrl(self.postprocess_panel,
+            min=1, max=240, initial=target, size=(82, -1), style=wx.SP_ARROW_KEYS)
+        self.target_frame_rate_input.Enable(enabled)
+        row.Add(self.target_frame_rate_input, 0, wx.ALIGN_CENTER_VERTICAL)
+        self.target_frame_rate_checkbox.Bind(wx.EVT_CHECKBOX, self.on_target_frame_rate_changed)
+        self.target_frame_rate_input.Bind(wx.EVT_SPINCTRL, self.on_target_frame_rate_changed)
+        self.target_frame_rate_input.Bind(wx.EVT_TEXT_ENTER, self.on_target_frame_rate_changed)
+        self.target_frame_rate_input.Bind(wx.EVT_KILL_FOCUS, self.on_target_frame_rate_changed)
+        self.target_frame_rate_checkbox.SetToolTip(
+            "自动分配真实推理、姿态插帧和 RIFE 倍率，优先保留更多真实帧。"
+            "达不到目标时运行在当前最高可持续帧率，不弹出告警。取消后恢复手动插帧设置。")
+        self.postprocess_panel_sizer.Add(row, 0, wx.EXPAND | wx.ALL, 4)
+
+    def _refresh_target_frame_rate_controls(self) -> None:
+        automatic = self.is_target_frame_rate_enabled()
+        field = getattr(self, "target_frame_rate_input", None)
+        if hasattr(field, "Enable"):
+            field.Enable(automatic)
+        for name in ("output_frame_interpolation_choice", "nn_frame_interpolation_choice",
+                     "mouth_infer_cap_choice", "smooth_affine_30hz_checkbox"):
+            control = getattr(self, name, None)
+            if hasattr(control, "Enable"):
+                control.Enable(not automatic and (name != "nn_frame_interpolation_choice"
+                               or is_output_enhancement_installed()))
+
+    def _sync_frame_rate_timers(self) -> None:
+        if getattr(self, "_is_closing", False):
+            return
+        automatic = self.is_target_frame_rate_enabled()
+        # bh-1 26.10.30 14:04 s
+        # Present cap is 30Hz; a 120Hz display poll starved infer ticks to ~5/s.
+        display_hz = 30
+        infer_hz = (
+            min(120, max(24, int(self.get_mouth_infer_cap_hz()) * 2))
+            if automatic else 30)
+        for name, interval in (("display_timer", max(1, int(round(1000 / display_hz)))),
+                               ("animation_timer", max(1, int(round(1000 / infer_hz))))):
+        # bh-1 26.10.30 14:04 e
+            timer = getattr(self, name, None)
+            if timer is not None and timer.IsRunning() and timer.GetInterval() != interval:
+                timer.Start(interval)
+
+    def on_target_frame_rate_changed(self, event=None) -> None:
+        if getattr(self, "_is_closing", False) or is_blocked(self):
+            if event is not None:event.Skip()
+            return
+        self._material_scene_failed = False
+        self._gpu_composition_disabled = False
+        self._sync_output_enhancement_config()
+        self.reset_frame_interpolation_buffers()
+        self._refresh_target_frame_rate_controls()
+        self._sync_frame_rate_timers()
+        self.save_persistent_ui_state()
+        if self.is_target_frame_rate_enabled():
+            wx.CallAfter(self._maybe_warmup_output_enhancement)
+        if event is not None:event.Skip()
 
     def _choice_index_value(self, control, values, fallback):
         if isinstance(control, wx.Choice):
@@ -3826,6 +4450,7 @@ class MainFrame(wx.Frame):
     def get_tha_infer_fp16_persisted_value(self) -> str:
         """User preference for persistence (ignores THA3 override and FP16 runtime fallback)."""
         fallback_raw = self.persistent_ui_state.get("tha_infer_fp16", "full")
+        if self.get_image_source_mode()==IMAGE_SOURCE_THA3:return "half" if normalize_tha_infer_fp16(fallback_raw) else "full"
         fallback_choice = (
             THA_INFER_FP16_CHOICES[1]
             if normalize_tha_infer_fp16(fallback_raw)
@@ -3854,6 +4479,8 @@ class MainFrame(wx.Frame):
             "nn_backend": snapshot_choice(getattr(self, "nn_infer_backend_choice", None)),
             "tha_fp16": snapshot_choice(getattr(self, "tha_infer_fp16_choice", None)),
             "pose_interp": snapshot_choice(getattr(self, "output_frame_interpolation_choice", None)),
+            "target_enabled": self.is_target_frame_rate_enabled(),
+            "target_fps": self.get_target_frame_rate_fps(),
         }
 
     def _restore_enhancement_ui(self, snap: dict) -> None:
@@ -3863,8 +4490,13 @@ class MainFrame(wx.Frame):
             restore_choice(getattr(self, "nn_infer_backend_choice", None), snap.get("nn_backend"))
             restore_choice(getattr(self, "tha_infer_fp16_choice", None), snap.get("tha_fp16"))
             restore_choice(getattr(self, "output_frame_interpolation_choice", None), snap.get("pose_interp"))
+            self.target_frame_rate_checkbox.SetValue(normalize_target_enabled(snap.get("target_enabled", False)))
+            self.target_frame_rate_input.SetValue(normalize_target_fps(snap.get("target_fps", 60)))
+        self._refresh_target_frame_rate_controls()
 
     def _validate_output_enhancement_switch(self) -> tuple[bool, str]:
+        if self.is_target_frame_rate_enabled() and self.get_nn_super_resolution_mode() == NN_SR_OFF:
+            return True, ""
         pipe = getattr(self, "output_enhancement", None)
         if pipe is None:
             return True, ""
@@ -3877,12 +4509,14 @@ class MainFrame(wx.Frame):
         backend = self.get_nn_infer_backend()
         if backend == INFER_BACKEND_PYTORCH:
             return False, (
-                "NN super-resolution / RIFE need backend ONNX Runtime or TensorRT "
+                "NN super-resolution / RIFE need backend ONNX Runtime, DirectML, or TensorRT "
                 "(PyTorch applies to THA Student FP16 only).")
         return True, ""
 
     def _apply_enhancement_ui_from_config(self, cfg: dict) -> None:
         with block_events(self):
+            self.target_frame_rate_checkbox.SetValue(normalize_target_enabled(cfg.get("target_frame_rate_enabled", False)))
+            self.target_frame_rate_input.SetValue(normalize_target_fps(cfg.get("target_frame_rate_fps", 60)))
             sr_control = getattr(self, "nn_super_resolution_choice", None)
             if isinstance(sr_control, wx.Choice):
                 try:
@@ -3914,6 +4548,11 @@ class MainFrame(wx.Frame):
         if monitor is not None:
             monitor._show_toast(message)
 
+    # EVS-DESIGN-AUDIT EVS-A021 BEGIN
+    # 设计[f-063, f-064] [符合（NN 接口）；面捕新鲜度另见健康检查]
+    # NN 检查调用 get_config_snapshot()/nn_runtime_ready()，由 OutputEnhancementRuntime 委托 pipeline。面捕模式字符串核查仍不代替包龄。
+    # 历史 bug 热点 #2,#3：NN 核查不再因缺方法被跳过。
+    # EVS-DESIGN-AUDIT EVS-A021 END
     def _init_ui_alignment_monitor(self) -> None:
         self._ui_alignment_monitor = UiAlignmentMonitor(self)
 
@@ -3957,17 +4596,22 @@ class MainFrame(wx.Frame):
             ui = (
                 self.get_nn_super_resolution_mode(),
                 self.get_nn_frame_interpolation_multiplier(),
-                self.get_nn_infer_backend(),
             )
             cfg = pipe.get_config_snapshot()
             runtime = (
                 normalize_sr_mode(cfg.get("nn_super_resolution_mode")),
                 normalize_nn_frame_multiplier(cfg.get("nn_frame_interpolation_multiplier")),
-                normalize_infer_backend(cfg.get("nn_infer_backend")),
             )
+            # bh-1 26.10.30 13:08 s
             if ui != runtime:
                 return ("Output enhancement", str(ui), str(runtime))
+            # Backend fallback (TRT→DML) is synced separately; do not revert UI.
+            # bh-1 26.10.30 13:08 e
             if pipe.nn_modes_requested() and not pipe.nn_runtime_ready():
+                # bh-1 26.10.29 20:24 s
+                if self.poser is None or getattr(self, "_enhancement_warmup_key", None) is not None:
+                    return None
+                # bh-1 26.10.29 20:24 e
                 return ("Output enhancement ready", "on", "not ready")
             return None
 
@@ -3996,56 +4640,102 @@ class MainFrame(wx.Frame):
             if control is not None and isinstance(control, wx.Choice):
                 control.Enable(installed)
         self._sync_tha_infer_fp16_ui()
+        self._refresh_target_frame_rate_controls()
 
     def _sync_tha_infer_fp16_ui(self) -> None:
         control = getattr(self, "tha_infer_fp16_choice", None)
-        if control is None or not isinstance(control, wx.Choice):
-            return
-        tha3_mode = self.get_image_source_mode() == IMAGE_SOURCE_THA3
-        control.Enable(not tha3_mode)
+        label = getattr(self, "tha_infer_fp16_label", None)
+        tha4_mode = self.get_image_source_mode() != IMAGE_SOURCE_THA3
+        # （THA4 Student 精度控件只在 THA4 显示且可调）26.10.30 15:05 s
+        if label is not None:
+            label.Show(tha4_mode)
+        if control is not None and isinstance(control, wx.Choice):
+            control.Show(tha4_mode)
+            control.Enable(tha4_mode)
+            if tha4_mode:
+                control.SetToolTip("THA4 Student 推理精度：Full=FP32，Half=FP16。")
+        # （THA4 Student 精度控件只在 THA4 显示且可调）26.10.30 15:05 e
+        # #region agent log
+        try:
+            import json as _json, time as _time
+            open(debug_log_path('31363c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "31363c", "runId": "post-fix", "hypothesisId": "B", "location": "load_preview.py:_sync_tha_infer_fp16_ui", "message": "tha4student precision widget visibility", "data": {"mode": self.get_image_source_mode(), "tha4_mode": tha4_mode, "control_shown": bool(control is not None and control.IsShown()), "control_enabled": bool(control is not None and control.IsEnabled()), "label_shown": bool(label is not None and label.IsShown())}, "timestamp": int(_time.time() * 1000)}) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        if hasattr(self, "postprocess_panel"):
+            self.postprocess_panel.Layout()
 
+    # EVS-DESIGN-AUDIT EVS-A023 BEGIN
+    # 设计[f-055, f-056, f-058, f-057, f-063] [部分符合]
+    # 用户切换与角色加载成功后后台 warmup、报错后恢复快照；进度 UI 存在。不能据有进度框推定所有加载均小于十分钟。
+    # 历史 bug 热点 #1,#2：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A023 END
     def _maybe_warmup_output_enhancement(self) -> None:
         pipe = getattr(self, "output_enhancement", None)
         if pipe is None or not pipe.nn_modes_requested():
             return
         backend = self.get_nn_infer_backend()
-        if backend == INFER_BACKEND_PYTORCH:
-            self._warn_enhancement_once(
-                "NN super-resolution / RIFE need backend ONNX Runtime or TensorRT "
-                "(PyTorch applies to THA Student FP16 only).")
-            return
-        if not is_output_enhancement_installed():
-            return
         warmup_key = (
             self.get_nn_super_resolution_mode(),
             self.get_nn_frame_interpolation_multiplier(),
             backend,
+            self.is_target_frame_rate_enabled(),
         )
-        if warmup_key == self._enhancement_warmup_key:
+        busy = bool(getattr(self, "_enhancement_warmup_busy", False))
+        key_match = warmup_key == self._enhancement_warmup_key
+        # #region agent log
+        try:
+            import json as _json, time as _time
+            open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix-inf10", "hypothesisId": "A", "location": "load_preview.py:_maybe_warmup_output_enhancement", "message": "warmup requested after character/config", "data": {"backend": str(backend), "sr": str(self.get_nn_super_resolution_mode()), "rife": int(self.get_nn_frame_interpolation_multiplier()), "installed": bool(is_output_enhancement_installed()), "busy": busy, "skipped": bool(busy or key_match)}, "timestamp": int(_time.time() * 1000)}) + "\n")
+        except Exception:
+            pass
+        try:
+            import json as _json, time as _time, onnxruntime as _ort
+            _avail = list(_ort.get_available_providers())
+            open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix-dml", "hypothesisId": "T", "location": "load_preview.py:_maybe_warmup_output_enhancement", "message": "live ORT providers", "data": {"available": _avail, "has_dml": "DmlExecutionProvider" in _avail, "backend": str(backend), "package": str(getattr(_ort, "__file__", ""))[-80:], "skipped": bool(busy or key_match)}, "timestamp": int(_time.time() * 1000)}) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        # bh-1 26.10.30 13:08 s
+        if busy or key_match:
+            return
+        # bh-1 26.10.30 13:08 e
+        if backend == INFER_BACKEND_PYTORCH and not self.is_target_frame_rate_enabled():
+            self._warn_enhancement_once(
+                "NN super-resolution / RIFE need backend ONNX Runtime, DirectML, or TensorRT "
+                "(PyTorch applies to THA Student FP16 only).")
+            return
+        if not is_output_enhancement_installed():
             return
         self._enhancement_warmup_key = warmup_key
+        self._enhancement_warmup_busy = True
         self._sync_output_enhancement_config()
 
         def _task(progress):
             pipe.warmup(progress)
 
         def _on_complete():
-            pass
+            self._enhancement_warmup_busy = False
+            self._sync_nn_backend_choice_to_actual()
+            # bh-1 26.10.30 13:08 s
+            self._enhancement_warmup_key = (
+                self.get_nn_super_resolution_mode(),
+                self.get_nn_frame_interpolation_multiplier(),
+                self.get_nn_infer_backend(),
+                self.is_target_frame_rate_enabled(),
+            )
+            # bh-1 26.10.30 13:08 e
 
         def _on_error(exc: Exception):
+            self._enhancement_warmup_busy = False
             self._enhancement_warmup_key = None
             snap = getattr(self, "_enhancement_switch_snapshot", None)
             if snap is not None:
                 self._restore_enhancement_ui(snap)
                 self._sync_output_enhancement_config()
-            show_rate_limited_message(
-                self.get_dialog_parent(),
-                f"Output enhancement load failed: {exc}",
-                "Output Enhancement",
-                style=wx.OK | wx.ICON_WARNING,
-                dialog_key="output_enhancement_load_failed",
-                min_interval_sec=30.0)
+            # bh-2 26.10.29 20:56 s
             self._ui_alignment_toast(f"Output enhancement load failed: {exc}")
+            # bh-2 26.10.29 20:56 e
 
         run_slow_task(
             self.get_dialog_parent(),
@@ -4054,20 +4744,74 @@ class MainFrame(wx.Frame):
             on_complete=_on_complete,
             on_error=_on_error)
 
+    def _sync_nn_backend_choice_to_actual(self) -> None:
+        # bh-1 26.10.30 12:52 s
+        pipe = getattr(self, "output_enhancement", None)
+        if pipe is None:
+            return
+        try:
+            actual = str(pipe.pipeline.actual_nn_backend_name())
+        except Exception:
+            return
+        requested = self.get_nn_infer_backend()
+        # #region agent log
+        try:
+            import json as _json
+            open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                "sessionId": "86a17c",
+                "runId": "post-fix-source-preview",
+                "hypothesisId": "K",
+                "location": "load_preview.py:_sync_nn_backend_choice_to_actual",
+                "message": "nn backend ui vs actual",
+                "data": {
+                    "ui": requested,
+                    "actual": actual,
+                    "rife": int(self.get_nn_frame_interpolation_multiplier()),
+                    "sr": str(self.get_nn_super_resolution_mode()),
+                    "target_fps": bool(self.is_target_frame_rate_enabled()),
+                },
+                "timestamp": int(time.time() * 1000),
+            }) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        if actual == requested or actual not in INFER_BACKEND_VALUES:
+            return
+        control = getattr(self, "nn_infer_backend_choice", None)
+        if control is None:
+            return
+        with block_events(self):
+            if isinstance(control, wx.Choice):
+                control.SetSelection(INFER_BACKEND_VALUES.index(actual))
+            else:
+                try:
+                    control.SetValue(actual)
+                except Exception:
+                    return
+        self.persistent_ui_state["nn_infer_backend"] = actual
+        self._sync_output_enhancement_config()
+        # bh-1 26.10.30 12:52 e
+
     def _sync_output_enhancement_config(self) -> None:
         pipe = getattr(self, "output_enhancement", None)
         if pipe is None:
             return
+        pipe.set_scene_output_rate(self.get_display_present_cap_hz(),
+            independent=self.is_target_frame_rate_enabled() and self.get_image_source_mode() == IMAGE_SOURCE_THA3 and self.get_nn_super_resolution_mode() == NN_SR_OFF)
         pipe.update_config({
             "antialias_strength": self._get_antialias_factor(),
-            "output_frame_interpolation": self.get_output_frame_interpolation_multiplier(),
+            "output_frame_interpolation": self._get_manual_output_frame_interpolation_multiplier(),
             "nn_super_resolution_mode": self.get_nn_super_resolution_mode(),
             "nn_frame_interpolation_multiplier": self.get_nn_frame_interpolation_multiplier(),
             "nn_infer_backend": self.get_nn_infer_backend(),
+            "target_frame_rate_enabled": self.is_target_frame_rate_enabled(),
+            "target_frame_rate_fps": self.get_target_frame_rate_fps(),
             "tha_infer_fp16": self.get_tha_infer_fp16_enabled(),
         })
 
     def _warn_enhancement_once(self, message: str) -> None:
+        if self.is_target_frame_rate_enabled():
+            return
         if self._enhancement_warned_once:
             return
         self._enhancement_warned_once = True
@@ -4087,7 +4831,9 @@ class MainFrame(wx.Frame):
         def _apply():
             self._tha_infer_fp16_fallback = False
             if self.poser is not None and self.get_image_source_mode() == IMAGE_SOURCE_THA4:
-                apply_poser_precision(self.poser, self.get_tha_infer_fp16_enabled())
+                with self._model_render_lock:
+                    self._worker_tha_fp16 = self.get_tha_infer_fp16_enabled()
+                    apply_poser_precision(self.poser, self._worker_tha_fp16)
             self._sync_output_enhancement_config()
 
         snap = self._snapshot_enhancement_ui()
@@ -4112,32 +4858,284 @@ class MainFrame(wx.Frame):
     def on_tha_infer_fp16_changed(self, event: wx.Event):
         self.on_output_enhancement_changed(event)
 
+    # EVS-DESIGN-AUDIT EVS-A024 BEGIN
+    # 设计[f-055, f-056, f-058] [风险待计时]
+    # 呈现链只在 warmup 完成后 apply NN；未预热时原帧直出。不要把此 NN 后处理与 XY/缩放“输出动态增强”混为同一模块。
+    # 历史 bug 热点 #1：加载角色呈现路径不再懒创建 TRT/ORT 会话。
+    # EVS-DESIGN-AUDIT EVS-A024 END
+    def _close_buffered_scene_renderer(self):
+        renderer = getattr(self, "_buffered_scene_renderer", None)
+        if renderer is not None:
+            self.output_enhancement.set_frame_transformer(None)
+            renderer.close()
+            self._buffered_scene_renderer = None
+            self._cached_capture_foreground_rgba = None
+            self._cached_capture_foreground_signature = None
+            self._last_compose_signature = None
+
+    def _capture_scene_snapshot(self, renderer):
+        from output_enhancement.scene_snapshot import SceneSnapshot, FrozenGifAsset
+        from region_wobble_host import layer_wobble_state
+        from dataclasses import replace
+        import copy
+        width, height = self.get_locked_output_client_size()
+        stamp = time.perf_counter()
+        context = replace(self._make_binding_context(width, height), binding_smoother=None,
+                          _orbit_plan_cache=None, _orbit_plan_cache_time_s=None)
+        context.motion_time_s = time.time()
+        state = copy.deepcopy(self.basic_layers_state)
+        if not self.is_layer_blend_enabled():
+            state.layers = []
+        assets = {}
+        specs = {"character": renderer.capture_wobble_spec("character", self.character_region_wobble)}
+        for layer in state.layers:
+            if not layer.asset_path:
+                continue
+            live_layer = next((item for item in self.basic_layers_state.layers if item.slot_id == layer.slot_id), layer)
+            rgba = self.layer_asset_cache.load_image_rgba(live_layer, now=context.motion_time_s)
+            layer.gif_playback_epoch = live_layer.gif_playback_epoch
+            layer.gif_playback_mode = live_layer.gif_playback_mode
+            layer.visible = live_layer.visible
+            if rgba is None:
+                continue
+            if str(layer.asset_path).lower().endswith(".gif"):
+                key = self.layer_asset_cache._cache_key(layer.asset_path)
+                source = self.layer_asset_cache._gif_numpy_sources.get(key)
+                assets[layer.slot_id] = FrozenGifAsset(tuple(source.frames), tuple(source.durations_ms), source.total_ms) if source else rgba
+            else:
+                assets[layer.slot_id] = rgba
+            if layer.region_wobble_enabled:
+                specs[layer.slot_id] = renderer.capture_wobble_spec(layer.slot_id, layer_wobble_state(self, layer.slot_id))
+        colour = self.get_character_edge_colour()
+        return SceneSnapshot(stamp, time.time(), width, height,
+            context, state, assets, specs, background=self._compose_ulw_background_rgba(width, height),
+            antialias=self._get_antialias_factor_for_present(), edge_mode=self.get_character_edge_mode(),
+            edge_width=self.get_character_edge_width(), edge_rgb=(colour.Red(), colour.Green(), colour.Blue()),
+            edge_background_rgb=self._edge_postprocess_background_rgb())
+
+    def _close_live_scene_presenter(self):
+        presenter = getattr(self, "_live_scene_presenter", None)
+        if presenter is not None:
+            self._live_scene_presenter = None
+            presenter.close()
+        self._live_scene_image = None
+        self._live_scene_rgba = None
+
+    def _try_present_live_scene(self) -> bool:
+        # f-070/f-068: independent full-resolution CPU scene clock. UI collects
+        # immutable values only; pixels, wobble, GIF sampling and ULW run off UI.
+        eligible = (self.is_model_loaded() and self.is_ulw_output_enabled()
+                    and self.last_output_wx_image is not None
+                    and self.get_nn_super_resolution_mode() == NN_SR_OFF
+                    and (self.is_target_frame_rate_enabled()
+                         or self.get_nn_frame_interpolation_multiplier() == 1)
+                    and self._output_edit_slot_id() is None
+                    and not getattr(self, "_region_wobble_paint_mode", False)
+                    and not getattr(self, "_live_scene_failed", False))
+        if not eligible:
+            self._close_live_scene_presenter()
+            return False
+        from output_enhancement.live_scene_presenter import LiveScenePresenter
+        presenter = getattr(self, "_live_scene_presenter", None)
+        if presenter is not None and presenter.last_error:
+            self._live_scene_failed = True
+            self._close_live_scene_presenter()
+            return False
+        if presenter is None:
+            self._close_buffered_scene_renderer()
+            self.output_enhancement.set_buffered_enabled(False)
+            capture = getattr(self, "transparent_capture_window", None)
+            if capture is None or not capture.is_valid():
+                self.sync_transparent_capture_output_window()
+            def deliver(rgba, serial, stamp):
+                capture = getattr(self, "transparent_capture_window", None)
+                if (self._is_closing or getattr(self, "_live_scene_presenter", None) is not presenter
+                        or capture is None or not capture.is_valid()):
+                    return
+                self._cached_present_rgba = rgba
+                premul = _straight_rgba_to_premultiplied_bgra(rgba)
+                capture.update_frame_rgba(rgba, frame_signature=("live-scene", id(presenter), serial),
+                                          premultiplied_bgra=premul)
+            presenter = LiveScenePresenter(deliver)
+            self._live_scene_presenter = presenter
+        image = self.last_output_wx_image
+        if getattr(self, "_live_scene_image", None) is not image:
+            self._live_scene_rgba = self.wx_image_to_rgba_array(image)
+            self._live_scene_image = image
+        snapshot = self._capture_scene_snapshot(presenter.renderer)
+        presenter.offer(snapshot, self._live_scene_rgba, self.get_display_present_cap_hz())
+        return True
+
+    def _try_present_buffered_scene(self) -> bool:
+        # f-070 / GIF cadence: inference and RIFE see only the character.
+        # GIFs, bindings, orbit and region wobble run on the final scene clock.
+        pipe = getattr(self, "output_enhancement", None)
+        gpu_candidate=(getattr(getattr(self,"device",None),"type",None)=="cuda"
+            and not getattr(self,"_gpu_composition_disabled",False)
+            and self._get_antialias_factor_for_present()<=1.001 and self.get_character_edge_mode()=="none")
+        eligible = (pipe is not None and not getattr(pipe.pipeline,"_hybrid_role_active",False) and self.get_image_source_mode() == IMAGE_SOURCE_THA3
+            # （THA3 target-FPS 开 GPU compose 与推理抢卡，Inf 卡在 7）26.10.30 14:35 s
+            and pipe.pipeline._effective_nn_multiplier() > 1
+            # （THA3 target-FPS 开 GPU compose 与推理抢卡，Inf 卡在 7）26.10.30 14:35 e
+            and self.is_model_loaded() and self.is_ulw_output_enabled() and self.last_output_wx_image is not None
+            and self._output_edit_slot_id() is None
+            and not getattr(self, "_region_wobble_paint_mode", False)
+            and not getattr(self, "_material_scene_failed", False)
+            and self.get_nn_super_resolution_mode() == NN_SR_OFF
+            and (self.get_nn_frame_interpolation_multiplier() == 1 or pipe.nn_runtime_ready()
+                 or self.is_target_frame_rate_enabled()))
+        if not eligible:
+            self._close_buffered_scene_renderer()
+            return False
+        current = pipe.pipeline._buffered_presenter
+        active_renderer=getattr(self,"_buffered_scene_renderer",None)
+        if active_renderer is not None and current is not None and active_renderer.gpu_active:
+            recent=current.transform_ms[-32:]
+            # f-070: a fast pixel kernel is insufficient if joint queues miss
+            # the playout budget. Return to the direct CPU scene path once.
+            if len(recent)>=32 and sum(recent)/len(recent)>150.:
+                active_renderer.gpu_failed=True
+                active_renderer.gpu_backend.last_error="Joint scene queue exceeded 150ms budget"
+                if self.is_target_frame_rate_enabled():
+                    for multiplier in (2,3,4):pipe.pipeline._target.disable_method(multiplier)
+        if active_renderer is not None and active_renderer.gpu_failed and pipe.pipeline._effective_nn_multiplier()==1:
+            self._gpu_composition_disabled=True
+            self._close_buffered_scene_renderer()
+            return False
+        if current is not None and current.last_error:
+            self._material_scene_failed = True
+            self._close_buffered_scene_renderer()
+            return False
+        from output_enhancement.scene_snapshot import ParallelSceneRenderer, SceneSnapshot, FrozenGifAsset
+        from region_wobble_host import layer_wobble_state
+        from dataclasses import replace
+        import copy
+        renderer = getattr(self, "_buffered_scene_renderer", None)
+        if renderer is None:
+            renderer = ParallelSceneRenderer(workers=2,gpu_composition="auto" if gpu_candidate else False,
+                                             gpu_device=str(getattr(self,"device","cuda:0")))
+            if gpu_candidate and renderer.gpu_failed and pipe.pipeline._effective_nn_multiplier()==1:
+                self._gpu_composition_disabled=True;renderer.close();return False
+            self._buffered_scene_renderer = renderer
+            pipe.set_frame_transformer(renderer.transform_batch)
+        pipe.set_output_callback(self._deliver_buffered_nn_frame)
+        pipe.set_buffered_enabled(True)
+        pipe.set_scene_output_rate(self.get_display_present_cap_hz())
+        capture = getattr(self, "transparent_capture_window", None)
+        if capture is None or not capture.is_valid():
+            self.sync_transparent_capture_output_window()
+        snapshot = self._capture_scene_snapshot(renderer)
+        renderer.submit_snapshot(snapshot)
+        stamp = snapshot.stamp
+        if pipe.should_compose_source_frame(stamp):
+            rgba = getattr(self, "_last_tha3_rgba", None)
+            if rgba is None:
+                rgba = self.wx_image_to_rgba_array(self.last_output_wx_image)
+            pipe.apply(rgba, is_new_real_frame=True)
+        return True
+
     def _apply_present_enhancement(self, present_rgba: numpy.ndarray) -> numpy.ndarray:
         pipe = getattr(self, "output_enhancement", None)
         if pipe is None or present_rgba is None:
             return present_rgba
-        # Off path must stay near-zero cost on the UI present tick.
+        stages = getattr(self, "_last_present_stages", {}) or {}
+        pipe.observe_composition(sum(float(stages.get(key, 0.)) for key in ("stack_total", "bg", "upsample", "chrome")))
+        pipe.set_output_callback(self._deliver_buffered_nn_frame)
+        pipe.set_buffered_enabled(self._output_edit_slot_id() is None)
+        error = pipe.last_error
+        if error:
+            if error != getattr(self, "_last_nn_playout_error", None):
+                self._last_nn_playout_error = error
+                self._ui_alignment_toast("后处理已回退原画 / Enhancement fallback: " + error)
+            return present_rgba
         if not pipe.is_active() and not pipe.has_pending_rife():
             return present_rgba
+        if not pipe.nn_runtime_ready():
+            return present_rgba
+        self._sync_output_enhancement_config()
+        if pipe.buffered_rife_requested():
+            return pipe.apply(present_rgba, is_new_real_frame=True)
         pending = pipe.pop_rife_frame()
         if pending is not None:
             return pending
-        if not pipe.is_active():
-            return present_rgba
-        self._sync_output_enhancement_config()
         return pipe.apply(present_rgba, is_new_real_frame=True)
 
+    def _deliver_buffered_nn_frame(self, rgba: numpy.ndarray, serial: int, source_time: float) -> None:
+        # EVS-PERF-20261029 / f-055: worker-safe delivery directly to ULW host.
+        # No wx reads/calls, no full scene recomposition for generated frames.
+        if self._is_closing or time.perf_counter() - source_time > .75:
+            return
+        capture = getattr(self, "transparent_capture_window", None)
+        if capture is None or not capture.is_valid():
+            return
+        pipe = getattr(self, "output_enhancement", None)
+        if pipe is None or not pipe.is_buffered_rife_active():
+            return
+        premul = _straight_rgba_to_premultiplied_bgra(rgba)
+        if getattr(self, "_buffered_scene_renderer", None) is not None:
+            self._cached_present_rgba = rgba
+            self._cached_present_premultiplied_bgra = premul
+        capture.update_frame_rgba(
+            rgba, frame_signature=("nn-playout", id(pipe.pipeline._buffered_presenter), serial),
+            premultiplied_bgra=premul)
+
+    def on_mocap_frame_rate_changed(self, event=None):
+        mode = "adaptive" if self.mocap_frame_rate_choice.GetSelection() == 1 else "fixed"
+        self._mocap_rate.configure(mode, self.mocap_fixed_fps_spin.GetValue())
+        self.mocap_fixed_fps_spin.Enable(mode == "fixed")
+        self.schedule_active_capture_timer()
+        self.save_persistent_ui_state()
+        if event is not None:
+            event.Skip()
+
+    def get_input_source_hz(self) -> float:
+        camera_owned = (not self.is_openseeface_mocap_mode()
+                        or bool(getattr(self, "_osf_pose_from_video_source", False)))
+        if self.video_source_kind == "camera" and camera_owned:
+            if time.perf_counter() - self._camera_capture_sample_mono > 2.:
+                return 0.
+            return float(self._camera_source_hz)
+        return float(self._input_fps)
+
+    def is_mocap_sample_fresh(self, face_meta=None) -> bool:
+        # f-073 / existing <=1s latency requirement: no stale face resubmission.
+        # Audio/mouse and native tracker source policies retain their own pacing.
+        if not self._mediapipe_landmarker_allowed():
+            return True
+        args = getattr(getattr(self, "pose_converter", None), "args", None)
+        if getattr(args, "mouth_input_mode", "face") == "audio":
+            return True
+        stamp = self._latest_face_sample_mono if face_meta is None else face_meta[1]
+        return stamp > 0. and 0. <= time.perf_counter() - stamp <= 1.
+
+    def get_mocap_detection_hz(self) -> float:
+        if self.is_openseeface_mocap_mode() and not bool(getattr(self, "_osf_pose_from_video_source", False)):
+            return float(getattr(self, "_input_fps", 0.))
+        now = time.perf_counter()
+        return float(sum(now - t <= 1. for t in tuple(self._mediapipe_complete_times)))
+
+    def get_mocap_completed_hz(self) -> float:
+        if self.is_openseeface_mocap_mode() and not bool(getattr(self, "_osf_pose_from_video_source", False)):
+            return float(getattr(self, "_input_fps", 0.))
+        now = time.perf_counter()
+        # Display usable face results published to the model-side UI snapshot,
+        # not preview redraws or detections which found no face.
+        return float(sum(now - t <= 1. for t in self._mocap_output_times))
+
     def _refresh_fps_display(self) -> None:
+        now = time.perf_counter()
+        self._inference_fps = float(sum(now - t <= 1. for t in tuple(self._inference_complete_times)))
         if not hasattr(self, "fps_text"):
             return
-        input_fps = getattr(self, "_input_fps", 0.0)
+        input_fps = self.get_input_source_hz()
         inference_fps = getattr(self, "_inference_fps", 0.0)
         display_fps = self._get_display_out_fps_for_label()
         label = (
             f"输入 In {input_fps:.1f}\n"
+            f"面捕 Face {self.get_mocap_detection_hz():.1f} / 有效 {self.get_mocap_completed_hz():.1f}\n"
             f"推理 Inf {inference_fps:.1f}\n"
-            f"显示 Out {display_fps:.1f}")
-        if not self.is_smooth_affine_30hz_enabled():
+            f"输出 Out {display_fps:.1f}")
+        if not self.is_target_frame_rate_enabled() and not self.is_smooth_affine_30hz_enabled():
             cap = max(1, int(self.get_mouth_infer_cap_hz()))
             label += f"\nSmooth关→Out上限{cap}"
         self.set_wrapped_static_text_if_changed(self.fps_text, label)
@@ -4227,6 +5225,11 @@ class MainFrame(wx.Frame):
             return numpy.zeros((height, width, 4), dtype=numpy.uint8)
         return self.wx_image_to_rgba_array(background_image)
 
+    # EVS-DESIGN-AUDIT EVS-A042 BEGIN
+    # 设计[UI-D03, UI-A×05] [静态符合（背景分支）]
+    # 保留导入图片背景及其他背景模式，直接进入统一透明输出合成；导入背景图片不等于用透明图片伪装真透明。
+    # 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A042 END
     def _compose_ulw_background_rgba(
             self, canvas_width: int, canvas_height: int) -> Optional[numpy.ndarray]:
         """Opaque background plate composited UNDER the character for the unified
@@ -4379,6 +5382,11 @@ class MainFrame(wx.Frame):
         if event is not None:
             event.Skip()
 
+    # EVS-DESIGN-AUDIT EVS-A050 BEGIN
+    # 设计[UI-D05～D09] [部分符合]
+    # 边缘后处理存在；本聚合条还包含热键、镂空、强制跟随和晃动，各有独立核对。不能据某个边缘开关存在认定整条已完成。
+    # 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A050 END
     def _apply_character_edge_postprocess_rgba(self, rgba: numpy.ndarray) -> numpy.ndarray:
         mode = self.get_character_edge_mode()
         if mode == CHARACTER_EDGE_NONE:
@@ -4634,6 +5642,11 @@ class MainFrame(wx.Frame):
     def sync_transparent_capture_output_window(self) -> None:
         wx.CallAfter(self._sync_transparent_capture_output_window_impl)
 
+    # EVS-DESIGN-AUDIT EVS-A043 BEGIN
+    # 设计[UI-A×05, UI-A×01] [部分符合 / 外部采集待测]
+    # 统一输出窗口与独立边框路径存在；要求标题 easyvtuberstudio_output、Windows 任务栏标签和边框不进采集。是否稳定出现在第三方采集列表需外部程序验证。
+    # 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A043 END
     def _sync_transparent_capture_output_window_impl(self) -> None:
         if self._is_closing:
             return
@@ -4657,6 +5670,7 @@ class MainFrame(wx.Frame):
                     locked_w,
                     locked_h,
                     on_geometry_changed=self.schedule_capture_output_geometry_save,
+                    on_frame_presented=self._on_ulw_frame_delivered,
                     on_edit_begin=self._overlay_edit_begin,
                     on_edit_motion=self._overlay_edit_motion,
                     on_edit_end=self._overlay_edit_end,
@@ -4754,6 +5768,11 @@ class MainFrame(wx.Frame):
         self._push_transparent_capture_from_cache()
 
     def _push_transparent_capture_from_cache(self) -> None:
+        if getattr(self, "_live_scene_presenter", None) is not None:
+            return
+        pipe = getattr(self, "output_enhancement", None)
+        if pipe is not None and pipe.is_buffered_rife_active():
+            return  # Timed RIFE worker owns output; do not overwrite with raw UI cache.
         if self._is_closing or not self.is_ulw_output_enabled():
             return
         capture_window = getattr(self, "transparent_capture_window", None)
@@ -4778,7 +5797,7 @@ class MainFrame(wx.Frame):
                     and cached.shape[0] == canvas_height
                     and cached.shape[1] == canvas_width):
                 capture_window.update_frame_rgba(cached, frame_signature=signature)
-                self._on_ulw_frame_delivered()
+                pass  # Actual ULW completion is counted by the native host callback.
                 return
             # Single-composite source of truth: reuse the exact RGBA the present
             # path produced this frame (no wx readback, no second composite).
@@ -4844,7 +5863,10 @@ class MainFrame(wx.Frame):
         except Exception:
             premultiplied_bgra = None
         capture_window = getattr(self, "transparent_capture_window", None)
-        if capture_window is not None and capture_window.is_valid():
+        pipe = getattr(self, "output_enhancement", None)
+        timed_owner = (getattr(self, "_live_scene_presenter", None) is not None
+                       or pipe is not None and pipe.is_buffered_rife_active())
+        if not self._is_closing and not timed_owner and capture_window is not None and capture_window.is_valid():
             try:
                 # #region agent log
                 _push_t0 = time.perf_counter()
@@ -4867,11 +5889,15 @@ class MainFrame(wx.Frame):
 
     def _finish_ulw_delivery(self, capture_t0: float) -> None:
         self._capture_async_active = False
+        pipe = getattr(self, "output_enhancement", None)
+        if pipe is not None and pipe.is_buffered_rife_active():
+            self._capture_pending_delivery = None
+            return
         if self._is_closing or not self.is_ulw_output_enabled():
             self._capture_pending_delivery = None
             return
         try:
-            self._on_ulw_frame_delivered()
+            pass  # Actual ULW completion is counted by the native host callback.
         except Exception as exc:
             print(f"ERR: {exc!r}", file=sys.stderr)
         pending = getattr(self, "_capture_pending_delivery", None)
@@ -4930,12 +5956,9 @@ class MainFrame(wx.Frame):
 
     @staticmethod
     def sanitize_rgba_alpha_fringe(rgba: numpy.ndarray) -> numpy.ndarray:
-        rgba = numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
-        transparent = rgba[:, :, 3] == 0
-        if numpy.any(transparent):
-            rgba = rgba.copy()
-            rgba[transparent, 0:3] = 0
-        return rgba
+        # EVS-PERF-20261029: shared, pixel-identical fast path (f-068 / UI-D×).
+        from output_enhancement.rgba_ops import sanitize_transparent_rgb
+        return sanitize_transparent_rgb(rgba)
 
     def compose_edit_chrome_rgba(
             self,
@@ -5039,6 +6062,9 @@ class MainFrame(wx.Frame):
             antialias_factor = self._get_antialias_factor()
         else:
             antialias_factor = float(antialias_factor)
+        # bh-1 26.10.30 12:25 s
+        frame_wall_time = time.perf_counter()
+        # bh-1 26.10.30 12:25 e
         c0 = time.perf_counter()
         character_rgba = self._compose_character_rgba_from_keyframe(
             canvas_width, canvas_height, antialias_factor)
@@ -5048,9 +6074,10 @@ class MainFrame(wx.Frame):
         c2 = time.perf_counter()
         if self.is_layer_blend_enabled():
             binding_context = self._make_binding_context(canvas_width, canvas_height)
+            binding_context.motion_time_s = frame_wall_time
             fg = compose_full_stack_rgba(
                 self.basic_layers_state,
-                self.layer_asset_cache.load_image_rgba,
+                lambda layer: self.layer_asset_cache.load_image_rgba(layer, now=frame_wall_time),
                 canvas_width,
                 canvas_height,
                 character_rgba,
@@ -5396,6 +6423,11 @@ class MainFrame(wx.Frame):
         """Synchronous controls layout refresh (no debounced CallLater)."""
         self.refresh_controls_scrolling()
 
+    # EVS-DESIGN-AUDIT EVS-A048 BEGIN
+    # 设计[UI-A×03] [部分符合 / 多屏待测]
+    # 保存/恢复窗体几何与 splitter 比例的路径存在；跨显示器消失、竖屏可操作范围及视觉三栏等分尚未运行验证。
+    # 历史 bug 热点 #2：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A048 END
     def restore_controls_frame_geometry(self) -> bool:
         controls_window = self.get_controls_window()
         if controls_window is None or self._controls_geometry_restored:
@@ -5707,8 +6739,8 @@ class MainFrame(wx.Frame):
         scale_calibration_interval_seconds = self.auto_scale_calibration_interval_seconds_ctrl.GetValue()
         layer_blend_enabled = self.is_layer_blend_enabled()
         layer_force_full_follow = self.is_layer_force_full_follow_enabled()
-        output_frame_interpolation = self.get_output_frame_interpolation_multiplier()
-        mouth_infer_cap_hz = self.get_mouth_infer_cap_hz()
+        output_frame_interpolation = self._get_manual_output_frame_interpolation_multiplier()
+        mouth_infer_cap_hz = self._get_manual_mouth_infer_cap_hz()
         smooth_affine_30hz = self.is_smooth_affine_30hz_enabled()
         persistent_mouth_settings = self.pose_converter.get_persistent_mouth_settings()
         persisted_window_hwnd = int(self.persistent_ui_state.get("window_capture_hwnd") or 0)
@@ -5747,8 +6779,12 @@ class MainFrame(wx.Frame):
             "nn_super_resolution_mode": self.get_nn_super_resolution_mode(),
             "nn_frame_interpolation_multiplier": self.get_nn_frame_interpolation_multiplier(),
             "nn_infer_backend": self.get_nn_infer_backend(),
+            "target_frame_rate_enabled": self.is_target_frame_rate_enabled(),
+            "target_frame_rate_fps": self.get_target_frame_rate_fps(),
             "tha_infer_fp16": self.get_tha_infer_fp16_persisted_value(),
             "mouth_infer_cap_hz": mouth_infer_cap_hz,
+            "mouth_infer_cap_kept_low": bool(
+                self.persistent_ui_state.get("mouth_infer_cap_kept_low", False)),
             "smooth_affine_30hz": smooth_affine_30hz,
             "image_source_mode": self.get_image_source_mode(),
             "tha3_character_png": self.last_tha3_character_png,
@@ -5761,6 +6797,8 @@ class MainFrame(wx.Frame):
             "osf_udp_port": int(self._osf_udp_port),
             "osf_visualize_level": int(self._osf_visualize_level),
             "osf_fps": int(self._osf_fps),
+            "mocap_frame_rate_mode": self._mocap_rate.mode,
+            "mocap_fixed_fps": self._mocap_rate.fixed_fps,
             "osf_capture_width": int(self._osf_capture_width),
             "osf_capture_height": int(self._osf_capture_height),
             "osf_forward_recenter_pan": bool(self._enable_osf_forward_recenter_pan),
@@ -5834,6 +6872,10 @@ class MainFrame(wx.Frame):
         except Exception:
             pass
 
+    # EVS-DESIGN-AUDIT EVS-A022 BEGIN
+    # 设计[f-063, f-057, f-055, f-056, f-058] [部分符合 / 首帧风险]
+    # 恢复 NN/TRT 设置后只同步配置；角色加载成功后再走已有 warmup。呈现路径不再懒创建会话。
+    # EVS-DESIGN-AUDIT EVS-A022 END
     def apply_persistent_ui_state(self):
         data = self.persistent_ui_state
         if not data:
@@ -5960,6 +7002,12 @@ class MainFrame(wx.Frame):
                     control.SetSelection(1)
             else:
                 self.nn_infer_backend_choice.SetValue(backend)
+        if "target_frame_rate_enabled" in data:
+            self.target_frame_rate_checkbox.SetValue(normalize_target_enabled(data["target_frame_rate_enabled"]))
+        if "target_frame_rate_fps" in data:
+            self.target_frame_rate_input.SetValue(normalize_target_fps(data["target_frame_rate_fps"]))
+        self._refresh_target_frame_rate_controls()
+        self._sync_frame_rate_timers()
         if "tha_infer_fp16" in data:
             half = normalize_tha_infer_fp16(data["tha_infer_fp16"])
             control = getattr(self, "tha_infer_fp16_choice", None)
@@ -5971,19 +7019,21 @@ class MainFrame(wx.Frame):
                         THA_INFER_FP16_CHOICES[1 if half else 0])
             self._sync_tha_infer_fp16_ui()
         self._sync_output_enhancement_config()
+        if "mouth_infer_cap_kept_low" in data:
+            self.persistent_ui_state["mouth_infer_cap_kept_low"] = bool(
+                data.get("mouth_infer_cap_kept_low"))
         if "mouth_infer_cap_hz" in data:
             try:
                 cap_hz = int(data["mouth_infer_cap_hz"])
             except (TypeError, ValueError):
                 cap_hz = MOUTH_INFER_CAP_HZ_DEFAULT
-            if cap_hz not in MOUTH_INFER_CAP_HZ_VALUES:
-                cap_hz = MOUTH_INFER_CAP_HZ_DEFAULT
+            cap_hz = self._coerce_mouth_infer_cap_hz(cap_hz)
             choice = getattr(self, "mouth_infer_cap_choice", None)
             if isinstance(choice, wx.Choice):
                 try:
                     choice.SetSelection(MOUTH_INFER_CAP_HZ_VALUES.index(cap_hz))
                 except ValueError:
-                    choice.SetSelection(0)
+                    choice.SetSelection(MOUTH_INFER_CAP_HZ_VALUES.index(MOUTH_INFER_CAP_HZ_DEFAULT))
         if "smooth_affine_30hz" in data:
             enabled = bool(data["smooth_affine_30hz"])
             checkbox = getattr(self, "smooth_affine_30hz_checkbox", None)
@@ -6366,6 +7416,11 @@ class MainFrame(wx.Frame):
 
         self.bind_animation_area_mousewheel()
 
+    # EVS-DESIGN-AUDIT EVS-A013 BEGIN
+    # 设计[ix-020, UI-B×, UI-B05, UI-B06, UI-B08, f-059] [部分符合 / 待做边界]
+    # 具备 Mouse 自动眨眼、中心区、横向混合与 OSF/MP 选择；iFacialMocap 尚无此输入模式，不把“列为待做”误写成已接入。视频源区隐藏由模式刷新控制。
+    # 历史 bug 热点 #3,#5：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A013 END
     def create_model_input_video_source_controls(self, parent, parent_sizer):
         """Video source picker lives in Model Input column (mocap input for pose params)."""
         mocap_title = wx.StaticText(
@@ -6507,6 +7562,12 @@ class MainFrame(wx.Frame):
         self.refresh_video_sources_button.Bind(wx.EVT_BUTTON, self.on_refresh_video_sources_clicked)
         video_source_button_row.Add(self.refresh_video_sources_button, 1, wx.EXPAND | wx.RIGHT, 4)
 
+        # EVS-DESIGN-AUDIT EVS-A130 BEGIN
+        # 设计[UI-B02] [明确差异（独立按钮）]
+        # 这里仍创建独立“窗口捕获”按钮，另开选择流程；最新明确要求窗口/相机在同一下拉而非独立按钮。源下拉虽存在，仍不能算完全符合这一 UI 约束。
+        # 历史 bug 热点 #5：仅为回归关联，非声称本次故障已复现。
+        # 诊断标记 R-DESIGN-03：参照文件头诊断报告；本次不修复实际行为。
+        # EVS-DESIGN-AUDIT EVS-A130 END
         self.pick_window_capture_button = wx.Button(
             self.video_source_panel, wx.ID_ANY, "窗口捕获 / Window Capture")
         self.pick_window_capture_button.Bind(wx.EVT_BUTTON, self.on_pick_window_capture_clicked)
@@ -6558,7 +7619,7 @@ class MainFrame(wx.Frame):
 
         osf_fps_row = wx.BoxSizer(wx.HORIZONTAL)
         osf_fps_row.Add(
-            wx.StaticText(self.osf_input_panel, label="帧率 FPS"),
+            wx.StaticText(self.osf_input_panel, label="采集 FPS"),
             0,
             wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
             4)
@@ -6689,6 +7750,11 @@ class MainFrame(wx.Frame):
                 saved_mode = MOCAP_INPUT_MODE_MOUSE_AUDIO
         return saved_mode
 
+    # EVS-DESIGN-AUDIT EVS-A015 BEGIN
+    # 设计[f-067, UI-A07, UI-B01] [静态符合（启动策略）]
+    # 这里只恢复设置及控件，不开始面捕；自动加载旧模型/启动即连摄像头已被明确取消。切换输入模式和主动加载模型属于另一路径。
+    # 历史 bug 热点 #2,#5：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A015 END
     def _startup_mocap_input_bootstrap(self) -> None:
         """Restore mocap UI prefs; face capture starts only after a model/portrait load."""
         if getattr(self, "_startup_mocap_bootstrap_done", False):
@@ -6705,14 +7771,51 @@ class MainFrame(wx.Frame):
         if hasattr(self.pose_converter, "mouth_input_mode_choice"):
             self.pose_converter.mouth_input_mode_choice.SetSelection(0)
 
+    # EVS-DESIGN-AUDIT EVS-A016 BEGIN
+    # 设计[f-067, UI-B01] [静态符合（触发路径）]
+    # 模型/立绘加载后再刷新并激活当前输入，OSF 设备同名优先规则见 _apply_osf_camera_choices；加载成功后触发是实现细化，不冒充逐字要求。
+    # 历史 bug 热点 #5：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A016 END
     def _activate_mocap_capture_after_model_load(self) -> None:
         """Enumerate cameras and start face capture only after a character asset is loaded."""
         mode = normalize_mocap_input_mode(self.mocap_input_mode)
+        # #region agent log
+        try:
+            import json as _json
+            open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                "sessionId": "86a17c",
+                "runId": "post-fix",
+                "hypothesisId": "E",
+                "location": "load_preview.py:_activate_mocap_capture_after_model_load",
+                "message": "activate mocap after model load",
+                "data": {
+                    "mode": str(mode),
+                    "osf_running": bool(self._osf_runtime.status.process_running),
+                    "osf_size": [int(self._osf_capture_width), int(self._osf_capture_height)],
+                    "landmarker": self.face_landmarker is not None,
+                },
+                "timestamp": int(time.time() * 1000),
+            }) + "\n")
+        except Exception:
+            pass
+        # #endregion
         if mode == MOCAP_INPUT_MODE_OPENSEEFACE:
             if not openseeface_capture_ready(get_portable_root()):
                 return
             self._prepare_face_mocap_converter_state()
-            self.refresh_osf_camera_choices_async(reconnect_after=True)
+            # bh-2 26.10.29 21:56 s
+            if self._osf_runtime.status.process_running:
+                return
+            # bh-2 26.10.29 21:56 e
+            # bh-5 26.10.30 13:40 s
+            if self.video_source_kind == "camera" and self.video_capture is not None:
+                self._start_openseeface_runtime(from_user=False)
+                return
+            # bh-5 26.10.30 13:40 e
+            # bh-2 26.10.29 20:24 s
+            self.refresh_osf_camera_choices_async(
+                reconnect_after=True, stop_runtime_for_probe=False)
+            # bh-2 26.10.29 20:24 e
             return
         if mode == MOCAP_INPUT_MODE_MEDIAPIPE:
             if not mediapipe_capture_ready(get_portable_root()):
@@ -6724,8 +7827,13 @@ class MainFrame(wx.Frame):
             return
         self.refresh_and_autoload_video_source()
 
+    def _mediapipe_landmarker_allowed(self) -> bool:
+        return (
+            self.mocap_input_mode == MOCAP_INPUT_MODE_MEDIAPIPE
+            or bool(getattr(self, "_osf_pose_from_video_source", False)))
+
     def _init_face_landmarker_async(self) -> None:
-        if self.mocap_input_mode != MOCAP_INPUT_MODE_MEDIAPIPE:
+        if not self._mediapipe_landmarker_allowed():
             return
         if self.face_landmarker is not None or self._face_landmarker_init_failed:
             return
@@ -6733,7 +7841,8 @@ class MainFrame(wx.Frame):
             return
         if not mediapipe_capture_ready(get_portable_root()):
             self._face_landmarker_init_failed = True
-            self._fallback_to_mouse_mocap_once(reason="face_puppeteer add-on not installed")
+            if self.mocap_input_mode == MOCAP_INPUT_MODE_MEDIAPIPE:
+                self._fallback_to_mouse_mocap_once(reason="face_puppeteer add-on not installed")
             return
         self._face_landmarker_init_in_progress = True
 
@@ -6748,12 +7857,25 @@ class MainFrame(wx.Frame):
 
         threading.Thread(target=worker, daemon=True, name="mp-landmarker-init").start()
 
+    # EVS-DESIGN-AUDIT EVS-A030 BEGIN
+    # 设计[f-067] [资源回收风险]
+    # 异步初始化完成回调缺少关闭中的统一检查；模式切换后丢弃结果时也需确认新建 native landmarker 是否 close。不能由 Python worker 为 daemon 推导 native 句柄不残留。
+    # 历史 bug 热点 #2,#5：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-CLOSE-03：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A030 END
     def _finish_face_landmarker_async_init(
             self,
             landmarker,
             error: Optional[Exception]) -> None:
         self._face_landmarker_init_in_progress = False
-        if self.mocap_input_mode != MOCAP_INPUT_MODE_MEDIAPIPE:
+        if not self._mediapipe_landmarker_allowed():
+            if landmarker is not None:
+                try:
+                    close_fn = getattr(landmarker, "close", None)
+                    if close_fn is not None:
+                        close_fn()
+                except Exception:
+                    pass
             return
         if error is not None or landmarker is None:
             self._face_landmarker_init_failed = True
@@ -6762,7 +7884,8 @@ class MainFrame(wx.Frame):
                 print(
                     f"MediaPipe face landmarker unavailable: {error}",
                     file=sys.stderr)
-            self._fallback_to_mouse_mocap_once(reason=str(error or "MediaPipe init failed"))
+            if self.mocap_input_mode == MOCAP_INPUT_MODE_MEDIAPIPE:
+                self._fallback_to_mouse_mocap_once(reason=str(error or "MediaPipe init failed"))
             return
         self.face_landmarker = landmarker
         self.schedule_active_capture_timer()
@@ -6887,8 +8010,16 @@ class MainFrame(wx.Frame):
 
     def _release_video_input_for_openseeface(self) -> None:
         """Release OpenCV camera so facetracker can open the device exclusively."""
+        self._osf_preview_camera_generation = int(
+            getattr(self, "_osf_preview_camera_generation", 0) or 0) + 1
+        self._osf_preview_camera_opening = False
+        self._osf_preview_camera_next_retry_mono = 0.0
         self.release_video_capture()
         self.video_source_kind = "none"
+        # bh-5 26.10.30 12:52 s
+        self._last_good_webcam_bgr_frame = None
+        self._last_good_webcam_bgr_mono = 0.0
+        # bh-5 26.10.30 12:52 e
         with self._camera_capture_lock:
             self._camera_capture_worker_active = False
             self._camera_capture_latest_frame = None
@@ -6902,13 +8033,50 @@ class MainFrame(wx.Frame):
                 f"OpenSeeFace 错误 / Error:\n{message}")
         log_once(f"osf_runtime_error:{message[:120]}", f"OpenSeeFace: {message}")
 
+    # EVS-DESIGN-AUDIT EVS-A029 BEGIN
+    # 设计[f-052] [符合（关闭拒绝启动）]
+    # OSF 内置 runtime 启动路径在 _is_closing 时立即返回，避免迟到回调重新拉起 facetracker。
+    # 历史 bug 热点 #2,#5：关闭中启动已拒绝。
+    # EVS-DESIGN-AUDIT EVS-A029 END
     def _start_openseeface_runtime(self, *, from_user: bool = False) -> bool:
+        # bh-2 26.10.29 19:40 s
+        if getattr(self, "_is_closing", False):
+            return False
+        # bh-2 26.10.29 19:40 e
+        # bh-5 26.10.30 13:40 s
+        live_preview = (
+            self.video_source_kind == "camera" and self.video_capture is not None)
+        if live_preview:
+            self._osf_pose_from_video_source = True
+            self._osf_started_mono = time.monotonic()
+            self._osf_runtime_error = ""
+            self._prepare_face_mocap_converter_state()
+            self.schedule_active_capture_timer()
+            wx.CallAfter(self._init_face_landmarker_async)
+            # #region agent log
+            try:
+                import json as _json
+                open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                    "sessionId": "86a17c",
+                    "runId": "post-fix-agent-cmd",
+                    "hypothesisId": "H2",
+                    "location": "load_preview.py:_start_openseeface_runtime",
+                    "message": "skip exclusive facetracker; pose from video source",
+                    "data": {"api": str(getattr(self, "current_video_capture_api", None))},
+                    "timestamp": int(time.time() * 1000),
+                }) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            return True
+        self._osf_pose_from_video_source = False
+        # bh-5 26.10.30 13:40 e
         runtime = self._osf_runtime
         runtime.set_pose_callback(self._on_openseeface_pose_received)
         started = runtime.start(
             camera_index=self._osf_camera_index,
             udp_port=self._osf_udp_port,
-            visualize_level=self._osf_visualize_level,
+            visualize_level=0,
             target_fps=self._osf_fps,
             capture_width=self._osf_capture_width,
             capture_height=self._osf_capture_height)
@@ -6925,9 +8093,253 @@ class MainFrame(wx.Frame):
             return False
         self._osf_runtime_error = ""
         self._osf_started_mono = time.monotonic()
+        self._osf_preview_camera_next_retry_mono = 0.0
         self.schedule_active_capture_timer()
         wx.CallAfter(self._sync_openseeface_preview_window)
+        # bh-5 26.10.30 13:40 s
+        # Single video channel: EVS DSHOW preview stays; do not open a second capture.
+        # bh-5 26.10.30 13:40 e
         return True
+
+    def _release_dead_osf_preview_camera(self) -> None:
+        # bh-5 26.10.30 13:08 s
+        self._osf_preview_camera_generation = int(
+            getattr(self, "_osf_preview_camera_generation", 0) or 0) + 1
+        capture = self.video_capture
+        self.video_capture = None
+        self.current_video_capture_api = None
+        if capture is not None:
+            try:
+                capture.release()
+            except Exception:
+                pass
+        self._osf_preview_camera_next_retry_mono = 0.0
+        # bh-5 26.10.30 13:08 e
+
+    def _ensure_osf_preview_camera_stream(self) -> None:
+        # bh-5 26.10.29 21:02 s
+        if getattr(self, "_is_closing", False) or not self.is_openseeface_mocap_mode():
+            return
+        # bh-5 26.10.30 13:08 s
+        if getattr(self, "_osf_restart_in_progress", False):
+            return
+        osf_running = bool(getattr(self._osf_runtime.status, "process_running", False))
+        if osf_running:
+            return
+        if (not osf_running) and float(getattr(self, "_osf_started_mono", 0.0) or 0.0) > 0.0:
+            return
+        # bh-5 26.10.30 13:08 e
+        if self.video_source_kind == "camera" and self.video_capture is not None:
+            return
+        if getattr(self, "_osf_preview_camera_opening", False):
+            return
+        now = time.monotonic()
+        next_retry = float(getattr(self, "_osf_preview_camera_next_retry_mono", 0.0) or 0.0)
+        if now < next_retry:
+            return
+        self._osf_preview_camera_opening = True
+        cam_index = int(self._osf_camera_index)
+        generation = int(getattr(self, "_osf_preview_camera_generation", 0) or 0)
+        threading.Thread(
+            target=self._osf_preview_camera_open_worker,
+            args=(cam_index, generation, osf_running),
+            daemon=True,
+            name="osf-preview-cam").start()
+        # bh-5 26.10.29 21:02 e
+
+    def _osf_preview_camera_open_worker(self, cam_index: int, generation: int, osf_running: bool = False) -> None:
+        # bh-5 26.10.29 21:35 s
+        osf_label = str(getattr(self, "_osf_camera_label", "") or "").strip()
+        open_attempts: list[tuple[str, int, object]] = []
+        # bh-5 26.10.30 13:08 s
+        # Facetracker already holds DSHOW exclusively; do not steal it back.
+        if hasattr(cv2, "CAP_DSHOW") and not osf_running:
+            open_attempts.append(("DSHOW", int(cv2.CAP_DSHOW), int(cam_index)))
+            if osf_label:
+                open_attempts.append(
+                    ("DSHOW-name", int(cv2.CAP_DSHOW), f"video={osf_label}"))
+        if hasattr(cv2, "CAP_MSMF"):
+            open_attempts.append(("MSMF", int(cv2.CAP_MSMF), int(cam_index)))
+            if osf_label:
+                open_attempts.append(
+                    ("MSMF-name", int(cv2.CAP_MSMF), f"video={osf_label}"))
+        # bh-5 26.10.30 13:08 e
+        last_error = None
+        chosen = None
+        warmup = None
+        api = None
+        api_name = None
+        tried = []
+        for name, backend_api, source in open_attempts:
+            capture = None
+            try:
+                capture = cv2.VideoCapture(source, backend_api)
+                opened = bool(capture is not None and capture.isOpened())
+                if not opened:
+                    tried.append({"api": name, "opened": False, "source": str(source)})
+                    last_error = f"{name} open failed"
+                    if capture is not None:
+                        capture.release()
+                    continue
+                try:
+                    capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
+                try:
+                    capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+                except Exception:
+                    pass
+                warmup = None
+                last_mean = None
+                for _ in range(8):
+                    ok, frame = capture.read()
+                    if not ok or frame is None:
+                        continue
+                    normalized = self.normalize_bgr_frame(frame)
+                    if normalized is None:
+                        continue
+                    try:
+                        last_mean = round(float(normalized.mean()), 2)
+                    except Exception:
+                        last_mean = None
+                    # bh-5 26.10.30 13:08 s
+                    if self.is_plausible_camera_frame(normalized):
+                        warmup = normalized
+                        break
+                    # bh-5 26.10.30 13:08 e
+                if warmup is not None:
+                    chosen = capture
+                    api = backend_api
+                    api_name = name
+                    tried.append({
+                        "api": name,
+                        "opened": True,
+                        "frame": True,
+                        "source": str(source),
+                        "shape": [int(warmup.shape[1]), int(warmup.shape[0])],
+                        "mean": last_mean,
+                    })
+                    break
+                tried.append({
+                    "api": name,
+                    "opened": True,
+                    "frame": False,
+                    "source": str(source),
+                    "mean": last_mean,
+                })
+                last_error = f"{name} no frame"
+                capture.release()
+            except Exception as exc:
+                last_error = f"{name}: {exc}"
+                tried.append({"api": name, "error": str(exc)[:160], "source": str(source)})
+                if capture is not None:
+                    try:
+                        capture.release()
+                    except Exception:
+                        pass
+        # bh-5 26.10.29 21:35 e
+        wx.CallAfter(
+            self._apply_osf_preview_camera_capture,
+            chosen, warmup, api, api_name, last_error, cam_index, tried, generation)
+
+    def _apply_osf_preview_camera_capture(
+            self, capture, warmup, api, api_name, error, cam_index, tried, generation) -> None:
+        if int(generation) != int(getattr(self, "_osf_preview_camera_generation", 0) or 0):
+            if capture is not None:
+                try:
+                    capture.release()
+                except Exception:
+                    pass
+            return
+        self._osf_preview_camera_opening = False
+        # #region agent log
+        try:
+            import json as _json
+            open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                "sessionId": "86a17c",
+                "runId": "post-fix-camstream",
+                "hypothesisId": "F" if capture is not None else "G",
+                "location": "load_preview.py:_apply_osf_preview_camera_capture",
+                "message": "osf preview camera open result",
+                "data": {
+                    "ok": capture is not None,
+                    "api": api_name,
+                    "cam": int(cam_index),
+                    "error": (error or "")[:160],
+                    "tried": tried,
+                    "has_warmup": warmup is not None,
+                },
+                "timestamp": int(time.time() * 1000),
+            }) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        # #region agent log
+        try:
+            import json as _json
+            _mean = None
+            _shape = None
+            if warmup is not None:
+                _shape = [int(warmup.shape[1]), int(warmup.shape[0])]
+                _mean = round(float(warmup.mean()), 2)
+            open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                "sessionId": "86a17c",
+                "runId": "post-fix-dshow",
+                "hypothesisId": "I",
+                "location": "load_preview.py:_apply_osf_preview_camera_capture",
+                "message": "osf preview camera identity",
+                "data": {
+                    "ok": capture is not None,
+                    "api": api_name,
+                    "cam": int(cam_index),
+                    "label": str(getattr(self, "_osf_camera_label", "") or ""),
+                    "shape": _shape,
+                    "mean": _mean,
+                    "tried": tried,
+                },
+                "timestamp": int(time.time() * 1000),
+            }) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        if getattr(self, "_is_closing", False) or not self.is_openseeface_mocap_mode():
+            if capture is not None:
+                try:
+                    capture.release()
+                except Exception:
+                    pass
+            return
+        if capture is None or warmup is None or not self.is_plausible_camera_frame(warmup):
+            # bh-5 26.10.30 13:08 s
+            if capture is not None:
+                try:
+                    capture.release()
+                except Exception:
+                    pass
+            # bh-5 26.10.30 13:08 e
+            self._osf_preview_camera_next_retry_mono = time.monotonic() + 5.0
+            self.video_capture_status_message = (
+                error or "Camera preview unavailable while OpenSeeFace is running")
+            return
+        if self.video_capture is not None and self.video_capture is not capture:
+            try:
+                self.video_capture.release()
+            except Exception:
+                pass
+        self.video_capture = capture
+        self.current_video_capture_api = api
+        self.video_source_kind = "camera"
+        self._last_camera_index = int(cam_index)
+        if warmup is not None:
+            self._last_good_webcam_bgr_frame = warmup
+            self._last_good_webcam_bgr_mono = time.monotonic()
+        self.video_capture_status_message = None
+        self._osf_preview_camera_next_retry_mono = 0.0
+        self._ensure_camera_capture_worker()
+        self.schedule_active_capture_timer()
+        if warmup is not None:
+            self.update_capture_preview_bitmap(warmup)
 
     def _stop_openseeface_runtime(self) -> None:
         self._osf_runtime.stop()
@@ -6971,6 +8383,12 @@ class MainFrame(wx.Frame):
             self.osf_forward_recenter_checkbox.SetValue(
                 self._enable_osf_forward_recenter_pan)
 
+    # EVS-DESIGN-AUDIT EVS-A017 BEGIN
+    # 设计[f-021, f-052, UI-C01] [行为风险 / 非普遍故障结论]
+    # 启用 forward recenter 且头朝前时，持续把屏幕中心替换为 neutral，非仅在进入正视的一刻校准。即使人脸横移也可能得到零平移；这是可确认门控行为，是否偏离用户意图需结合开关与动作复现。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-DYN-02：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A017 END
     def _sync_openseeface_dynamic_enhancement_motion(self) -> None:
         if not self.is_openseeface_mocap_mode():
             return
@@ -7032,6 +8450,7 @@ class MainFrame(wx.Frame):
                 "OSF 动态增强基准 / OpenSeeFace dynamic enhancement baseline")
 
     def _on_openseeface_pose_received(self, pose: MediaPipeFacePose) -> None:
+        self._mocap_rate.observe_native_arrival()
         self._osf_input_pacer.push_latest(pose)
         if self._osf_pose_converter_calibrated:
             return
@@ -7041,9 +8460,35 @@ class MainFrame(wx.Frame):
         self._osf_pose_converter_calibrated = True
         wx.CallAfter(self._calibrate_osf_after_warmup)
 
-    def _apply_openseeface_paced_pose(self, pose: MediaPipeFacePose) -> None:
+    # EVS-DESIGN-AUDIT EVS-A019 BEGIN
+    # 设计[f-052, f-021] [符合（新鲜度）]
+    # 仅在未过期输入上更新 last_face_detected_time；pacer 过期后不再把本地呈现时刻当成新面捕。
+    # 历史 bug 热点 #3：断流后禁止旧姿态刷新检测时间。
+    # EVS-DESIGN-AUDIT EVS-A019 END
+    def _osf_input_is_fresh(self, now_mono: Optional[float] = None) -> bool:
+        # f-052/f-021: UI mode is not necessarily the actual pose provider.
+        # Video-source MediaPipe fallback has no UDP packet clock at all.
+        if bool(getattr(self, "_osf_pose_from_video_source", False)):
+            last_face = getattr(self, "last_face_detected_time", None)
+            return (self.mediapipe_face_pose is not None and last_face is not None
+                    and 0.0 <= time.time() - float(last_face) <= OSF_UDP_DISCONNECT_SEC)
+        if now_mono is None:
+            now_mono = time.monotonic()
+        last = float(getattr(self._osf_runtime.state, "last_packet_mono", 0.0) or 0.0)
+        if last <= 0.0:
+            return False
+        return (now_mono - last) <= OSF_UDP_DISCONNECT_SEC
+
+    def _apply_openseeface_paced_pose(
+            self,
+            pose: MediaPipeFacePose,
+            *,
+            input_fresh: bool = True) -> None:
         self.mediapipe_face_pose = pose
-        self.last_face_detected_time = time.time()
+        # bh-3 26.10.29 19:40 s
+        if input_fresh:
+            self.last_face_detected_time = time.time()
+        # bh-3 26.10.29 19:40 e
         self._sync_openseeface_dynamic_enhancement_motion()
         try:
             self.latest_head_roll_deg = extract_head_roll_degrees(pose)
@@ -7054,12 +8499,13 @@ class MainFrame(wx.Frame):
     def _update_openseeface_input_pacing(self) -> None:
         if not self.is_openseeface_mocap_mode():
             return
-        self._osf_input_pacer.set_target_fps(self._osf_fps)
+        self._osf_input_pacer.set_target_fps(self._mocap_rate.effective_hz())
         paced_pose, keyframe_committed = self._osf_input_pacer.update()
         if paced_pose is None:
             return
-        self._apply_openseeface_paced_pose(paced_pose)
-        if keyframe_committed:
+        fresh = self._osf_input_is_fresh()
+        self._apply_openseeface_paced_pose(paced_pose, input_fresh=fresh)
+        if keyframe_committed and fresh:
             self._osf_pace_keyframe_committed = True
             self._note_input_fps_tick()
 
@@ -7074,6 +8520,8 @@ class MainFrame(wx.Frame):
             reconnect_after: bool = False,
             *,
             stop_runtime_for_probe: bool = True) -> None:
+        if getattr(self, "_is_closing", False):
+            return
         if self._osf_camera_enum_in_progress:
             if reconnect_after:
                 self._osf_camera_reconnect_after_enum = True
@@ -7095,6 +8543,8 @@ class MainFrame(wx.Frame):
             mark_facetracker_camera_in_use(False)
         self._osf_camera_reconnect_after_enum = restart_after_enum
         self._osf_camera_enum_in_progress = True
+        self._osf_enum_generation = int(getattr(self, "_osf_enum_generation", 0)) + 1
+        enum_generation = self._osf_enum_generation
         if hasattr(self, "osf_status_text"):
             self.osf_status_text.SetLabel("枚举摄像头中... / Enumerating cameras...")
 
@@ -7102,31 +8552,125 @@ class MainFrame(wx.Frame):
 
         def worker() -> None:
             cameras = list_openseeface_cameras(portable_root)
-            wx.CallAfter(self._apply_osf_camera_choices, cameras)
+            wx.CallAfter(self._apply_osf_camera_choices, cameras, enum_generation)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _maybe_openseeface_runtime_health_check(self) -> None:
-        if not self.is_openseeface_mocap_mode():
+    def _schedule_osf_reconnect(self, now_mono: float) -> None:
+        if getattr(self, "_is_closing", False):
             return
+        last = float(getattr(self, "_osf_last_reconnect_mono", 0.0) or 0.0)
+        if last > 0.0 and (now_mono - last) < 8.0:
+            return
+        self._osf_last_reconnect_mono = now_mono
+        self._restart_openseeface_runtime_if_active()
+
+    # EVS-DESIGN-AUDIT EVS-A018 BEGIN
+    # 设计[f-052, f-064] [符合（包龄）]
+    # 用 last_packet_mono / OSF_UDP_DISCONNECT_SEC 判断新鲜度；断流后 HOLD 并受控重连，不再把累计收包数当成仍在 LIVE。
+    # 历史 bug 热点 #2,#3,#5：断流漏报已修。
+    # EVS-DESIGN-AUDIT EVS-A018 END
+    def _maybe_openseeface_runtime_health_check(self) -> None:
+        if not self.is_openseeface_mocap_mode() or getattr(self, "_is_closing", False):
+            return
+        if getattr(self, "_osf_restart_in_progress", False):
+            return
+        if bool(getattr(self, "_osf_pose_from_video_source", False)):
+            return
+        if getattr(self, "_osf_capture_open_give_up", False):
+            return
+        self._osf_runtime.refresh_process_status()
         status = self._osf_runtime.status
         if self._osf_started_mono <= 0.0:
             return
-        elapsed = time.monotonic() - self._osf_started_mono
-        if status.process_running and status.packets_received > 0:
+        now_mono = time.monotonic()
+        elapsed = now_mono - self._osf_started_mono
+        # bh-5 26.10.30 11:20 s
+        if elapsed >= 1.2 and self._osf_runtime.facetracker_capture_open_failed():
+            self._fallback_osf_capture_after_open_failure()
             return
+        # bh-5 26.10.30 11:20 e
+        # bh-3 26.10.29 19:40 s
+        if status.process_running:
+            # bh-5 26.10.30 12:52 s
+            # Live process: stale UDP holds pose. Do not kill facetracker every 8s.
+            return
+            # bh-5 26.10.30 12:52 e
         if elapsed < 8.0:
             return
         reason = status.last_error or "OpenSeeFace timeout (no UDP / process exit)"
         if reason != self._osf_runtime_error:
             self._report_openseeface_runtime_error(reason)
-        if not status.process_running and self._osf_started_mono > 0.0:
-            self._osf_started_mono = 0.0
+        self._osf_started_mono = 0.0
+        self._schedule_osf_reconnect(now_mono)
+        # bh-3 26.10.29 19:40 e
 
-    def _apply_osf_camera_choices(self, cameras: list) -> None:
+    def _fallback_osf_capture_after_open_failure(self) -> None:
+        # bh-5 26.10.30 11:20 s
+        next_size = next_lower_osf_capture_size(
+            self._osf_capture_width, self._osf_capture_height)
+        failed_w = int(self._osf_capture_width)
+        failed_h = int(self._osf_capture_height)
+        # #region agent log
+        try:
+            import json as _json
+            open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                "sessionId": "86a17c",
+                "runId": "post-fix",
+                "hypothesisId": "A",
+                "location": "load_preview.py:_fallback_osf_capture_after_open_failure",
+                "message": "osf dshow capture open failed",
+                "data": {
+                    "failed": [failed_w, failed_h],
+                    "next": list(next_size) if next_size else None,
+                    "camera_index": int(self._osf_camera_index),
+                    "camera_label": str(self._osf_camera_label or ""),
+                    "give_up": next_size is None,
+                },
+                "timestamp": int(time.time() * 1000),
+            }) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        if next_size is None:
+            self._osf_capture_open_give_up = True
+            self._osf_runtime.stop()
+            self._osf_started_mono = 0.0
+            self._report_openseeface_runtime_error(
+                f"Camera open failed at {failed_w}x{failed_h} (DShow). "
+                "Try another camera, or close other apps using this device.")
+            self.refresh_mocap_input_mode_ui()
+            return
+        self._osf_capture_width, self._osf_capture_height = next_size
+        if hasattr(self, "osf_size_choice") and self.osf_size_choice is not None:
+            self.osf_size_choice.SetSelection(
+                osf_capture_preset_index_for_size(
+                    self._osf_capture_width, self._osf_capture_height))
+        self.save_persistent_ui_state()
+        self._report_openseeface_runtime_error(
+            f"Camera open failed at {failed_w}x{failed_h}; retrying {next_size[0]}x{next_size[1]}.")
+        self._restart_openseeface_runtime_if_active()
+        # bh-5 26.10.30 11:20 e
+
+    # EVS-DESIGN-AUDIT EVS-A027 BEGIN
+    # 设计[f-067, f-052] [符合（关闭守卫）]
+    # 异步枚举回调核对 _is_closing、generation 与控件存活，关闭后迟到回调不再重启 facetracker。
+    # 历史 bug 热点 #2,#5：关闭竞态已加总闸。
+    # EVS-DESIGN-AUDIT EVS-A027 END
+    def _apply_osf_camera_choices(self, cameras: list, generation: Optional[int] = None) -> None:
+        # bh-2 26.10.29 19:40 s
+        if getattr(self, "_is_closing", False):
+            self._osf_camera_enum_in_progress = False
+            self._osf_camera_reconnect_after_enum = False
+            return
+        if (
+                generation is not None
+                and generation != int(getattr(self, "_osf_enum_generation", 0))):
+            return
+        # bh-2 26.10.29 19:40 e
         reconnect_after = bool(getattr(self, "_osf_camera_reconnect_after_enum", False))
         choice = getattr(self, "osf_camera_choice", None)
-        if choice is None:
+        if choice is None or not self._wx_control_alive(choice):
             self._osf_camera_enum_in_progress = False
             self._osf_camera_reconnect_after_enum = False
             return
@@ -7170,7 +8714,10 @@ class MainFrame(wx.Frame):
             reconnect_after = True
         self._osf_camera_enum_in_progress = False
         self._osf_camera_reconnect_after_enum = False
-        if reconnect_after and self.is_openseeface_mocap_mode():
+        if (
+                reconnect_after
+                and self.is_openseeface_mocap_mode()
+                and not getattr(self, "_is_closing", False)):
             self.save_persistent_ui_state()
             if self._osf_camera_index != previous_index:
                 self._restart_openseeface_runtime_if_active()
@@ -7196,16 +8743,54 @@ class MainFrame(wx.Frame):
             self.osf_size_choice.SetSelection(
                 osf_capture_preset_index_for_size(width, height))
         self.save_persistent_ui_state()
+        self._osf_capture_open_give_up = False
         self._restart_openseeface_runtime_if_active()
         event.Skip()
 
+    # EVS-DESIGN-AUDIT EVS-A028 BEGIN
+    # 设计[f-052, f-067] [符合（关闭守卫）]
+    # 重启入口检查 _is_closing，迟到枚举回调不再于关闭阶段启动 facetracker。
+    # 历史 bug 热点 #2,#5：关闭竞态入口已加总闸。stop/wait 放到后台，避免加载角色时 UI 卡住。
+    # EVS-DESIGN-AUDIT EVS-A028 END
     def _restart_openseeface_runtime_if_active(self) -> None:
-        if not self.is_openseeface_mocap_mode():
+        if getattr(self, "_is_closing", False) or not self.is_openseeface_mocap_mode():
             return
-        self._release_video_input_for_openseeface()
-        self._stop_openseeface_runtime()
-        if not self._start_openseeface_runtime(from_user=False):
-            self.refresh_mocap_input_mode_ui()
+        if getattr(self, "_osf_restart_in_progress", False):
+            return
+        # bh-2 26.10.29 20:24 s
+        self._osf_restart_in_progress = True
+        # bh-5 26.10.30 13:40 s
+        live_preview = (
+            self.video_source_kind == "camera" and self.video_capture is not None)
+        if not live_preview:
+            self._release_video_input_for_openseeface()
+        # bh-5 26.10.30 13:40 e
+
+        def worker() -> None:
+            try:
+                self._osf_runtime.stop()
+            except Exception:
+                pass
+            wx.CallAfter(self._finish_osf_restart)
+
+        threading.Thread(target=worker, daemon=True, name="osf-restart").start()
+        # bh-2 26.10.29 20:24 e
+
+    def _finish_osf_restart(self) -> None:
+        # bh-2 26.10.29 20:24 s
+        try:
+            self._osf_started_mono = 0.0
+            self._osf_input_pacer.reset()
+            self._osf_pace_keyframe_committed = False
+            self._osf_pose_converter_calibrated = False
+            if getattr(self, "_is_closing", False) or not self.is_openseeface_mocap_mode():
+                return
+            if not self._start_openseeface_runtime(from_user=False):
+                self._osf_started_mono = time.monotonic()
+                self.refresh_mocap_input_mode_ui()
+        finally:
+            self._osf_restart_in_progress = False
+        # bh-2 26.10.29 20:24 e
 
     def on_osf_camera_choice_changed(self, event: wx.Event) -> None:
         choice = getattr(self, "osf_camera_choice", None)
@@ -7219,6 +8804,7 @@ class MainFrame(wx.Frame):
             pass
         self._osf_camera_label = self._osf_camera_label_from_choice_string(label)
         self.save_persistent_ui_state()
+        self._osf_capture_open_give_up = False
         if self.is_openseeface_mocap_mode():
             self._restart_openseeface_runtime_if_active()
         event.Skip()
@@ -7236,7 +8822,10 @@ class MainFrame(wx.Frame):
         if self.is_openseeface_mocap_mode():
             status = self._osf_runtime.status
             udp = "connected" if status.udp_connected else "waiting"
-            preview = status.preview_status or ("docked" if status.preview_available else "waiting window")
+            preview = (
+                "camera stream"
+                if self.video_source_kind == "camera" and self.video_capture is not None
+                else (status.preview_status or "waiting camera"))
             error_line = ""
             if self._osf_runtime_error:
                 error_line = f"\nError: {self._osf_runtime_error}"
@@ -7248,14 +8837,13 @@ class MainFrame(wx.Frame):
         return "MediaPipe 面捕 / Face capture (camera or window)"
 
     def get_openseeface_preview_status_message(self) -> str:
-        status = self._osf_runtime.status
-        if status.preview_available:
+        if self.video_capture_status_message:
+            return self.video_capture_status_message
+        if self.video_source_kind == "camera" and self.video_capture is not None:
             return self.get_mocap_input_mode_status_message()
-        if status.preview_status:
-            return status.preview_status + "\n(OpenSeeFace 预览已对齐到左侧预览区)"
         return (
-            "等待 OpenSeeFace 预览窗口...\n"
-            "Waiting for OpenSeeFace Visualization window..."
+            "Connecting camera preview...\n"
+            "摄像头预览连接中..."
         )
 
     def get_mouse_mocap_status_message(self) -> str:
@@ -7305,6 +8893,11 @@ class MainFrame(wx.Frame):
                 self._mouse_auto_calibration_interval_seconds)
         self._apply_mouse_only_controls_visibility()
 
+    # EVS-DESIGN-AUDIT EVS-A014 BEGIN
+    # 设计[ix-020, UI-B×] [静态符合（可见性）]
+    # Mouse 模式隐藏视频源相关区域并切换对应参数；隐藏不等于禁用整个面捕/嘴动配置面板。
+    # 历史 bug 热点 #5：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A014 END
     def _apply_mouse_only_controls_visibility(self) -> None:
         mouse_mode = self.is_mouse_audio_mocap_mode()
         mediapipe_mode = self.mocap_input_mode == MOCAP_INPUT_MODE_MEDIAPIPE
@@ -7395,6 +8988,11 @@ class MainFrame(wx.Frame):
             ny,
             calibration_time=calibration_time)
 
+    # EVS-DESIGN-AUDIT EVS-A012 BEGIN
+    # 设计[ix-023, ix-024, UI-B06] [静态符合（中心与正视）]
+    # 校准中心并更新 Mouse 正视输入；尺寸约束由 with_center_at_preserving_size 保持。校准后眼睛与身体方向需运行核查。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A012 END
     def _calibrate_mouse_dynamic_enhancement_ix023(
             self,
             nx: float,
@@ -7431,6 +9029,11 @@ class MainFrame(wx.Frame):
         self.last_scale_calibration_time = time_now
         return True
 
+    # EVS-DESIGN-AUDIT EVS-A007 BEGIN
+    # 设计[UI-A02, UI-A10, ix-023] [静态符合（分支）]
+    # Mouse 使用专用校准移动中心并给正视输入；其他输入走动态增强中性点校准。不要把只允许手动改大小误读为禁止自动移动中心。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A007 END
     def _perform_output_dynamic_enhancement_calibration(
             self,
             *,
@@ -7462,6 +9065,11 @@ class MainFrame(wx.Frame):
             self.draw_cached_result_image(self.last_banner_text)
         self.save_persistent_ui_state()
 
+    # EVS-DESIGN-AUDIT EVS-A011 BEGIN
+    # 设计[ix-020, ix-023, UI-B07, UI-C×] [静态符合（调用关系）]
+    # 第三条 Mouse 周期复用对应校准；中心位置可随鼠标更新，框大小应保留。与朝向、动态增强周期不是同一个定时器语义。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A011 END
     def maybe_apply_periodic_mouse_calibration(self, time_now: float, nx: float, ny: float) -> None:
         """UI-B07: periodic auto-click of UI-A02/A10 in Mouse+Audio mode."""
         del nx, ny  # same sample as _last_mouse_mocap_* used by _perform_output_dynamic_enhancement_calibration
@@ -7530,6 +9138,8 @@ class MainFrame(wx.Frame):
         self.maybe_apply_periodic_mouse_calibration(time_now=time.time(), nx=nx, ny=ny)
 
     def refresh_mocap_input_mode_ui(self) -> None:
+        if hasattr(self, "mocap_frame_rate_panel"):
+            self.mocap_frame_rate_panel.Show(not self.is_mouse_audio_mocap_mode())
         if hasattr(self, "mocap_input_mode_choice") and self.mocap_input_mode_choice is not None:
             try:
                 if self.mocap_input_mode in MOCAP_INPUT_MODE_VALUES:
@@ -7612,6 +9222,15 @@ class MainFrame(wx.Frame):
             max(self.COMPACT_MIN_CLIENT_HEIGHT, int(fitted_size.y)))
         self.SetMinClientSize(self._compact_default_client_size)
 
+    # EVS-DESIGN-AUDIT EVS-A004 BEGIN
+    # 设计[UI-A05, UI-A06, UI-A07, UI-A08, UI-A×03] [静态符合（文案/结构）；外观待测]
+    # 四个加载按钮分别为上次/其他立绘、上次/其他 THA4 Student；左二栏加右预览/后处理使用 splitter。实际等分、竖屏/多屏适配需 GUI 验收。
+    # 历史 bug 热点 #2：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A004 END
+    # EVS-DESIGN-AUDIT EVS-A133 BEGIN
+    # 设计[§9, §9.2, §9.3, §9.4] [汇总关联 / 子项分别验收]
+    # 三栏视觉布局、双语参数、右侧预览/后处理与校准职责由各 UI 条目限定；历史 UI-D01/D02 别名不授权把校准控件迁回旧位置。汇总节不额外创造新运行需求。
+    # EVS-DESIGN-AUDIT EVS-A133 END
     def create_controls_frame(self):
         if self.controls_frame is not None:
             return
@@ -7744,8 +9363,15 @@ class MainFrame(wx.Frame):
             self._wire_ui_change_logging()
             self._refresh_ui_change_history_display()
 
+    # EVS-DESIGN-AUDIT EVS-A036 BEGIN
+    # 设计[UI-A×02, UI-B02] [部分符合 / UI 差异待核]
+    # 预览区与放大弹窗入口存在；B02 明确要求共用下拉而非独立窗口捕获按钮，需同时对照本面板/视频源构造中的实际按钮和回调，不能沿用旧手册当已验收。
+    # 历史 bug 热点 #4,#5：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A036 END
     def create_capture_panel(self, parent):
-        self.capture_panel = wx.Panel(parent, style=wx.RAISED_BORDER)
+        # UI preview overflow: measured content drives vertical scrolling;
+        # do not squeeze the static source/FPS below their actual text height.
+        self.capture_panel = wx.ScrolledWindow(parent, style=wx.RAISED_BORDER | wx.VSCROLL)
         self.capture_panel_sizer = wx.BoxSizer(wx.VERTICAL)
         self.capture_panel.SetSizer(self.capture_panel_sizer)
         self.capture_panel.SetAutoLayout(1)
@@ -7756,6 +9382,24 @@ class MainFrame(wx.Frame):
             label="--- 预览区 / Preview (D 上) ---",
             style=wx.ALIGN_CENTER)
         self.capture_panel_sizer.Add(preview_header, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
+
+        self.mocap_frame_rate_panel = wx.Panel(self.capture_panel)
+        mocap_rate_row = wx.BoxSizer(wx.HORIZONTAL)
+        self.mocap_frame_rate_panel.SetSizer(mocap_rate_row)
+        mocap_rate_row.Add(wx.StaticText(self.mocap_frame_rate_panel, label="面捕帧率"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        self.mocap_frame_rate_choice = wx.Choice(self.mocap_frame_rate_panel, choices=["固定值", "自适应"])
+        self.mocap_frame_rate_choice.SetSelection(1 if self._mocap_rate.mode == "adaptive" else 0)
+        self.mocap_fixed_fps_spin = wx.SpinCtrl(self.mocap_frame_rate_panel, min=1, max=120, initial=self._mocap_rate.fixed_fps)
+        self.mocap_fixed_fps_spin.SetMinSize(wx.Size(72, -1))
+        self.mocap_fixed_fps_spin.Enable(self._mocap_rate.mode == "fixed")
+        self.mocap_frame_rate_choice.Bind(wx.EVT_CHOICE, self.on_mocap_frame_rate_changed)
+        self.mocap_fixed_fps_spin.Bind(wx.EVT_SPINCTRL, self.on_mocap_frame_rate_changed)
+        self.mocap_fixed_fps_spin.Bind(wx.EVT_TEXT, self.on_mocap_frame_rate_changed)
+        mocap_rate_row.Add(self.mocap_frame_rate_choice, 0, wx.RIGHT, 6)
+        mocap_rate_row.Add(self.mocap_fixed_fps_spin, 0, wx.RIGHT, 4)
+        mocap_rate_row.Add(wx.StaticText(self.mocap_frame_rate_panel, label="fps"), 0, wx.ALIGN_CENTER_VERTICAL)
+        self.mocap_frame_rate_choice.SetToolTip("固定值按设定频率处理最新输入；自适应按识别耗时调整。实际帧率受输入源和设备能力限制。")
+        self.capture_panel_sizer.Add(self.mocap_frame_rate_panel, 0, wx.EXPAND | wx.ALL, 4)
 
         previews_row = wx.BoxSizer(wx.HORIZONTAL)
 
@@ -7779,7 +9423,7 @@ class MainFrame(wx.Frame):
 
         self.source_preview_caption_text = wx.StaticText(
             self.source_preview_column,
-            label="立绘源预览 / Character source\n(加载后的静态立绘快照)",
+            label="立绘源预览 / Character source\n(加载后的静态立绘快照，双击可放大)",
             style=wx.ALIGN_CENTER)
         source_preview_sizer.Add(
             self.source_preview_caption_text, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 4)
@@ -7795,6 +9439,7 @@ class MainFrame(wx.Frame):
         self.source_image_panel.Bind(wx.EVT_ERASE_BACKGROUND, self.on_erase_background)
         self.source_image_panel.Bind(wx.EVT_SHOW, self.on_source_image_panel_show)
         self.source_image_panel.Bind(wx.EVT_SIZE, self.on_source_image_panel_size)
+        self.source_image_panel.Bind(wx.EVT_LEFT_DCLICK, self.on_source_preview_double_click)
         source_preview_sizer.Add(self.source_image_panel, wx.SizerFlags(0).FixedMinSize().Border(wx.ALL, 5))
 
         self.fps_text = wx.StaticText(
@@ -7868,7 +9513,14 @@ class MainFrame(wx.Frame):
         self._invalidate_source_preview_cache()
         self.update_source_image_bitmap(force=True)
         MainFrame.fill_bitmap_solid(self.webcam_capture_bitmap, MainFrame.PREVIEW_IDLE_BACKGROUND)
+        from ui_layout import PreviewScrollLayout
+        self._preview_scroll_layout = PreviewScrollLayout(self)
 
+    # EVS-DESIGN-AUDIT EVS-A005 BEGIN
+    # 设计[UI-A01, UI-A02, UI-A09, UI-A10, ix-025] [部分符合]
+    # 朝向和动态增强各有按钮、开关、周期并迁移旧控件值。手册 UI-D01/D02 为历史别名；右侧校准列的具体位置原话证据不足，不能仅据现布局认定完全符合。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A005 END
     def create_preview_calibration_controls(self, parent: wx.Panel, parent_sizer: wx.BoxSizer) -> None:
         enable_direction_calibration = self.enable_direction_calibration_checkbox.GetValue()
         direction_interval_seconds = self.auto_direction_calibration_interval_seconds_ctrl.GetValue()
@@ -8193,12 +9845,38 @@ class MainFrame(wx.Frame):
         return "该项用于当前界面参数控制；可继续补充精确语义说明。"
 
     def on_webcam_preview_double_click(self, event: wx.MouseEvent):
+        # #region agent log
+        try:
+            import json as _json, time as _time
+            open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix-dshow", "hypothesisId": "J", "location": "load_preview.py:on_webcam_preview_double_click", "message": "webcam preview double-click", "data": {"popup_open": bool(self.webcam_preview_popup_frame is not None and self.webcam_preview_popup_frame.IsShown())}, "timestamp": int(_time.time() * 1000)}) + "\n")
+        except Exception:
+            pass
+        # #endregion
         if self.webcam_preview_popup_frame is not None and self.webcam_preview_popup_frame.IsShown():
             self.webcam_preview_popup_frame.Close()
         else:
             self.webcam_preview_popup_frame = WebcamPreviewPopupFrame(self)
             self.webcam_preview_popup_frame.Show()
             self.webcam_preview_popup_frame.Raise()
+            self._ensure_webcam_capture_bitmap_size()
+            if self._last_good_webcam_bgr_frame is not None:
+                self.update_capture_preview_bitmap(self._last_good_webcam_bgr_frame)
+        event.Skip()
+
+    def on_source_preview_double_click(self, event: wx.MouseEvent):
+        # #region agent log
+        try:
+            import json as _json, time as _time
+            open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix-dshow", "hypothesisId": "K", "location": "load_preview.py:on_source_preview_double_click", "message": "source preview double-click", "data": {"has_source": self.wx_source_image is not None}, "timestamp": int(_time.time() * 1000)}) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        if self.source_preview_popup_frame is not None and self.source_preview_popup_frame.IsShown():
+            self.source_preview_popup_frame.Close()
+        else:
+            self.source_preview_popup_frame = SourcePreviewPopupFrame(self)
+            self.source_preview_popup_frame.Show()
+            self.source_preview_popup_frame.Raise()
         event.Skip()
 
     @staticmethod
@@ -8585,7 +10263,18 @@ class MainFrame(wx.Frame):
         self._mediapipe_video_timestamp_ms = next_ts
         return next_ts
 
+    # EVS-DESIGN-AUDIT EVS-A031 BEGIN
+    # 设计[UI-B02, f-052] [部分符合 / 原生阻塞待测]
+    # 切源/关闭会释放视频句柄；release 及关联音频 stop 若卡在驱动/native 内，主关闭链没有统一超时。需真实设备拔插、切源与关闭后进程/端口快照验证。
+    # 历史 bug 热点 #2,#5：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-CLOSE-04：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A031 END
     def release_video_capture(self):
+        with self._mediapipe_lock:
+            self._mediapipe_input_generation += 1
+            self._pending_mediapipe_job = None
+            self._mediapipe_completed_result = None
+            self._last_mediapipe_frame_token = None
         with self._camera_capture_lock:
             if getattr(self, "video_capture", None) is not None:
                 try:
@@ -8599,7 +10288,13 @@ class MainFrame(wx.Frame):
 
     def schedule_active_capture_timer(self):
         if hasattr(self, "capture_timer"):
-            self.capture_timer.Start(MainFrame.CAPTURE_PROCESS_INTERVAL_MS)
+            if self.video_source_kind == "camera" and self._mediapipe_landmarker_allowed():
+                # Camera face submission has its own clock; UI is preview only.
+                interval_ms = MainFrame.CAPTURE_PROCESS_INTERVAL_MS
+            else:
+                interval_ms = max(8, min(MainFrame.CAPTURE_PROCESS_INTERVAL_MS,
+                    int(1000. / self._mocap_rate.effective_hz())))
+            self.capture_timer.Start(interval_ms)
 
     def schedule_idle_capture_timer(self):
         if hasattr(self, "capture_timer"):
@@ -8659,6 +10354,8 @@ class MainFrame(wx.Frame):
                 frame = self._camera_capture_latest_frame
                 if frame is None:
                     return None
+                self._last_read_capture_sample_mono = self._camera_capture_sample_mono
+                self._last_read_capture_frame_token = ("camera", self._mediapipe_input_generation, self._camera_worker_frame_serial)
                 return frame.copy()
 
         if self.video_source_kind == "image":
@@ -8709,20 +10406,66 @@ class MainFrame(wx.Frame):
                     capture.release()
         return None
 
+    def _maybe_pose_from_evs_capture(self, bgr_frame, time_now: float) -> None:
+        # bh-5 26.10.30 13:40 s
+        if not bool(getattr(self, "_osf_pose_from_video_source", False)):
+            return
+        if bgr_frame is None:
+            return
+        if self.face_landmarker is None:
+            if not self._face_landmarker_init_in_progress and not self._face_landmarker_init_failed:
+                self._init_face_landmarker_async()
+            # #region agent log
+            try:
+                _now = time.monotonic()
+                if _now - float(getattr(self, "_dbg_mp_vs_skip_mono", 0.0) or 0.0) >= 2.0:
+                    self._dbg_mp_vs_skip_mono = _now
+                    import json as _json
+                    open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                        "sessionId": "86a17c",
+                        "runId": "post-fix-agent-cmd",
+                        "hypothesisId": "H3",
+                        "location": "load_preview.py:_maybe_pose_from_evs_capture",
+                        "message": "pose-from-video-source waiting landmarker",
+                        "data": {
+                            "init_busy": bool(self._face_landmarker_init_in_progress),
+                            "init_failed": bool(self._face_landmarker_init_failed),
+                        },
+                        "timestamp": int(time.time() * 1000),
+                    }) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            return
+        if not self.should_process_mediapipe(time_now):
+            return
+        self._last_mediapipe_process_time = time_now
+        mocap_frame = bgr_frame
+        rgb_frame = cv2.cvtColor(mocap_frame, cv2.COLOR_BGR2RGB)
+        if self.should_mirror_capture_preview():
+            rgb_frame = cv2.flip(rgb_frame, 1)
+        time_ms = self._next_mediapipe_video_timestamp_ms(time_now)
+        mediapipe = get_mediapipe_module()
+        mediapipe_image = mediapipe.Image(image_format=mediapipe.ImageFormat.SRGB, data=rgb_frame)
+        self._schedule_mediapipe_detect(mediapipe_image, time_ms, rgb_frame)
+        # bh-5 26.10.30 13:40 e
+
     def should_update_capture_preview_ui(self, time_now: float) -> bool:
         if not self.is_capture_preview_visible() and not self.is_webcam_popup_visible():
             return False
         return (time_now - self._last_preview_ui_time) >= (MainFrame.CAPTURE_PREVIEW_INTERVAL_MS / 1000.0)
 
     def should_process_mediapipe(self, time_now: float) -> bool:
+        # f-073: the existing camera reader now submits real frames directly.
+        # UI preview/timer delays must not throttle or duplicate face processing.
+        if self.video_source_kind == "camera":
+            return False
         if not self.is_capture_source_active():
             return False
-        interval_ms = MainFrame.MEDIAPIPE_MIN_INTERVAL_MS
-        if self.video_source_kind == "window":
-            interval_ms = max(interval_ms, MainFrame.WINDOW_CAPTURE_MEDIAPIPE_INTERVAL_MS)
-        if not self.full_controls_expanded:
-            interval_ms = max(interval_ms, 66)
-        return (time_now - self._last_mediapipe_process_time) >= (interval_ms / 1000.0)
+        token = getattr(self, "_last_read_capture_frame_token", None)
+        if self.video_source_kind == "camera" and token is not None and token == self._last_mediapipe_frame_token:
+            return False
+        return self._mocap_rate.is_due(time.perf_counter())
 
     @classmethod
     def fill_bitmap_solid(cls, bitmap: wx.Bitmap, colour: wx.Colour) -> None:
@@ -8751,6 +10494,9 @@ class MainFrame(wx.Frame):
             self.webcam_capture_panel.Refresh(False)
 
     def _webcam_preview_target_size(self) -> wx.Size:
+        if self.is_webcam_popup_visible():
+            popup_side = WebcamPreviewPopupFrame.POPUP_PREVIEW_SIZE
+            return wx.Size(popup_side, popup_side)
         panel = getattr(self, "webcam_capture_panel", None)
         if panel is not None:
             client = panel.GetClientSize()
@@ -8781,10 +10527,9 @@ class MainFrame(wx.Frame):
         return screen_origin.x, screen_origin.y, box_w, box_h
 
     def _is_openseeface_preview_docked(self) -> bool:
-        return (
-            self.is_openseeface_mocap_mode()
-            and self._osf_runtime.status.preview_available
-            and self._osf_runtime.get_preview_hwnd() is not None)
+        # bh-5 26.10.29 21:02 s
+        return False
+        # bh-5 26.10.29 21:02 e
 
     def _sync_openseeface_preview_window(self) -> bool:
         if not self.is_openseeface_mocap_mode():
@@ -8803,20 +10548,27 @@ class MainFrame(wx.Frame):
                 return False
         except RuntimeError:
             return False
-        viewport = self._get_webcam_preview_viewport_screen_rect()
+        viewport = self._get_webcam_preview_viewport_client_rect()
         if viewport is None:
             self._osf_runtime.hide_preview_window()
             return False
-        screen_x, screen_y, box_w, box_h = viewport
+        client_x, client_y, box_w, box_h = viewport
         try:
-            return self._osf_runtime.sync_preview_window_placement(
-                screen_x=screen_x,
-                screen_y=screen_y,
-                box_width=box_w,
-                box_height=box_h,
-                content_width=self._osf_capture_width,
-                content_height=self._osf_capture_height,
-            )
+            panel_hwnd = int(panel.GetHandle() or 0)
+            # #region agent log
+            try:
+                import json as _json, time as _time
+                _now = _time.monotonic()
+                if _now - float(getattr(self, "_dbg_osf_dock_log_mono", 0.0) or 0.0) >= 2.0:
+                    self._dbg_osf_dock_log_mono = _now
+                    open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix", "hypothesisId": "C", "location": "load_preview.py:_sync_openseeface_preview_window", "message": "osf dock into capture panel", "data": {"panel_hwnd": panel_hwnd, "preview_hwnd": int(self._osf_runtime.get_preview_hwnd() or 0), "box": [int(client_x), int(client_y), int(box_w), int(box_h)]}, "timestamp": int(_time.time() * 1000)}) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            # bh-5 26.10.29 21:02 s
+            self._osf_runtime.hide_preview_window()
+            return False
+            # bh-5 26.10.29 21:02 e
         except (OSError, RuntimeError):
             return False
 
@@ -8955,6 +10707,11 @@ class MainFrame(wx.Frame):
         wx.CallAfter(_select_saved_window)
         self.update_capture_panel(None)
 
+    # EVS-DESIGN-AUDIT EVS-A035 BEGIN
+    # 设计[UI-B01, UI-B02, f-067] [部分符合]
+    # 有相机/窗口源刷新与记忆选择；启动触发边界按 f-067。窗口与摄像头应共用源下拉；现有独立捕获按钮见 UI 构造处，不能据有下拉认定完全符合。
+    # 历史 bug 热点 #5：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A035 END
     def refresh_and_autoload_video_source(self):
         """Refresh source list and auto-select first available source."""
         self.refresh_video_source_choice_async(connect_after=True, trigger_source="manual")
@@ -9224,8 +10981,7 @@ class MainFrame(wx.Frame):
                 "mouth_infer_cap_hz", MOUTH_INFER_CAP_HZ_DEFAULT))
         except (TypeError, ValueError):
             mouth_infer_cap_hz = MOUTH_INFER_CAP_HZ_DEFAULT
-        if mouth_infer_cap_hz not in MOUTH_INFER_CAP_HZ_VALUES:
-            mouth_infer_cap_hz = MOUTH_INFER_CAP_HZ_DEFAULT
+        mouth_infer_cap_hz = self._coerce_mouth_infer_cap_hz(mouth_infer_cap_hz)
         smooth_affine_30hz = bool(self.persistent_ui_state.get("smooth_affine_30hz", True))
         nn_super_resolution_mode = normalize_sr_mode(
             self.persistent_ui_state.get("nn_super_resolution_mode", NN_SR_OFF))
@@ -9528,7 +11284,7 @@ class MainFrame(wx.Frame):
 
         mouth_infer_cap_hint = wx.StaticText(
             self.postprocess_panel,
-            label="节流全部 GPU 推理（含大动作）；显示用 cached 帧 / throttles all infer; display uses cached")
+            label="上限不是省闲置：强设备用 30/60。显示仍可用 cached 帧 / cap is not for idle GPU; strong devices use 30/60")
         self.postprocess_panel_sizer.Add(
             mouth_infer_cap_hint,
             wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
@@ -9551,6 +11307,7 @@ class MainFrame(wx.Frame):
             smooth_affine_hint,
             wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
 
+        self._create_target_frame_rate_controls()
         frame_interp_label = wx.StaticText(
             self.postprocess_panel,
             label="插帧 / Frame Interpolation")
@@ -9640,11 +11397,11 @@ class MainFrame(wx.Frame):
             self.nn_infer_backend_choice,
             wx.SizerFlags().Expand().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
 
-        tha_fp16_label = wx.StaticText(
+        self.tha_infer_fp16_label = wx.StaticText(
             self.postprocess_panel,
-            label="THA 推理精度 / THA Infer Precision (Student)")
+            label="THA4 Student 推理精度 / THA4 Student Infer Precision")
         self.postprocess_panel_sizer.Add(
-            tha_fp16_label,
+            self.tha_infer_fp16_label,
             wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
         self.tha_infer_fp16_choice = wx.Choice(
             self.postprocess_panel, choices=list(THA_INFER_FP16_LABELS))
@@ -9807,6 +11564,11 @@ class MainFrame(wx.Frame):
     def switch_to_compact_clicked(self, event: wx.Event):
         self.show_compact_launcher()
 
+    # EVS-DESIGN-AUDIT EVS-A006 BEGIN
+    # 设计[UI-B04, UI-A01, ix-025] [静态符合（职责隔离）]
+    # 路径 A 只调用 converter 朝向标定，不调用动态增强 neutral 重置；与路径 B/C 周期保持独立。实际眼/脸朝向一致仍需 Mouse、MP、OSF 分别验证。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A006 END
     def _perform_head_orientation_calibration(
             self,
             *,
@@ -9870,6 +11632,15 @@ class MainFrame(wx.Frame):
             self.tha3_model_variant_choice.Show(spec.show_tha3_variant)
             if hasattr(self, "tha3_model_variant_label"):
                 self.tha3_model_variant_label.Show(spec.show_tha3_variant)
+        self._sync_tha_infer_fp16_ui()
+        # #region agent log
+        try:
+            import json as _json, time as _time
+            variant_shown = bool(getattr(self, "tha3_variant_panel", None) and self.tha3_variant_panel.IsShown())
+            open(debug_log_path('31363c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "31363c", "runId": "post-fix", "hypothesisId": "A", "location": "load_preview.py:refresh_image_source_ui_visibility", "message": "tha3 variant vs tha4student precision visibility", "data": {"mode": self.get_image_source_mode(), "show_tha3_variant": bool(spec.show_tha3_variant), "tha3_variant_shown": variant_shown, "target_fps": bool(self.is_target_frame_rate_enabled())}, "timestamp": int(_time.time() * 1000)}) + "\n")
+        except Exception:
+            pass
+        # #endregion
         if hasattr(self, "postprocess_panel"):
             self.postprocess_panel.Layout()
         if hasattr(self, "right_sidebar"):
@@ -9877,6 +11648,7 @@ class MainFrame(wx.Frame):
         wx.CallAfter(self.refresh_right_sidebar_scrolling)
         if hasattr(self, "controls_frame") and self.controls_frame is not None:
             self.controls_frame.Layout()
+        self.schedule_postprocess_layout_refresh()
         self.update_load_model_buttons()
 
     def on_tha3_model_variant_changed(self, event: wx.Event):
@@ -9887,7 +11659,6 @@ class MainFrame(wx.Frame):
         self.save_persistent_ui_state()
         self._sync_tha_infer_fp16_ui()
         if self.get_image_source_mode() == IMAGE_SOURCE_THA3 and self.last_tha3_character_png:
-            switch_image_source(self, IMAGE_SOURCE_THA3)
             if os.path.isfile(self.last_tha3_character_png):
                 self.active_image_source.load_asset(self, self.last_tha3_character_png)
         event.Skip()
@@ -9911,11 +11682,8 @@ class MainFrame(wx.Frame):
         if file_dialog.ShowModal() == wx.ID_OK:
             png_path = os.path.join(file_dialog.GetDirectory(), file_dialog.GetFilename())
             if self.get_image_source_mode() != IMAGE_SOURCE_THA3:
-                switch_image_source(self, IMAGE_SOURCE_THA3)
-            if self.active_image_source.load_asset(self, png_path):
-                self.update_load_model_buttons()
-                self.save_persistent_ui_state()
-                self._activate_mocap_capture_after_model_load()
+                switch_image_source(self, IMAGE_SOURCE_THA3, autoload_asset=False)
+            self.active_image_source.load_asset(self, png_path)
         file_dialog.Destroy()
         event.Skip()
 
@@ -9945,10 +11713,8 @@ class MainFrame(wx.Frame):
             return
         self.last_tha3_character_png = resolved_path
         if self.get_image_source_mode() != IMAGE_SOURCE_THA3:
-            switch_image_source(self, IMAGE_SOURCE_THA3)
-        if self.active_image_source.load_asset(self, resolved_path):
-            self.update_load_model_buttons()
-            self._activate_mocap_capture_after_model_load()
+            switch_image_source(self, IMAGE_SOURCE_THA3, autoload_asset=False)
+        self.active_image_source.load_asset(self, resolved_path)
         event.Skip()
 
     def get_dialog_parent(self) -> wx.Window:
@@ -10051,6 +11817,11 @@ class MainFrame(wx.Frame):
                 center_y=face_screen_motion.center_y,
                 face_size=self.neutral_face_screen_motion.face_size)
 
+    # EVS-DESIGN-AUDIT EVS-A008 BEGIN
+    # 设计[f-021, UI-C01] [静态符合（基准更新）]
+    # 已有 neutral 时更新横向中心、脸大小和 roll，保留原 center_y 以避免校准上飞；首次没有 neutral 的初始化是另一分支。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A008 END
     def update_neutral_output_enhancement(self, face_screen_motion: FaceScreenMotion):
         """Refresh scale baseline, horizontal center, and head-roll neutral; keep vertical center to avoid upward drift."""
         if self.neutral_face_screen_motion is None:
@@ -10112,6 +11883,11 @@ class MainFrame(wx.Frame):
 
         return self._perform_head_orientation_calibration(calibration_time=time_now)
 
+    # EVS-DESIGN-AUDIT EVS-A009 BEGIN
+    # 设计[ix-025, UI-C×, UI-A09] [静态符合（调用关系）]
+    # 到期调用朝向标定路径，独立维护方向周期；不得顺带清空动态增强。默认周期与持久化覆盖值需区分。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A009 END
     def maybe_apply_periodic_direction_calibration(self):
         applied = self.try_apply_auto_forward_gaze_calibration(time.time(), respect_interval=True)
         # #region agent log
@@ -10127,6 +11903,12 @@ class MainFrame(wx.Frame):
                 pass
         # #endregion
 
+    # EVS-DESIGN-AUDIT EVS-A010 BEGIN
+    # 设计[ix-025, UI-C×, UI-A10] [静态符合（调用关系）]
+    # 到期进入动态增强校准路径，与手动按钮复用职责；自动校准会改变基准，观察到幅度归零不必然是模块失效。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-DYN-01：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A010 END
     def maybe_apply_periodic_scale_calibration(self) -> None:
         """Periodic auto UI-A02/A10 (camera + OSF); mouse uses UI-B07."""
         if self.is_mouse_audio_mocap_mode():
@@ -10241,12 +12023,21 @@ class MainFrame(wx.Frame):
     def get_scale_curve_samples(self, sample_count: int = 96) -> List[tuple[float, float]]:
         neutral_face_size = self.get_scale_curve_neutral_face_size()
         domain_min, domain_max = self.get_scale_curve_domain()
+        controls = tuple(float(getattr(self, name).GetValue()) for name in (
+            "min_scale_spin", "max_scale_spin", "scale_curve_arc_spin",
+            "scale_curve_peak_shift_spin", "scale_gain_spin",
+            "scale_curve_near_spin", "scale_curve_far_spin"))
+        key = (sample_count, neutral_face_size, domain_min, domain_max, controls)
+        cached = getattr(self, "_scale_function_samples_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
         samples = []
         for index in range(sample_count + 1):
             alpha = index / sample_count
             delta_value = domain_min + (domain_max - domain_min) * alpha
             scale_value = self.compute_target_scale(neutral_face_size + delta_value, neutral_face_size)
             samples.append((delta_value, scale_value))
+        self._scale_function_samples_cache = (key, samples)
         return samples
 
     def refresh_scale_curve_status(self):
@@ -10338,6 +12129,11 @@ class MainFrame(wx.Frame):
         adjusted_pose[self.pose_converter.body_z_index] *= transfer_factor
         return adjusted_pose
 
+    # EVS-DESIGN-AUDIT EVS-A020 BEGIN
+    # 设计[f-021, UI-C01, UI-C04] [符合（OSF 包龄）；设置语义未改]
+    # 有 XY、缩放、倾斜和平滑；OSF LIVE 要求 last_packet_mono 未过期。y 增益默认 0、平滑、横向混合和周期归中仍按当前选项，本轮不改语义。
+    # 历史 bug 热点 #3：断流后不再把旧 motion 当 LIVE。
+    # EVS-DESIGN-AUDIT EVS-A020 END
     def update_display_transform_state(self, snap_to_target: bool = False) -> bool:
         enabled = self.enable_auto_transform_checkbox.GetValue()
         old_offset_x = self.display_offset_x
@@ -10359,7 +12155,12 @@ class MainFrame(wx.Frame):
             snap_to_target = True
         else:
             latest_motion = self.latest_face_screen_motion
-            if latest_motion is not None:
+            # bh-3 26.10.29 19:40 s
+            osf_live_ok = (
+                (not self.is_openseeface_mocap_mode())
+                or self._osf_input_is_fresh())
+            if latest_motion is not None and osf_live_ok:
+            # bh-3 26.10.29 19:40 e
                 if self.neutral_face_screen_motion is None:
                     self.apply_neutral_calibration(latest_motion)
                 neutral_motion = self.neutral_face_screen_motion
@@ -10486,6 +12287,11 @@ class MainFrame(wx.Frame):
             pass
         # #endregion
 
+    # EVS-DESIGN-AUDIT EVS-A032 BEGIN
+    # 设计[f-052, UI-A×02] [部分符合 / 热点回归]
+    # 捕获面板与输入处理、预览共用主循环；窗口捕获重操作有 worker 路径。需回归普通相机正方形 fit、OSF 镜像 fit、切换坏源可恢复及无 ERROR 风暴，不能只凭静态分支判画面通过。
+    # 历史 bug 热点 #1,#5：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A032 END
     def update_capture_panel(self, event: wx.Event):
         # #region agent log
         _dbg_cap_t0 = time.perf_counter()
@@ -10505,15 +12311,111 @@ class MainFrame(wx.Frame):
         if self.is_openseeface_mocap_mode():
             self._maybe_openseeface_runtime_health_check()
             self._update_openseeface_input_pacing()
-            preview_docked = False
-            if self._capture_frame_serial % 3 == 0:
-                preview_docked = self._sync_openseeface_preview_window()
-            else:
-                preview_docked = self._is_openseeface_preview_docked()
+            if (
+                    not bool(getattr(self._osf_runtime.status, "process_running", False))
+                    and (self.video_source_kind != "camera" or self.video_capture is None)):
+                self._ensure_osf_preview_camera_stream()
+            # f-052/f-070: capture/mocap submission is independent of preview
+            # visibility. Reuse the single existing camera owner's latest frame.
+            bgr_frame = self.read_capture_frame_bgr()
+            live_source = bool(
+                bgr_frame is not None and self.is_acceptable_capture_frame(bgr_frame))
+            if live_source:
+                self._last_good_webcam_bgr_frame = bgr_frame
+                self._last_good_webcam_bgr_mono = time.monotonic()
+                self._note_input_fps_tick()
+                self._maybe_pose_from_evs_capture(bgr_frame, time_now)
             if self.should_update_capture_preview_ui(time_now):
                 self._last_preview_ui_time = time_now
-                if not preview_docked:
+                # bh-5 26.10.30 12:52 s
+                if live_source:
+                    self.update_capture_preview_bitmap(bgr_frame)
+                elif (
+                        self._last_good_webcam_bgr_frame is not None
+                        and (time.monotonic() - float(
+                            getattr(self, "_last_good_webcam_bgr_mono", 0.0) or 0.0)) <= 0.4):
+                    self.update_capture_preview_bitmap(self._last_good_webcam_bgr_frame)
+                else:
                     self.draw_capture_status_message(self.get_openseeface_preview_status_message())
+                    # bh-5 26.10.30 13:08 s
+                    if (
+                            self.video_capture is not None
+                            and not bool(getattr(self._osf_runtime.status, "process_running", False))):
+                        self._release_dead_osf_preview_camera()
+                    # bh-5 26.10.30 13:08 e
+                # bh-5 26.10.30 12:52 e
+            # #region agent log
+            try:
+                _now = time.monotonic()
+                if _now - float(getattr(self, "_dbg_osf_cam_log_mono", 0.0) or 0.0) >= 2.0:
+                    self._dbg_osf_cam_log_mono = _now
+                    import json as _json
+                    _pipe = getattr(self, "output_enhancement", None)
+                    _actual_nn = ""
+                    try:
+                        _actual_nn = str(_pipe.pipeline.actual_nn_backend_name())
+                    except Exception:
+                        _actual_nn = ""
+                    _mean = None
+                    if self._last_good_webcam_bgr_frame is not None:
+                        try:
+                            _mean = round(float(self._last_good_webcam_bgr_frame.reshape(-1)[::96].mean()), 2)
+                        except Exception:
+                            _mean = None
+                    _model_hz = None
+                    _source_hz = None
+                    try:
+                        _model_hz = round(float(_pipe.get_model_rate_limit_hz()), 2)
+                        _source_hz = round(float(_pipe.get_source_rate_limit_hz()), 2)
+                    except Exception:
+                        pass
+                    open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                        "sessionId": "86a17c",
+                        "runId": "post-fix-inf10",
+                        "hypothesisId": "F",
+                        "location": "load_preview.py:update_capture_panel:osf",
+                        "message": "osf capture panel camera paint",
+                        "data": {
+                            "kind": self.video_source_kind,
+                            "has_capture": self.video_capture is not None,
+                            "api": str(getattr(self, "current_video_capture_api", None)),
+                            "live_source": bool(self.video_source_kind == "camera" and self.video_capture is not None),
+                            "paint_live": bool(
+                                self._last_good_webcam_bgr_frame is not None
+                                and (_now - float(
+                                    getattr(self, "_last_good_webcam_bgr_mono", 0.0) or 0.0)) <= 0.4
+                                and float(_mean or 0.0) >= 2.0),
+                            "last_good_age": round(
+                                _now - float(getattr(self, "_last_good_webcam_bgr_mono", 0.0) or 0.0), 3),
+                            "luma": _mean,
+                            "opening": bool(getattr(self, "_osf_preview_camera_opening", False)),
+                            "osf_running": bool(getattr(self._osf_runtime.status, "process_running", False)),
+                            "osf_packets": int(getattr(self._osf_runtime.status, "packets_received", 0) or 0),
+                            "inf_fps": round(float(getattr(self, "_inference_fps", 0.0) or 0.0), 2),
+                            "in_fps": round(float(getattr(self, "_input_fps", 0.0) or 0.0), 2),
+                            "source": str(self.get_image_source_mode()),
+                            "nn_ui": str(self.get_nn_infer_backend()),
+                            "nn_actual": _actual_nn,
+                            "rife": int(self.get_nn_frame_interpolation_multiplier()),
+                            "rife_eff": int(_pipe.pipeline._effective_nn_multiplier()) if _pipe is not None else 0,
+                            "mouth_cap": int(self.get_mouth_infer_cap_hz()),
+                            "model_hz": _model_hz,
+                            "source_hz": _source_hz,
+                            "tha_ms": round(float(getattr(self, "_dbg_last_tha_ms", 0.0) or 0.0), 2),
+                            "target_fps": bool(self.is_target_frame_rate_enabled()),
+                            "warmup_busy": bool(getattr(self, "_enhancement_warmup_busy", False)),
+                            "dual_channel": bool(
+                                self.video_capture is not None
+                                and getattr(self._osf_runtime.status, "process_running", False)),
+                            "pose_from_vs": bool(getattr(self, "_osf_pose_from_video_source", False)),
+                            "has_mp_pose": self.mediapipe_face_pose is not None,
+                            "landmarker": self.face_landmarker is not None,
+                        },
+                        "timestamp": int(time.time() * 1000),
+                    }) + "\n")
+            except Exception:
+                pass
+            # #endregion
             if self._capture_frame_serial % 12 == 0:
                 self.refresh_mocap_input_mode_ui()
             self.schedule_active_capture_timer()
@@ -10631,53 +12533,80 @@ class MainFrame(wx.Frame):
         self.schedule_active_capture_timer()
         self._dbg_note_capture_panel_ms(_dbg_cap_t0)
 
-    def _schedule_mediapipe_detect(self, mediapipe_image, time_ms: int, frame_buffer) -> None:
-        """Queue a frame for off-thread MediaPipe detection (latest-wins, single worker)."""
+    def _schedule_mediapipe_detect(self, mediapipe_image, time_ms: int, frame_buffer,
+                                  *, source_stamp=None, source_token=None,
+                                  input_generation=None) -> None:
         if self._is_closing or self.face_landmarker is None:
             return
+        stamp = float(source_stamp or time.perf_counter())
+        token = source_token
         with self._mediapipe_lock:
-            self._pending_mediapipe_job = (mediapipe_image, time_ms, frame_buffer)
+            if input_generation is not None and input_generation != self._mediapipe_input_generation:
+                return
+            if token is not None and token == self._last_mediapipe_frame_token:
+                return
+            self._last_mediapipe_frame_token = token
+            if time_ms is None:
+                time_ms = self._next_mediapipe_video_timestamp_ms(time.time())
+            time_ms = max(int(time_ms), self._last_scheduled_mediapipe_timestamp_ms + 1)
+            self._last_scheduled_mediapipe_timestamp_ms = time_ms
+            self._mediapipe_job_sequence += 1
+            self._pending_mediapipe_job = (mediapipe_image, time_ms, frame_buffer,
+                self._mediapipe_job_sequence, stamp, self._mediapipe_input_generation)
             if self._mediapipe_worker_active:
                 return
             self._mediapipe_worker_active = True
-        threading.Thread(
-            target=self._mediapipe_detect_worker,
-            daemon=True,
-            name="mediapipe-detect").start()
+            self._mediapipe_worker_generation += 1
+            generation = self._mediapipe_worker_generation
+        threading.Thread(target=self._mediapipe_detect_worker, args=(generation,),
+                         daemon=True, name="mediapipe-detect").start()
 
-    def _mediapipe_detect_worker(self) -> None:
-        latest_detection = None
+    # EVS-DESIGN-AUDIT EVS-A034 BEGIN
+    # 设计[f-052, f-057] [部分符合 / 线程回调热点]
+    # 面捕推理在 worker；回 UI 需保持 wx.CallAfter 与生命周期检查，重载/切源不能重用已销毁控件。尚未运行重入/长时回归。
+    # 历史 bug 热点 #1,#2,#5：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A034 END
+    def _mediapipe_detect_worker(self, generation: int) -> None:
         try:
             while not self._is_closing:
                 with self._mediapipe_lock:
                     job = self._pending_mediapipe_job
                     self._pending_mediapipe_job = None
-                if job is None:
-                    break
+                    if job is None:
+                        self._mediapipe_worker_active = False
+                        return
                 landmarker = self.face_landmarker
                 if landmarker is None:
-                    break
-                mediapipe_image, time_ms, _frame_buffer = job
+                    return
+                mp_image, time_ms, _buffer, sequence, sample_mono, input_generation = job
+                started = time.perf_counter()
                 try:
-                    latest_detection = landmarker.detect_for_video(
-                        mediapipe_image, time_ms)
+                    detection = landmarker.detect_for_video(mp_image, time_ms)
                 except (ValueError, RuntimeError) as exc:
                     if not self._mediapipe_detect_error_logged:
                         self._mediapipe_detect_error_logged = True
-                        print(
-                            "MediaPipe detect_for_video failed (further errors suppressed):",
-                            exc,
-                            file=sys.stderr)
+                        print("MediaPipe detect_for_video failed:", exc, file=sys.stderr)
                     continue
+                completed = time.perf_counter()
+                self._mocap_rate.observe((completed - started) * 1000.)
                 self._mediapipe_detect_error_logged = False
+                schedule_apply = False
                 with self._mediapipe_lock:
-                    if self._pending_mediapipe_job is None:
-                        break
+                    if input_generation != self._mediapipe_input_generation:
+                        continue
+                    self._mediapipe_complete_count += 1
+                    self._mediapipe_complete_times, self._mocap_completed_hz = self._record_rate_in_rolling_window(self._mediapipe_complete_times)
+                    self._mediapipe_completed_result = (detection, sequence, sample_mono, completed, input_generation)
+                    if not self._mediapipe_result_apply_scheduled:
+                        self._mediapipe_result_apply_scheduled = True
+                        schedule_apply = True
+                # f-073: publish each completion, even with continuous pending input.
+                if schedule_apply:
+                    wx.CallAfter(self._flush_mediapipe_result)
         finally:
             with self._mediapipe_lock:
-                self._mediapipe_worker_active = False
-        if latest_detection is not None and not self._is_closing:
-            wx.CallAfter(self._finish_mediapipe_detect, latest_detection)
+                if generation == self._mediapipe_worker_generation:
+                    self._mediapipe_worker_active = False
 
     def _ensure_window_capture_worker(self) -> None:
         """Start the background window-capture grabber if it is not running."""
@@ -10692,6 +12621,11 @@ class MainFrame(wx.Frame):
             daemon=True,
             name="window-capture").start()
 
+    # EVS-DESIGN-AUDIT EVS-A033 BEGIN
+    # 设计[UI-B02] [静态符合（线程分工）；稳定性待测]
+    # PrintWindow/窗口抓帧放在后台，UI 应读缓存；驱动/窗口挂起、切源旧结果和线程退出仍需长测。不得把阻塞抓帧移回 UI。
+    # 历史 bug 热点 #1,#5：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A033 END
     def _window_capture_worker(self) -> None:
         """Continuously grab the target window off the UI thread (latest-wins).
 
@@ -10748,14 +12682,32 @@ class MainFrame(wx.Frame):
             daemon=True,
             name="camera-capture").start()
 
+    def _submit_camera_face_frame(self, frame, sequence, stamp, input_generation) -> None:
+        # No camera open, wx control read or synthetic input on this path.
+        if (self._is_closing or self.video_source_kind != "camera"
+                or not self._mediapipe_landmarker_allowed() or self.face_landmarker is None
+                or not self._mocap_rate.is_due(time.perf_counter())):
+            return
+        if not self.is_acceptable_capture_frame(frame):
+            return
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if self.should_mirror_capture_preview():
+            rgb = cv2.flip(rgb, 1)
+        mediapipe = get_mediapipe_module()
+        image = mediapipe.Image(image_format=mediapipe.ImageFormat.SRGB, data=rgb)
+        self._schedule_mediapipe_detect(image, None, rgb, source_stamp=stamp,
+            source_token=("camera", input_generation, sequence), input_generation=input_generation)
+
     def _camera_capture_worker(self) -> None:
         interval = MainFrame.CAPTURE_PROCESS_INTERVAL_MS / 1000.0
         try:
             while not self._is_closing and self.video_source_kind == "camera":
                 with self._camera_capture_lock:
                     capture = self.video_capture
+                    input_generation = self._mediapipe_input_generation
                 if capture is None or not capture.isOpened():
                     break
+                interval = 1. / max(30., self._mocap_rate.effective_hz())
                 start = time.perf_counter()
                 try:
                     ok, frame = capture.read()
@@ -10778,8 +12730,18 @@ class MainFrame(wx.Frame):
                     continue
                 with self._camera_capture_lock:
                     self._camera_capture_latest_frame = normalized
+                    self._camera_capture_sample_mono = time.perf_counter()
                     self._camera_worker_frame_serial += 1
                     serial = self._camera_worker_frame_serial
+                    sample_stamp = self._camera_capture_sample_mono
+                self._camera_capture_times, self._camera_source_hz = self._record_rate_in_rolling_window(self._camera_capture_times)
+                try:
+                    self._submit_camera_face_frame(normalized, serial, sample_stamp, input_generation)
+                    self._camera_face_submit_error = None
+                except Exception as exc:
+                    if getattr(self, "_camera_face_submit_error", None) != repr(exc):
+                        print("Camera face submission failed:", exc, file=sys.stderr)
+                    self._camera_face_submit_error = repr(exc)
                 sleep_for = interval - (time.perf_counter() - start)
                 if sleep_for > 0:
                     time.sleep(sleep_for)
@@ -10788,17 +12750,59 @@ class MainFrame(wx.Frame):
                 self._camera_capture_worker_active = False
                 self._camera_capture_latest_frame = None
 
-    def _finish_mediapipe_detect(self, detection_result) -> None:
+    def _flush_mediapipe_result(self) -> None:
+        with self._mediapipe_lock:
+            result = self._mediapipe_completed_result
+            self._mediapipe_completed_result = None
+            self._mediapipe_result_apply_scheduled = False
+        if (result is None or self._is_closing
+                or result[4] != self._mediapipe_input_generation):
+            return
+        self._finish_mediapipe_detect(*result[:4])
+
+    def _publish_mocap_pose_to_model(self) -> None:
+        if (self._is_closing or self.mediapipe_face_pose is None or not self.is_model_loaded()
+                or not self.is_mocap_sample_fresh()
+                or getattr(self, "_tha3_load_in_progress", False)):
+            return
+        if self.get_image_source_mode() == IMAGE_SOURCE_THA3:
+            self.active_image_source.publish_live_pose(self)
+            return
+        current_pose = self._resolve_mocap_pose_for_render(self.mediapipe_face_pose)
+        pose = tuple(self.resolve_scheduled_infer_pose(current_pose))
+        meta = (self._latest_face_pose_sequence, self._latest_face_sample_mono)
+        self._latest_infer_input_pose = pose
+        self._latest_infer_input_face_meta = meta
+        self._latest_infer_input_snapshot = (pose, meta)
+        self._worker_infer_cap_hz = self.get_mouth_infer_cap_hz()
+
+    def _finish_mediapipe_detect(self, detection_result, sequence=0,
+                                sample_mono=0., completed_mono=0.) -> None:
         if self._is_closing or detection_result is None:
             return
-        self.update_mediapipe_face_pose(detection_result)
+        if sequence and sequence <= getattr(self, "_last_published_face_sequence", 0):
+            return
+        self._last_published_face_sequence = sequence
+        self._mediapipe_publish_count += 1
+        # f-073: a matrix alone cannot refresh the source age if conversion
+        # rejected the face (e.g. no usable screen landmarks).
+        has_pose = self.update_mediapipe_face_pose(detection_result)
+        if has_pose:
+            self._mediapipe_valid_count += 1
+            self._mocap_output_times, self._mocap_output_hz = self._record_rate_in_rolling_window(self._mocap_output_times)
+            self._latest_face_pose_sequence = sequence
+            self._latest_face_sample_mono = float(sample_mono or time.perf_counter())
+            self._latest_face_complete_mono = float(completed_mono or time.perf_counter())
+            self._latest_face_publish_mono = time.perf_counter()
+        if has_pose:
+            self._publish_mocap_pose_to_model()
 
     def update_mediapipe_face_pose(self, detection_result):
         face_screen_motion = self.extract_face_screen_motion(detection_result)
         self.latest_face_screen_motion = face_screen_motion
         if face_screen_motion is None or len(detection_result.facial_transformation_matrixes) == 0:
             self.latest_head_roll_deg = None
-            return
+            return False
 
         self.last_face_detected_time = time.time()
         xform_matrix = detection_result.facial_transformation_matrixes[0]
@@ -10823,6 +12827,30 @@ class MainFrame(wx.Frame):
         self.mediapipe_face_pose = MediaPipeFacePose(blendshape_params, xform_matrix)
         # Scale-curve preview is repainted by on_ui_anim_timer (25 fps cap).
         self._scale_curve_dirty = True
+        # #region agent log
+        try:
+            if bool(getattr(self, "_osf_pose_from_video_source", False)):
+                _now = time.monotonic()
+                if _now - float(getattr(self, "_dbg_mp_vs_pose_mono", 0.0) or 0.0) >= 2.0:
+                    self._dbg_mp_vs_pose_mono = _now
+                    import json as _json
+                    open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                        "sessionId": "86a17c",
+                        "runId": "post-fix-agent-cmd",
+                        "hypothesisId": "H4",
+                        "location": "load_preview.py:update_mediapipe_face_pose",
+                        "message": "pose from video source applied",
+                        "data": {
+                            "blend_n": len(blendshape_params),
+                            "inf_fps": round(float(getattr(self, "_inference_fps", 0.0) or 0.0), 2),
+                        },
+                        "timestamp": int(time.time() * 1000),
+                    }) + "\n")
+        except Exception:
+            pass
+        # #endregion
+
+        return True
 
     @staticmethod
     def convert_to_100(x):
@@ -10869,6 +12897,11 @@ class MainFrame(wx.Frame):
         self._source_preview_scaled_key = None
         self._source_preview_scaled_bitmap = None
 
+    # EVS-DESIGN-AUDIT EVS-A049 BEGIN
+    # 设计[UI-A×02] [静态关联 / 待画面对比]
+    # 此处为源图静态预览，与含图层的最终输出不同；不可用合成结果回填主立绘预览。加载后静态、摄像头 popup 放大需 GUI 验收。
+    # 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A049 END
     def update_source_image_bitmap(self, *, force: bool = False) -> None:
         """立绘预览：仅显示默认立绘静态图；加载成功后绘制一次并缓存。"""
         target = self._source_preview_target_size()
@@ -10910,6 +12943,9 @@ class MainFrame(wx.Frame):
         self._source_preview_cache_key = cache_key
         if hasattr(self, "source_image_panel"):
             self.source_image_panel.Refresh(False)
+        popup = getattr(self, "source_preview_popup_frame", None)
+        if popup is not None and popup.IsShown():
+            popup.preview_panel.Refresh(False)
 
     def _make_binding_context(
             self,
@@ -11033,6 +13069,11 @@ class MainFrame(wx.Frame):
             panel.CaptureMouse()
         return True
 
+    # EVS-DESIGN-AUDIT EVS-A037 BEGIN
+    # 设计[UI-A×01, UI-A×05.4] [静态符合（编辑门控）]
+    # 只编辑图层窗当前单选层；未选/多选不从输出点选另一层。输出未选时拖动窗口由 overlay 处理；主角与图层锚点不是同一规则。
+    # 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A037 END
     def begin_layer_edit_at(
             self,
             x: int,
@@ -11240,6 +13281,11 @@ class MainFrame(wx.Frame):
                 lines.append(current)
         return lines or ["Nothing yet!"]
 
+    # EVS-DESIGN-AUDIT EVS-A129 BEGIN
+    # 设计[UI-C03] [部分符合 / 外观回退待对照]
+    # 曲线采样复用 compute_target_scale，显示当前点并按样本/当前值自适应纵轴；具备调参可视化。是否已回到明确要求的旧外观需原图基线对比，不能从白底/蓝线直接判定已完成回退。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A129 END
     def paint_scale_curve_panel(self, event: wx.Event):
         dc = wx.AutoBufferedPaintDC(self.scale_curve_panel)
         width, height = self.scale_curve_panel.GetSize()
@@ -11360,12 +13406,20 @@ class MainFrame(wx.Frame):
         return MainFrame.create_rgba_bitmap_from_array(width, height, rgba)
 
     def render_pose_to_wx_image(self, pose_list: List[float]) -> Optional[wx.Image]:
+        with self._model_render_lock:
+            return self._render_pose_to_wx_image_locked(pose_list)
+
+    def _render_pose_to_wx_image_locked(self, pose_list: List[float]) -> Optional[wx.Image]:
         if self.poser is None or self.torch_source_image is None:
             return None
 
         pose = torch.tensor(pose_list, device=self.device, dtype=self.poser.get_dtype())
 
-        use_half = self.get_tha_infer_fp16_enabled()
+        if wx.IsMainThread():
+            self._worker_tha_fp16 = self.get_tha_infer_fp16_enabled()
+        use_half = bool(self._worker_tha_fp16)
+        # （THA4 每帧 isnan().any() GPU sync 把 Inf 卡在 7-8）26.10.30 14:24 s
+        _pose_t0 = time.perf_counter()
         try:
             with torch.no_grad():
                 if use_half and torch.cuda.is_available():
@@ -11373,8 +13427,6 @@ class MainFrame(wx.Frame):
                         output_image = self.poser.pose(self.torch_source_image, pose)[0].float()
                 else:
                     output_image = self.poser.pose(self.torch_source_image, pose)[0].float()
-                if torch.isnan(output_image).any() or torch.isinf(output_image).any():
-                    raise ValueError("FP16 NaN/Inf")
         except Exception:
             if use_half:
                 self._tha_infer_fp16_fallback = True
@@ -11392,12 +13444,19 @@ class MainFrame(wx.Frame):
             c, h, w = output_image.shape
             output_image = 255.0 * torch.transpose(output_image.reshape(c, h * w), 0, 1).reshape(h, w, c)
             output_image = output_image.byte()
+        self._dbg_tha_pose_ms = (time.perf_counter() - _pose_t0) * 1000.0
 
+        _cpu_t0 = time.perf_counter()
         numpy_image = output_image.detach().cpu().numpy()
-        return wx.ImageFromBuffer(numpy_image.shape[1],
+        self._dbg_tha_cpu_ms = (time.perf_counter() - _cpu_t0) * 1000.0
+        _wx_t0 = time.perf_counter()
+        wx_image = wx.ImageFromBuffer(numpy_image.shape[1],
                                   numpy_image.shape[0],
                                   numpy_image[:, :, 0:3].tobytes(),
                                   numpy_image[:, :, 3].tobytes())
+        self._dbg_tha_wx_ms = (time.perf_counter() - _wx_t0) * 1000.0
+        # （THA4 每帧 isnan().any() GPU sync 把 Inf 卡在 7-8）26.10.30 14:24 e
+        return wx_image
 
     def draw_cached_result_image(
             self,
@@ -11422,6 +13481,12 @@ class MainFrame(wx.Frame):
         """Live present uses the user-configured AA factor (no silent clamp)."""
         return float(self._get_antialias_factor())
 
+    # EVS-DESIGN-AUDIT EVS-A040 BEGIN
+    # 设计[f-068, UI-A×05.1, UI-D×] [默认静态符合 / 保留路径风险]
+    # PRESENT_COMPOSE_SCALE=1.0 当前全分辨率；函数仍允许 0.25–1 后上采样。最新明确撤销半分辨率换性能，现存可降采样路径不应被当作获准优化；本次不改常量/分支。
+    # 历史 bug 热点 #1,#4：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-QUALITY-02：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A040 END
     def _present_compose_dims(
             self, output_width: int, output_height: int) -> tuple[int, int, float]:
         scale = float(getattr(self, "PRESENT_COMPOSE_SCALE", 1.0) or 1.0)
@@ -11440,6 +13505,12 @@ class MainFrame(wx.Frame):
             wx_to_rgba=capture_wx_image_to_rgba_array,
             create_bitmap=self.create_rgba_bitmap_from_array)
 
+    # EVS-DESIGN-AUDIT EVS-A039 BEGIN
+    # 设计[UI-C04, UI-A×01, f-068] [部分符合]
+    # 主角色底部中心锚定且调用区域晃动；缓存 key 对位移/比例/角度做量化，并非逐值精确缓存。“只允许无损缓存”下微小变化复用是否可见需图像差分，不能直接宣称无损。
+    # 历史 bug 热点 #1,#3,#4：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-QUALITY-01：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A039 END
     def _compose_character_rgba_from_keyframe(
             self,
             canvas_width: int,
@@ -11542,6 +13613,11 @@ class MainFrame(wx.Frame):
         rgba[transparent, 0:3] = 0
         self.result_image_bitmap = self.create_rgba_bitmap_from_array(width, height, rgba)
 
+    # EVS-DESIGN-AUDIT EVS-A041 BEGIN
+    # 设计[UI-A×05, UI-A×05.1, UI-D03] [静态符合（合成结构）；采集待测]
+    # 背景与角色/图层在 numpy 合成同一输出面，编辑 chrome 在上采样后加；default 全分辨率。wx 不负责该像素合成，不代表整个应用不能使用 wx 控件。透明 alpha/HWND/直播助手仍需实测。
+    # 历史 bug 热点 #1,#4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A041 END
     def _compose_present_rgba(
             self, canvas_width: int, canvas_height: int) -> Optional[numpy.ndarray]:
         """Single wx-free composite shared by on-screen present and transparent
@@ -11837,6 +13913,7 @@ class MainFrame(wx.Frame):
         self._maybe_schedule_transparent_capture_update(immediate=True)
 
     def render_pose_to_result_bitmap(self, pose_list: List[float], banner_text: Optional[str] = None):
+        self._note_pose_infer_scheduled()
         self._note_pose_present_time()
         wx_image = self.render_pose_to_wx_image(pose_list)
         if wx_image is None:
@@ -11868,10 +13945,16 @@ class MainFrame(wx.Frame):
         if self.is_openseeface_mocap_mode():
             self._update_openseeface_input_pacing()
 
-        if self.mediapipe_face_pose is None:
+        if self.mediapipe_face_pose is None or not self.is_mocap_sample_fresh():
+            self._latest_infer_input_pose = None
+            self._latest_infer_input_snapshot = None
             return "no_face"
 
         current_pose = self._resolve_mocap_pose_for_render(self.mediapipe_face_pose)
+        self._latest_infer_input_pose = tuple(self.resolve_scheduled_infer_pose(current_pose))
+        self._latest_infer_input_face_meta = (self._latest_face_pose_sequence, self._latest_face_sample_mono)
+        self._latest_infer_input_snapshot = (self._latest_infer_input_pose, self._latest_infer_input_face_meta)
+        self._worker_infer_cap_hz = self.get_mouth_infer_cap_hz()
         if self.torch_source_image is None:
             return "no_model"
 
@@ -12126,6 +14209,27 @@ class MainFrame(wx.Frame):
         self._maybe_heal_stuck_infer_worker()
         if self.is_model_loaded():
             self.update_display_transform_state()
+        pipe = getattr(self, "output_enhancement", None)
+        if self.get_image_source_mode()==IMAGE_SOURCE_THA3:
+            prepare=getattr(self.active_image_source,"prepare_target_presentation",None)
+            if prepare is not None and prepare(self):return
+        if self._try_present_live_scene():
+            return
+        if pipe is not None and self.is_target_frame_rate_enabled():
+            pipe.offer_character_for_calibration(getattr(self, "_last_tha3_rgba", None))
+        if self._try_present_buffered_scene():
+            return
+        pipe = getattr(self, "output_enhancement", None)
+        if pipe is not None:
+            pipe.set_buffered_enabled(self._output_edit_slot_id() is None)
+            # bh-1 26.10.30 13:08 s
+            buffered_live = getattr(self, "_buffered_scene_renderer", None) is not None
+            if (
+                    buffered_live
+                    and (pipe.buffered_rife_requested() or pipe.target_frame_rate_enabled())
+                    and not pipe.should_compose_source_frame()):
+                return
+            # bh-1 26.10.30 13:08 e
         motion_active = (
             self._layer_motion_output_active()
             and self._output_has_presentable_keyframe())
@@ -12172,6 +14276,7 @@ class MainFrame(wx.Frame):
         if getattr(self, "_is_closing", False):
             return
         self._refresh_fps_display()
+        self._poll_agent_cmd_terminal()
         if self._scale_curve_dirty:
             self._scale_curve_dirty = False
             self.refresh_scale_curve_status()
@@ -12209,7 +14314,18 @@ class MainFrame(wx.Frame):
         self.on_display_timer()
         self.on_infer_tick()
 
+    # EVS-DESIGN-AUDIT EVS-A025 BEGIN
+    # 设计[UI-A07, f-057, f-060, f-067] [部分符合 / UI 阻塞风险]
+    # 加载成功后立即准备默认画面并激活输入；CharacterModel、poser 创建及预览准备仍在调用线程同步执行。默认画面不走 NN 懒加载，随后排队已有 warmup。模型加载不计十秒预算，不代表允许无进度地冻结 UI。
+    # 历史 bug 热点 #1,#2：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-START-06：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A025 END
     def load_model_from_path(self, character_model_json_file_name: str) -> bool:
+        self._reset_infer_worker_runtime()
+        with self._model_render_lock:
+            return self._load_model_from_path_locked(character_model_json_file_name)
+
+    def _load_model_from_path_locked(self, character_model_json_file_name: str) -> bool:
         resolved_path = self.resolve_character_model_path(character_model_json_file_name)
         if not resolved_path or not os.path.isfile(resolved_path):
             invalid_path = character_model_json_file_name
@@ -12308,6 +14424,9 @@ class MainFrame(wx.Frame):
             self.output_frame.result_image_panel.Update()
         self.refresh_basic_layer_window_if_visible()
         self._clear_output_stall_watch_state()
+        # bh-1 26.10.29 20:24 s
+        wx.CallAfter(self._maybe_warmup_output_enhancement)
+        # bh-1 26.10.29 20:24 e
         self._activate_mocap_capture_after_model_load()
         self.maybe_open_region_wobble_after_character_load()
         return True
@@ -12328,7 +14447,7 @@ class MainFrame(wx.Frame):
             self.load_model_from_path(character_model_json_file_name)
         file_dialog.Destroy()
 
-    def load_last_model(self, event: wx.Event):
+    def load_last_model(self, event: Optional[wx.Event] = None):
         if not self.last_loaded_model_path:
             return
         resolved_path = self.resolve_character_model_path(self.last_loaded_model_path)
@@ -12403,23 +14522,38 @@ if __name__ == "__main__":
         set_windows_app_user_model_id()
         os.environ.setdefault("GLOG_minloglevel", "3")
         os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-        pose_converter = MediaPoseFacePoseConverter00()
-
-        face_landmarker = None
-
-        video_capture = None
-
         app = wx.App()
         wx.DisableAsserts()
-        main_frame = MainFrame(pose_converter, video_capture, face_landmarker, device)
-        main_frame.capture_timer.Start(MainFrame.CAPTURE_IDLE_INTERVAL_MS)
-        main_frame.display_timer.Start(MainFrame.DISPLAY_PRESENT_INTERVAL_MS)
-        main_frame.animation_timer.Start(33)
-        main_frame.ui_anim_timer.Start(MainFrame.UI_ANIM_REFRESH_INTERVAL_MS)
-        main_frame.output_stall_watch_timer.Start(
-            int(MainFrame.OUTPUT_STALL_SAMPLE_INTERVAL_SEC * 1000))
+        from startup_splash import (
+            close_startup_splash,
+            pump_startup_splash,
+            show_startup_splash,
+            signal_early_splash_close,
+        )
+        early = os.environ.get("EVS_EARLY_SPLASH") == "1"
+        splash = None if early else show_startup_splash(app)
+        if splash is not None:
+            pump_startup_splash(app)
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        pose_converter = MediaPoseFacePoseConverter00()
+        face_landmarker = None
+        video_capture = None
+        try:
+            if splash is not None:
+                pump_startup_splash(app)
+            main_frame = MainFrame(pose_converter, video_capture, face_landmarker, device)
+            main_frame.capture_timer.Start(MainFrame.CAPTURE_IDLE_INTERVAL_MS)
+            main_frame.display_timer.Start(MainFrame.DISPLAY_PRESENT_INTERVAL_MS)
+            main_frame.animation_timer.Start(33)
+            main_frame._sync_frame_rate_timers()
+            main_frame.ui_anim_timer.Start(MainFrame.UI_ANIM_REFRESH_INTERVAL_MS)
+            main_frame.output_stall_watch_timer.Start(
+                int(MainFrame.OUTPUT_STALL_SAMPLE_INTERVAL_SEC * 1000))
+            if splash is not None:
+                pump_startup_splash(app)
+        finally:
+            signal_early_splash_close()
+            close_startup_splash(splash)
         app.MainLoop()
     except Exception:
         raise

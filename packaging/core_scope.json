@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "directories": [
+    "assets",
+    "bin",
+    "deps",
+    "docs",
+    "face-puppeteer-ui-enhancements-ai-code",
+    "packaging",
+    "poetry",
+    "scripts",
+    "src",
+    "tools/training",
+    "tools/tha4_teacher_portable",
+    "data/character_models/baiten_from_project_forlon9/bai_450k",
+    "data/images",
+    "data/thirdparty",
+    "data/ezvtb_nn",
+    "data/tha4",
+    "addons"
+  ],
+  "files": [
+    ".gitignore",
+    ".python-version",
+    "README.md",
+    "EasyVtuberStudio.exe",
+    "DEPLOY.bat",
+    "RESET_ADDON.bat",
+    "LICENSE"
+  ],
+  "seed_files": [
+    "load_preview_ui_state.json",
+    "region_wobble_mask*.png",
+    ".gitkeep"
+  ],
+  "seed_directories": [
+    "basic_layers"
+  ],
+  "sample_directories": [
+    "data/character_models/baiten_from_project_forlon9/bai_450k",
+    "data/images",
+    "deps/tha3/images"
+  ],
+  "note": "Candidate scope filtered through the shipped .gitignore using git check-ignore --no-index; runtime is never an option. Seed is sanitized only in the release copy."
+}

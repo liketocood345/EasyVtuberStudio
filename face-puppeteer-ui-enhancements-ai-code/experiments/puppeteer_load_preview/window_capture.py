@@ -8,6 +8,12 @@ Priority (occlusion-safe, no need to keep target window on top):
 """
 
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import ctypes
 import os
@@ -350,6 +356,11 @@ def list_capture_targets() -> List[WindowInfo]:
     return results
 
 
+# EVS-DESIGN-AUDIT EVS-A066 BEGIN
+# 设计[UI-B02] [部分符合 / 热点待测]
+# 按目标 HWND 抓帧并选择抓取方法，不要求置顶；调用须在捕获 worker。窗口失效可重选、黑帧恢复、PrintWindow 卡死与句柄泄漏需设备/窗口长测。
+# 历史 bug 热点 #1,#5：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A066 END
 def capture_window_client_bgr(hwnd: int) -> Optional[numpy.ndarray]:
     """
     Grab the window client area as BGR.

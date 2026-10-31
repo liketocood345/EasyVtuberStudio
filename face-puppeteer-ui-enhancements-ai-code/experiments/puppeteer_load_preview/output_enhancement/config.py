@@ -41,11 +41,18 @@ NN_FRAME_INTERP_LABELS = (
 # --- Inference backend for NN ops (f-058) ---
 INFER_BACKEND_PYTORCH = "pytorch"
 INFER_BACKEND_ORT = "ort"
+INFER_BACKEND_DML = "dml"
 INFER_BACKEND_TRT = "trt"
-INFER_BACKEND_VALUES = (INFER_BACKEND_PYTORCH, INFER_BACKEND_ORT, INFER_BACKEND_TRT)
+INFER_BACKEND_VALUES = (
+    INFER_BACKEND_PYTORCH,
+    INFER_BACKEND_ORT,
+    INFER_BACKEND_DML,
+    INFER_BACKEND_TRT,
+)
 INFER_BACKEND_LABELS = (
     "PyTorch / 默认 (仅 THA FP16)",
     "ONNX Runtime (SR/RIFE)",
+    "DirectML (ONNX, Windows GPU)",
     "TensorRT (SR/RIFE, 需 NVIDIA)",
 )
 
@@ -59,6 +66,8 @@ PERSISTENCE_KEYS = (
     "nn_frame_interpolation_multiplier",
     "nn_infer_backend",
     "tha_infer_fp16",
+    "target_frame_rate_enabled",
+    "target_frame_rate_fps",
 )
 
 
@@ -115,6 +124,7 @@ def config_from_persistence(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     from output_enhancement.antialiasing import normalize_antialias_strength
     from output_enhancement.pose_interpolation import normalize_multiplier as normalize_pose_interp
 
+    from output_enhancement.target_frame_rate import normalize_target_fps, normalize_target_enabled
     data = data or {}
     return {
         "antialias_strength": normalize_antialias_strength(
@@ -126,6 +136,8 @@ def config_from_persistence(data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             data.get("nn_frame_interpolation_multiplier")),
         "nn_infer_backend": normalize_infer_backend(data.get("nn_infer_backend")),
         "tha_infer_fp16": normalize_tha_infer_fp16(data.get("tha_infer_fp16")),
+        "target_frame_rate_enabled": normalize_target_enabled(data.get("target_frame_rate_enabled", False)),
+        "target_frame_rate_fps": normalize_target_fps(data.get("target_frame_rate_fps", 60)),
     }
 
 
@@ -136,4 +148,6 @@ def pipeline_config_from_persistence(data: Optional[Dict[str, Any]]) -> Dict[str
         "nn_super_resolution_mode": full["nn_super_resolution_mode"],
         "nn_frame_interpolation_multiplier": full["nn_frame_interpolation_multiplier"],
         "nn_infer_backend": full["nn_infer_backend"],
+        "target_frame_rate_enabled": full["target_frame_rate_enabled"],
+        "target_frame_rate_fps": full["target_frame_rate_fps"],
     }

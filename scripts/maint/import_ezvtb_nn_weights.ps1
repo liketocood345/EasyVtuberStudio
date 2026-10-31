@@ -1,4 +1,4 @@
-# Import NN ONNX subset (rife / waifu2x / Real-ESRGAN) into data/ezvtb_nn/.
+﻿# Import NN ONNX subset (rife / waifu2x / Real-ESRGAN) into data/ezvtb_nn/.
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\maint\import_ezvtb_nn_weights.ps1 -PortableRoot .
 #   powershell -ExecutionPolicy Bypass -File scripts\maint\import_ezvtb_nn_weights.ps1 -PortableRoot . -ZipPath D:\downloads\ezvtuber_data.zip
@@ -75,16 +75,8 @@ if (-not (Test-Path -LiteralPath $ZipPath)) {
     if ($SkipDownload) {
         throw "Zip not found: $ZipPath (pass -ZipPath or remove -SkipDownload)"
     }
-    $python = $null
-    foreach ($candidate in @(
-            (Join-Path $PortableRoot "addons\face_puppeteer\venv\Scripts\python.exe"),
-            (Join-Path $PortableRoot "workspace\student_venv\Scripts\python.exe"),
-            "python")) {
-        if ($candidate -eq "python" -or (Test-Path -LiteralPath $candidate)) {
-            $python = $candidate
-            break
-        }
-    }
+    . (Join-Path $PortableRoot 'packaging/portable_environment.ps1')
+    $python=Get-LocalDownloadPython $PortableRoot
     if (-not $python) { throw "Python not found for gdown download." }
     Write-Host "Downloading ezvtuber-rt data pack (Google Drive)..."
     & $python -m pip install -q gdown

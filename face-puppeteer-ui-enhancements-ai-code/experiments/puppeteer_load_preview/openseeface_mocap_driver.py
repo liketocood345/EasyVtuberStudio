@@ -1,5 +1,11 @@
 """OpenSeeFace UDP frames -> synthetic MediaPipeFacePose for THA4 converter."""
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import math
 import time
@@ -40,9 +46,9 @@ OSF_CAPTURE_HEIGHT_MIN = 240
 OSF_CAPTURE_WIDTH_MAX = 1920
 OSF_CAPTURE_HEIGHT_MAX = 1080
 OSF_DEFAULT_FPS = 12
-OSF_VISUALIZE_MIN = 1
+OSF_VISUALIZE_MIN = 0
 OSF_VISUALIZE_MAX = 4
-OSF_VISUALIZE_DEFAULT = 3
+OSF_VISUALIZE_DEFAULT = 0
 OSF_CAMERA_LIST_TIMEOUT_SEC = 6.0
 OSF_PREVIEW_HWND_POLL_SEC = 0.5
 OSF_PREVIEW_HWND_TIMEOUT_SEC = 15.0
@@ -57,6 +63,23 @@ OSF_CAPTURE_SIZE_PRESETS: tuple[tuple[str, int, int], ...] = (
     ("1280×720", 1280, 720),
     ("1920×1080", 1920, 1080),
 )
+
+
+# bh-5 26.10.30 11:20 s
+def next_lower_osf_capture_size(width: int, height: int) -> Optional[tuple[int, int]]:
+    """Next smaller capture preset, or None when already at the floor."""
+    area = max(1, int(width) * int(height))
+    lower = [
+        (int(preset_w), int(preset_h))
+        for _label, preset_w, preset_h in OSF_CAPTURE_SIZE_PRESETS
+        if int(preset_w) * int(preset_h) < area
+    ]
+    if not lower:
+        return None
+    return lower[-1]
+# bh-5 26.10.30 11:20 e
+
+
 OSF_BREATH_CYCLE_SEC = 4.0
 OSF_EYE_BLINK_FEATURE_GAIN = 1.5
 OSF_PUPIL_CONFIDENCE_MIN = 0.20
@@ -592,6 +615,11 @@ def build_openseeface_face_screen_motion(
     return OpenSeeFaceScreenMotion(center_x=center_x, center_y=center_y, face_size=face_size)
 
 
+# EVS-DESIGN-AUDIT EVS-A071 BEGIN
+# 设计[f-052, ix-024] [静态关联 / 朝向待测]
+# OSF 包转统一 pose 并维护 screen motion；预览镜像和控制方向是两项验收，不能只看镜像画面对就确认动态增强/眼睛方向一致。
+# 历史 bug 热点 #3,#5：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A071 END
 def build_openseeface_mediapipe_face_pose(
         frame: OpenSeeFaceFrame,
         state: OpenSeeFaceMocapState,
@@ -693,6 +721,7 @@ class OpenSeeFaceInputPacer:
         self.target_fps = clamp_osf_fps(target_fps)
         self.max_catchup_frames = max(1, int(max_catchup_frames))
         self._latest: Optional[MediaPipeFacePose] = None
+        self._latest_mono = 0.0
         self._segment_from: Optional[MediaPipeFacePose] = None
         self._segment_to: Optional[MediaPipeFacePose] = None
         self._segment_start_mono = 0.0
@@ -702,6 +731,7 @@ class OpenSeeFaceInputPacer:
 
     def reset(self) -> None:
         self._latest = None
+        self._latest_mono = 0.0
         self._segment_from = None
         self._segment_to = None
         self._segment_start_mono = 0.0
@@ -714,6 +744,7 @@ class OpenSeeFaceInputPacer:
 
     def push_latest(self, pose: MediaPipeFacePose) -> None:
         self._latest = copy_mediapipe_face_pose(pose)
+        self._latest_mono = time.monotonic()
         if self._current is None:
             now = time.monotonic()
             seed = copy_mediapipe_face_pose(pose)
@@ -731,11 +762,28 @@ class OpenSeeFaceInputPacer:
         self._keyframe_pending = False
         return pending
 
+    # EVS-DESIGN-AUDIT EVS-A070 BEGIN
+    # 设计[f-052, f-069] [符合（输入新鲜度）]
+    # 按目标帧率重放/插值 _latest；超过 OSF_UDP_DISCONNECT_SEC 则丢弃缓存并停止 keyframe。此为时序平滑，非已获准上线的可选 Pose Predictor。
+    # 历史 bug 热点 #1,#3：断流后禁止旧姿态当 LIVE。
+    # EVS-DESIGN-AUDIT EVS-A070 END
     def update(self, now_mono: Optional[float] = None) -> tuple[Optional[MediaPipeFacePose], bool]:
-        if self._latest is None:
-            return self._current, False
         if now_mono is None:
             now_mono = time.monotonic()
+        # bh-3 26.10.29 19:40 s
+        if (
+                self._latest is not None
+                and self._latest_mono > 0.0
+                and (now_mono - self._latest_mono) > OSF_UDP_DISCONNECT_SEC):
+            self._latest = None
+            self._current = None
+            self._segment_from = None
+            self._segment_to = None
+            self._keyframe_pending = False
+            return None, False
+        # bh-3 26.10.29 19:40 e
+        if self._latest is None:
+            return None, False
         interval = 1.0 / float(max(1, self.target_fps))
         keyframe_committed = False
 

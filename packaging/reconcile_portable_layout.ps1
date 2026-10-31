@@ -40,10 +40,11 @@ $tha4Record = Get-AddonRecord -Manifest $manifest -AddonId "tha4_training"
 
 $faceInstalled = Test-AddonInstalled -PortableRoot $PortableRoot -AddonRecord $faceRecord
 $tha3Installed = Test-AddonInstalled -PortableRoot $PortableRoot -AddonRecord $tha3Record
-$tha4Installed = Test-AddonInstalled -PortableRoot $PortableRoot -AddonRecord $tha4Record
+# Root-local teacher assets also back the upstream demo compatibility links.
+$tha4Installed = (Test-Path -LiteralPath (Join-Path $PortableRoot 'addons/tha4_training/data/tha4/face_morpher.pt')) -and (Test-Path -LiteralPath (Join-Path $PortableRoot 'addons/tha4_training/data/pose_dataset.pt'))
 
 # --- face_puppeteer ---
-$venvTarget = Resolve-PortableRootPath $PortableRoot (Get-FacePuppeteerVenvRelative)
+$venvTarget = Get-FacePuppeteerVenvAbsolute $PortableRoot
 $mediapipeTarget = Resolve-PortableRootPath $PortableRoot (Get-FacePuppeteerMediapipeRelative)
 $runtimeVenvLink = Join-Path $PortableRoot "runtime\venv"
 $repoMediapipeLink = Resolve-PortableRootPath $PortableRoot "data/thirdparty/mediapipe"
@@ -80,8 +81,8 @@ if ($tha3Installed) {
 $tha4AddonRoot = Get-AddonFolderAbsolute -PortableRoot $PortableRoot -AddonRecord $tha4Record
 $demoTha4Link = Join-Path $PortableRoot "face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo\data\tha4"
 $demoPoseLink = Join-Path $PortableRoot "face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo\data\pose_dataset.pt"
-$tha4Target = Join-Path $tha4AddonRoot "tha4"
-$poseTarget = Join-Path $tha4AddonRoot "pose_dataset.pt"
+$tha4Target = Join-Path $tha4AddonRoot "data/tha4"
+$poseTarget = Join-Path $tha4AddonRoot "data/pose_dataset.pt"
 
 if ($tha4Installed) {
     Ensure-JunctionLink -LinkPath $demoTha4Link -TargetPath $tha4Target | Out-Null

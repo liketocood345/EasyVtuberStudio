@@ -127,3 +127,22 @@ class PoseInterpolationController:
         if is_pose_interpolation_active(multiplier) and self.keyframe_pose is not None:
             return self.keyframe_pose
         return last_pose
+
+
+class TimestampPoseSampler:
+    """Causal pose lerp at a fixed 75ms lag, independent of infer completion."""
+    def __init__(self,delay=.075):
+        from collections import deque
+        self.delay=delay;self.samples=deque(maxlen=128)
+    def reset(self):self.samples.clear()
+    def sample(self,pose,now):
+        value=tuple(float(x) for x in pose)
+        if not self.samples or value!=self.samples[-1][1]:self.samples.append((float(now),value))
+        goal=float(now)-self.delay
+        if goal<=self.samples[0][0]:return list(self.samples[0][1]),self.samples[0][0]
+        left=self.samples[0]
+        for right in self.samples:
+            if right[0]>goal:
+                return lerp_pose(left[1],right[1],(goal-left[0])/(right[0]-left[0])),goal
+            left=right
+        return list(left[1]),goal

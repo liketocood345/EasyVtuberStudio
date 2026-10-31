@@ -1,5 +1,11 @@
 """Synthetic MediaPipeFacePose from global screen mouse + procedural blink."""
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import math
 import time
@@ -65,6 +71,11 @@ def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+# EVS-DESIGN-AUDIT EVS-A057 BEGIN
+# 设计[ix-020, UI-B05] [静态符合（范围）]
+# Mouse 自动眨眼周期限制 2–20 秒；不能用 OSF 独立眨眼参数替代此要求。
+# 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A057 END
 def clamp_blink_interval_sec(value: float) -> float:
     return clamp(float(value), MOUSE_BLINK_INTERVAL_MIN_SEC, MOUSE_BLINK_INTERVAL_MAX_SEC)
 
@@ -182,6 +193,11 @@ class MouseCenterZone:
             half_height=clamp(half_height, MOUSE_ZONE_HALF_MIN, MOUSE_ZONE_HALF_MAX),
         ).clamped()
 
+    # EVS-DESIGN-AUDIT EVS-A058 BEGIN
+    # 设计[ix-021, ix-023, UI-B06] [静态符合（尺寸保持）]
+    # 自动标定移动中心时保留宽高；靠屏幕边界的 clamped 行为仍需检查不会在多屏边界意外缩框。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A058 END
     def with_center_at_preserving_size(self, nx: float, ny: float) -> "MouseCenterZone":
         """Move zone center to (nx, ny) without changing half_width/height (e.g. auto-calibration)."""
         zone = MouseCenterZone(
@@ -307,6 +323,11 @@ def is_vertically_outside_center_zone(local_y: float) -> bool:
     return abs(local_y) > 1.0
 
 
+# EVS-DESIGN-AUDIT EVS-A060 BEGIN
+# 设计[ix-022, ix-024, f-021] [静态关联 / 联动待测]
+# 平移、倾斜混合和脸大小构造在此；1=只倾斜、0=只平移，眼/身体左右应一致。静态公式不足以验收屏幕坐标、镜像和模型合成后的总方向。
+# 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A060 END
 def build_mouse_dynamic_face_screen_motion(
         nx: float,
         ny: float,
@@ -413,6 +434,11 @@ def is_mouse_inside_center_zone(nx: float, ny: float, zone: MouseCenterZone) -> 
     return abs(local_x) <= 1.0 and abs(local_y) <= 1.0
 
 
+# EVS-DESIGN-AUDIT EVS-A059 BEGIN
+# 设计[ix-022, UI-B08] [静态符合（映射方向）]
+# 采用上出框缩小、下出框放大；不要被手册较早方向或泛泛“修反向”的反馈覆盖。
+# 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A059 END
 def face_size_from_vertical_zone_exit(
         local_y: float,
         *,

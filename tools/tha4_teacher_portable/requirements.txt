@@ -1,0 +1,13 @@
+torch @ https://download.pytorch.org/whl/cu117/torch-1.13.1%2Bcu117-cp310-cp310-win_amd64.whl#sha256=978239684c6ec455ad2157ff33d44fdb9dd8d3a93b9d2f4ac7aa57691e990136
+torchvision @ https://download.pytorch.org/whl/cu117/torchvision-0.14.1%2Bcu117-cp310-cp310-win_amd64.whl#sha256=b39fc67e7131053d435804d7901e88528611c0832fd9f1cc26476b5a27cc5d81
+wxPython==4.2.5
+numpy==1.26.4
+scipy==1.15.3
+Pillow==9.5.0
+omegaconf==2.3.1
+einops==0.8.2
+matplotlib==3.8.4
+numpy-quaternion==2022.4.2
+tensorboard==2.15.1
+
+opencv-contrib-python==4.11.0.86

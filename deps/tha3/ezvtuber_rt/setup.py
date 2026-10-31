@@ -17,7 +17,7 @@ long_description = readme_file.read_text(encoding="utf-8") if readme_file.exists
 # Core dependencies required for all installations
 core_dependencies = [
     "numpy",
-    "opencv-python",
+    "opencv-contrib-python",
     "tqdm",
     "onnx",
     "onnxruntime-directml",

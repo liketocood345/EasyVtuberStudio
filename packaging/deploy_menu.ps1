@@ -1,3 +1,14 @@
+﻿# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
+# EVS-DESIGN-AUDIT EVS-A122 BEGIN
+# 设计[dep-003, dep-025] [静态符合（菜单）；部署未执行]
+# 六档数字输入，Enter 只选基础；历史四档 Y/N 不再作为当前验收。安装幂等性、网络失败恢复和英文覆盖提醒需实际干净环境测试。
+# 历史 bug 热点 #6：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A122 END
 param(
     [Parameter(Mandatory = $true)]
     [string]$PortableRoot,
@@ -15,7 +26,7 @@ $DeployTierCatalog = @(
     @{ Number = 3; PackageId = "face_puppeteer"; Label = "face_puppeteer   - MediaPipe face capture (includes full Python runtime)" },
     @{ Number = 4; PackageId = "tha3_models"; Label = "tha3_models      - THA3 portrait weights" },
     @{ Number = 5; PackageId = "tha4_training"; Label = "tha4_training    - THA4 teacher + pose dataset (training / distill)" },
-    @{ Number = 6; PackageId = "output_enhancement"; Label = "output_enhancement - NN super-resolution + RIFE (onnxruntime)" }
+    @{ Number = 6; PackageId = "output_enhancement"; Label = "output_enhancement - NN super-resolution + RIFE (DirectML ONNX Runtime)" }
 )
 
 function Show-AddonStatus {
@@ -170,8 +181,7 @@ function Read-DeployTierChoices {
 
     if (-not $hasBasic -and -not $hasFace -and ($hasTha3 -or $hasTha4)) {
         Write-Host ""
-        Write-Host "Warning: THA3/THA4 packs need basic_run or face_puppeteer for Python runtime."
-        Write-Host "Continuing anyway; install may fail verification."
+        Write-Host "THA3 prepares its local environment; THA4 training uses a separate portable Teacher folder."
         Write-Host ""
     }
 

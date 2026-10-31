@@ -10,6 +10,12 @@
 See design handbook f-068. Hot path must not flush mask PNGs to disk.
 """
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import math
 import time
@@ -51,6 +57,11 @@ PinPoint = Tuple[float, float]
 AxisLine = Tuple[float, float, float, float]  # root_x, root_y, tip_x, tip_y (ray)
 
 
+# EVS-DESIGN-AUDIT EVS-A108 BEGIN
+# 设计[f-068] [静态符合（范围）]
+# 强度下限 0，不设有限上限；非有限数归零是数值防御，不能误读为给正常强度加上限。
+# 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A108 END
 def clamp_strength(value: float) -> float:
     """Lower bound 0; no upper cap."""
     try:
@@ -62,6 +73,11 @@ def clamp_strength(value: float) -> float:
     return float(max(0.0, v))
 
 
+# EVS-DESIGN-AUDIT EVS-A109 BEGIN
+# 设计[f-068] [静态符合（范围）]
+# 速度下限 0，不设有限上限；UI 可输入范围需与本数值入口一致。
+# 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A109 END
 def clamp_speed(value: float) -> float:
     """Lower bound 0; no upper cap."""
     try:
@@ -224,6 +240,11 @@ def _empty_island_bank(
     ]
 
 
+# EVS-DESIGN-AUDIT EVS-A110 BEGIN
+# 设计[f-068] [静态关联 / 岛处理待测]
+# 最多三个活动岛按 MAX_ACTIVE_ISLANDS 处理，岛参数分别保存；不是只能建立三个区域。透明像素仍可画区域，不能仅依 alpha 删去用户 mask。
+# 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A110 END
 def iter_mask_components(
         mask: numpy.ndarray,
         *,
@@ -417,6 +438,7 @@ class RegionWobbleState:
         self._mask_generation = int(self._mask_generation) + 1
         self._last_wobble_key = None
         self._last_wobble_rgba = None
+        self._last_wobble_source = None
 
     def compose_signature_token(self, *, present_hz: float = 30.0) -> tuple:
         """Quantized token for present/compose early-out (cheap, no warp).
@@ -910,6 +932,15 @@ def overlay_mask_preview_rgba(
     h, w = out.shape[:2]
     if mask.shape[0] != h or mask.shape[1] != w:
         mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_LINEAR)
+    # f-068/f-070: masks are sparse (ears/tips); keep exactly the same float
+    # arithmetic, restricted to the positive-mask rectangle instead of all pixels.
+    positive = cv2.findNonZero(numpy.ascontiguousarray(mask > 0, dtype=numpy.uint8))
+    if positive is None:
+        return out
+    x, y, rw, rh = cv2.boundingRect(positive)
+    canvas = out
+    out = canvas[y:y + rh, x:x + rw]
+    mask = mask[y:y + rh, x:x + rw]
     m = numpy.clip(mask.astype(numpy.float32), 0.0, 1.0)
     wgt = (m * float(alpha))[..., None]
     tint_arr = numpy.array(tint, dtype=numpy.float32).reshape(1, 1, 3)
@@ -919,7 +950,7 @@ def overlay_mask_preview_rgba(
     a = out[:, :, 3].astype(numpy.float32)
     a_lift = numpy.maximum(a, m * 200.0)
     out[:, :, 3] = numpy.clip(a_lift, 0, 255).astype(numpy.uint8)
-    return out
+    return canvas
 
 
 def composite_on_checkerboard(
@@ -930,11 +961,7 @@ def composite_on_checkerboard(
         c1: Tuple[int, int, int] = (58, 60, 66)) -> numpy.ndarray:
     """Editor-only: flat opaque preview so transparent regions are paintable/visible."""
     h, w = int(rgba.shape[0]), int(rgba.shape[1])
-    yy, xx = numpy.indices((h, w))
-    parity = ((yy // cell) + (xx // cell)) & 1
-    board = numpy.empty((h, w, 3), dtype=numpy.float32)
-    board[parity == 0] = numpy.array(c0, dtype=numpy.float32)
-    board[parity == 1] = numpy.array(c1, dtype=numpy.float32)
+    board = _preview_checkerboard(h, w, int(cell), tuple(c0), tuple(c1))
     src = rgba.astype(numpy.float32)
     a = (src[:, :, 3:4] / 255.0)
     rgb = src[:, :, :3] * a + board * (1.0 - a)
@@ -942,6 +969,18 @@ def composite_on_checkerboard(
     out[:, :, :3] = numpy.clip(rgb, 0, 255).astype(numpy.uint8)
     out[:, :, 3] = 255
     return out
+
+
+from functools import lru_cache as _preview_lru_cache
+
+
+@_preview_lru_cache(maxsize=8)
+def _preview_checkerboard(h, w, cell, c0, c1):
+    # Immutable, bounded editor background cache; never used in the output image.
+    parity = ((numpy.arange(h)[:, None] // cell) + (numpy.arange(w)[None, :] // cell)) & 1
+    board = numpy.asarray((c0, c1), dtype=numpy.float32)[parity]
+    board.flags.writeable = False
+    return board
 
 
 def overlay_guides_rgba(
@@ -1065,10 +1104,18 @@ def overlay_island_labels_rgba(
                 int(th),
                 cv2.LINE_AA)
     a = float(max(0.0, min(1.0, alpha)))
-    blended = (
-        out.astype(numpy.float32) * (1.0 - a)
-        + overlay.astype(numpy.float32) * a)
-    out[:, :, :3] = numpy.clip(blended[:, :, :3], 0, 255).astype(numpy.uint8)
+    # f-068/f-070: preserve even legacy float-rounding on unchanged pixels.
+    # A 256-value LUT replaces the full-canvas float blend outside text bounds.
+    values = numpy.arange(256, dtype=numpy.float32)
+    lut = numpy.clip(values * (1.0 - a) + values * a, 0, 255).astype(numpy.uint8)
+    changed = cv2.findNonZero(numpy.ascontiguousarray(numpy.any(out != overlay, axis=2), dtype=numpy.uint8))
+    base = out
+    out = cv2.LUT(out, lut)
+    if changed is not None:
+        x, y, rw, rh = cv2.boundingRect(changed)
+        roi = numpy.s_[y:y + rh, x:x + rw]
+        blended = base[roi].astype(numpy.float32) * (1.0 - a) + overlay[roi].astype(numpy.float32) * a
+        out[roi] = numpy.clip(blended, 0, 255).astype(numpy.uint8)
     out[:, :, 3] = rgba[:, :, 3]
     return out
 
@@ -1151,6 +1198,12 @@ def _island_roi_bounds(
     return y0, y1, x0, x1
 
 
+# EVS-DESIGN-AUDIT EVS-A111 BEGIN
+# 设计[f-068] [待澄清（原话与实现有差异）]
+# 当前三岛为 0、2π/3、4π/3；原话“三时均分π”不能直接等同均分 2π。保留手册证据歧义，不把技术解释写成已确认符合；两岛反相另有明确规则。
+# 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+# 诊断标记 R-DESIGN-02：参照文件头诊断报告；本次不修复实际行为。
+# EVS-DESIGN-AUDIT EVS-A111 END
 def island_idle_phase_rad(island_index: int, island_count: int) -> float:
     """Phase offset (rad) for idle sine when island_phase_stagger is on.
 
@@ -1348,6 +1401,8 @@ def warp_hinge_island(
     t = rel_x * ux + rel_y * uy
     ray_w = numpy.clip(t / float(ulen), 0.0, 1.0)
     ray_w = numpy.power(ray_w, float(RAY_ROOT_EASE)).astype(numpy.float32)
+    # f-068/f-070: soften the displacement boundary, not the character texture.
+    mask_roi = cv2.GaussianBlur(mask_roi, (0, 0), 1.25)
     blend = numpy.clip(mask_roi * free * ray_w, 0.0, 1.0)
     theta = numpy.deg2rad(float(angle_deg)) * blend
     piv_x = float(ax0)
@@ -1359,6 +1414,13 @@ def warp_hinge_island(
     map_x = piv_x + cos_t * vx - sin_t * vy
     map_y = piv_y + sin_t * vx + cos_t * vy
 
+    # Bound displacement gradients: avoid a folding remap at sharp mask edges.
+    dx=map_x-xx;dy=map_y-yy
+    if min(dx.shape)>1:
+        dxy,dxx=numpy.gradient(dx);dyy,dyx=numpy.gradient(dy)
+        slope=max(float(numpy.max(numpy.abs(dxx)+numpy.abs(dxy))),float(numpy.max(numpy.abs(dyx)+numpy.abs(dyy))))
+        if slope>.8:
+            gain=.8/slope;map_x=xx+dx*gain;map_y=yy+dy*gain
     source = numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
     warped_roi = cv2.remap(
         source,
@@ -1569,6 +1631,11 @@ def _integrate_angle_spring(
     return (island.spring_x + idle) * clamp_strength(island.strength)
 
 
+# EVS-DESIGN-AUDIT EVS-A107 BEGIN
+# 设计[f-068, UI-D05～D09] [部分符合 / 画质待测]
+# 按区域岛、轴/点钉与边界衰减形变，非早期整区平移方案；主角色和图层均有接入。透明区域、拖动部件和长期缓存失效需实测。
+# 历史 bug 热点 #1,#3,#4：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A107 END
 def apply_wobble(
         rgba: numpy.ndarray,
         state: RegionWobbleState,
@@ -1680,6 +1747,7 @@ def apply_wobble(
     if (
             not debug_on
             and cached is not None
+            and getattr(state, "_last_wobble_source", None) is rgba
             and getattr(state, "_last_wobble_key", None) == cache_key
             and cached.shape == rgba.shape):
         return cached
@@ -1758,6 +1826,7 @@ def apply_wobble(
     result = numpy.ascontiguousarray(out, dtype=numpy.uint8)
     state._last_wobble_key = cache_key
     state._last_wobble_rgba = result
+    state._last_wobble_source = rgba  # Retain identity; allocator id reuse must not replay old texture.
     return result
 
 

@@ -10,6 +10,12 @@ Layer pixels come from a caller-supplied rgba_loader returning HxWx4 uint8
 straight-alpha RGBA (so this module has no dependency on wx or the asset cache).
 """
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import math
 from typing import Any, Callable, Optional
@@ -39,6 +45,21 @@ from layer_runtime import (
 RgbaLoader = Callable[[BasicLayerSlot], Optional[numpy.ndarray]]
 
 _TRANSFORM_EPS = 1e-4
+
+
+class _RgbaFrameIdentity:
+    """Cache key retaining an immutable source frame, not just its asset path.
+
+    GIFs share a path and geometry across subframes. Keeping a strong reference
+    also prevents Python id reuse when a replaced asset or filtered frame dies.
+    """
+    __slots__ = ("rgba",)
+    def __init__(self, rgba):
+        self.rgba = rgba
+    def __hash__(self):
+        return id(self.rgba)
+    def __eq__(self, other):
+        return isinstance(other, _RgbaFrameIdentity) and self.rgba is other.rgba
 
 
 class _RgbaSizeView:
@@ -188,7 +209,7 @@ def _render_layer_contribution(
             swing_deg=swing_deg,
             canvas_width=canvas_width,
             canvas_height=canvas_height,
-            wobble_token=wobble_token)
+            wobble_token=(wobble_token, _RgbaFrameIdentity(layer_rgba)))
         hit = warp_cache.get(cache_key)
         if hit is not None:
             return hit
@@ -221,6 +242,12 @@ def _render_layer_contribution(
     return contribution
 
 
+# EVS-DESIGN-AUDIT EVS-A089 BEGIN
+# 设计[f-065, UI-A×05.1] [明确缺口（镂空）；合成路径符合]
+# 这是 wx-free RGBA 叠层，角色和普通层均作 source-over；未见按镂空层扣除已合成角色 alpha 的分支。透明装饰像素只露出下层，不等于穿透主立绘的镂空。
+# 历史 bug 热点 #1,#4：仅为回归关联，非声称本次故障已复现。
+# 诊断标记 R-DESIGN-01：参照文件头诊断报告；本次不修复实际行为。
+# EVS-DESIGN-AUDIT EVS-A089 END
 def compose_full_stack_rgba(
         state: BasicLayersState,
         rgba_loader: RgbaLoader,
@@ -235,6 +262,7 @@ def compose_full_stack_rgba(
         warp_cache: Optional[LayerWarpResultCache] = None,
         layer_wobble_token_fn: Optional[Callable[[BasicLayerSlot], Any]] = None,
         base_rgba: Optional[numpy.ndarray] = None,
+        resolved_geometry: Optional[dict] = None,
 ) -> numpy.ndarray:
     """Composite the full layer stack (character in the middle) to a straight
     RGBA canvas, mirroring LayerCompositor.draw_post_process_stack.
@@ -267,13 +295,11 @@ def compose_full_stack_rgba(
         views[layer.slot_id] = view
         return view
 
-    resolved = resolve_layer_rects(
-        state,
-        _resolver_loader,
-        canvas_w,
-        canvas_h,
-        binding_context,
-        binding_smoother=binding_smoother)
+    resolved = resolved_geometry
+    if resolved is None:
+        resolved = resolve_layer_rects(
+            state, _resolver_loader, canvas_w, canvas_h, binding_context,
+            binding_smoother=binding_smoother)
 
     if base_rgba is not None:
         canvas = numpy.ascontiguousarray(base_rgba, dtype=numpy.uint8).copy()

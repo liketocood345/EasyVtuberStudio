@@ -29,7 +29,8 @@ def test_pipeline_config_snapshot():
     snap = pipe.get_config_snapshot()
     assert snap["nn_super_resolution_mode"] == NN_SR_WAIFU2X_X2_FP32
     assert pipe.nn_modes_requested()
-    assert not pipe.nn_runtime_ready() or pipe.weights_available
+    assert not pipe.nn_runtime_ready()
+    assert pipe._ort is None and pipe._trt is None
 
 
 def test_validate_pytorch_nn_not_ready():

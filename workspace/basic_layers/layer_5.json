@@ -3,7 +3,7 @@
   "enabled": true,
   "visible": true,
   "asset_path": null,
-  "z_order": 5,
+  "z_order": 3,
   "occlusion": "in_front_of_character",
   "transform": {
     "offset_x": 0.0,

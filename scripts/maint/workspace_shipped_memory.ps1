@@ -1,4 +1,4 @@
-# Shipped UI persistence (seed memory) for GitHub CORE + HF mirror.
+﻿# Shipped UI persistence (seed memory) for GitHub CORE + HF mirror.
 # Keep in sync with .gitignore allow-list under workspace/.
 #
 # Dot-source:
@@ -37,7 +37,8 @@ function Test-IsShippedWorkspaceMemoryName([string]$Name) {
 function Copy-ShippedWorkspaceMemory {
     param(
         [Parameter(Mandatory = $true)][string]$SourceRoot,
-        [Parameter(Mandatory = $true)][string]$DestRoot
+        [Parameter(Mandatory = $true)][string]$DestRoot,
+        [switch]$Sanitize
     )
 
     $srcWorkspace = Join-Path $SourceRoot "workspace"
@@ -81,6 +82,12 @@ function Copy-ShippedWorkspaceMemory {
         $copied += "$dirName/"
     }
 
+    if($Sanitize) {
+        $python=Join-Path $SourceRoot 'runtime/python310/python.exe'
+        if(-not(Test-Path -LiteralPath $python)) { throw 'Folder-local build Python required for seed sanitization' }
+        & $python -I (Join-Path $SourceRoot 'packaging/sanitize_seed.py') --workspace $dstWorkspace
+        if($LASTEXITCODE -ne 0) { throw 'Seed sanitization failed' }
+    }
     if ($copied.Count -gt 0) {
         Write-Host "Shipped workspace memory -> $dstWorkspace : $($copied -join ', ')"
     } else {

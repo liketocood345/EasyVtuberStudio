@@ -138,17 +138,9 @@ class FaceMorpher08(Module):
         return bottom_layer * (1-top_layer_a) + torch.cat([top_layer_rgb * top_layer_a, top_layer_a], dim=1)
 
     def apply_grid_change(self, grid_change, image: Tensor) -> Tensor:
-        n, c, h, w = image.shape
-        device = grid_change.device
-        grid_change = torch.transpose(grid_change.view(n, 2, h * w), 1, 2).view(n, h, w, 2)
-        identity = torch.tensor(
-            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            device=device,
-            dtype=grid_change.dtype).unsqueeze(0).repeat(n, 1, 1)
-        base_grid = affine_grid(identity, [n, c, h, w], align_corners=False)
-        grid = base_grid + grid_change
-        resampled_image = grid_sample(image, grid, mode='bilinear', padding_mode='border', align_corners=False)
-        return resampled_image
+        # Shared immutable grid cache avoids per-frame host/device constants.
+        from tha3.nn.image_processing_util import apply_grid_change
+        return apply_grid_change(grid_change, image)
 
     def apply_color_change(self, alpha, color_change, image: Tensor) -> Tensor:
         return color_change * alpha + image * (1 - alpha)
