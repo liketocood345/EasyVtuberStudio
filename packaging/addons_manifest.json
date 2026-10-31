@@ -8,12 +8,16 @@
       "folder": "face_puppeteer",
       "label": "Face puppeteer runtime (PyTorch + wx + MediaPipe)",
       "size_hint_mb": 3500,
-      "required_for": ["tha4_student_face_capture_mediapipe"],
+      "required_for": [
+        "tha4_student_face_capture_mediapipe"
+      ],
       "delete_safe": true,
       "included_in_github_zip": false,
-      "install_via": ["bootstrap_portable.ps1", "upstream:mediapipe_task"],
+      "install_via": [
+        "bootstrap_portable.ps1",
+        "upstream:mediapipe_task"
+      ],
       "verify": [
-        "addons/face_puppeteer/venv/Scripts/python.exe",
         "addons/face_puppeteer/mediapipe/face_landmarker_v2_with_blendshapes.task"
       ]
     },
@@ -22,10 +26,14 @@
       "folder": "openseeface",
       "label": "OpenSeeFace facetracker binary + models",
       "size_hint_mb": 200,
-      "required_for": ["tha4_student_face_capture_openseeface"],
+      "required_for": [
+        "tha4_student_face_capture_openseeface"
+      ],
       "delete_safe": true,
       "included_in_github_zip": false,
-      "install_via": ["upstream:openseeface"],
+      "install_via": [
+        "upstream:openseeface"
+      ],
       "verify": [
         "addons/openseeface/Binary/facetracker.exe"
       ]
@@ -35,10 +43,14 @@
       "folder": "tha3_models",
       "label": "THA3 portrait PyTorch models (~2 GB)",
       "size_hint_mb": 2000,
-      "required_for": ["tha3_portrait"],
+      "required_for": [
+        "tha3_portrait"
+      ],
       "delete_safe": true,
       "included_in_github_zip": false,
-      "install_via": ["upstream:tha3_models"],
+      "install_via": [
+        "upstream:tha3_models"
+      ],
       "verify": [
         "addons/tha3_models/separable_half/face_morpher.pt",
         "addons/tha3_models/separable_half/editor.pt"
@@ -47,15 +59,26 @@
     {
       "id": "tha4_training",
       "folder": "tha4_training",
-      "label": "THA4 teacher weights + pose dataset (training / distill)",
+      "label": "THA4 independent teacher shell, source, five weights and pose (inside installation)",
       "size_hint_mb": 2500,
-      "required_for": ["tha4_train"],
+      "required_for": [
+        "tha4_train"
+      ],
       "delete_safe": true,
       "included_in_github_zip": false,
-      "install_via": ["upstream:tha4_teacher_training"],
+      "install_via": [
+        "upstream:tha4_teacher_training"
+      ],
       "verify": [
-        "addons/tha4_training/tha4/face_morpher.pt",
-        "addons/tha4_training/pose_dataset.pt"
+        "addons/tha4_training/THA4Train.exe",
+        "addons/tha4_training/app/trainer_gui.py",
+        "addons/tha4_training/src/tha4/distiller/distiller_config.py",
+        "addons/tha4_training/data/tha4/body_morpher.pt",
+        "addons/tha4_training/data/tha4/eyebrow_decomposer.pt",
+        "addons/tha4_training/data/tha4/eyebrow_morphing_combiner.pt",
+        "addons/tha4_training/data/tha4/face_morpher.pt",
+        "addons/tha4_training/data/tha4/upscaler.pt",
+        "addons/tha4_training/data/pose_dataset.pt"
       ]
     },
     {
@@ -63,10 +86,15 @@
       "folder": "output_enhancement",
       "label": "Output enhancement (NN SR + RIFE ONNX + onnxruntime)",
       "size_hint_mb": 800,
-      "required_for": ["nn_super_resolution", "nn_rife"],
+      "required_for": [
+        "nn_super_resolution",
+        "nn_rife"
+      ],
       "delete_safe": true,
       "included_in_github_zip": false,
-      "install_via": ["bootstrap_output_enhancement.ps1"],
+      "install_via": [
+        "bootstrap_output_enhancement.ps1"
+      ],
       "verify": [
         "addons/output_enhancement/.installed",
         "addons/output_enhancement/ezvtb_data/rife/rife_x2_fp32.onnx",

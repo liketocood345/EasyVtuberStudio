@@ -1,102 +1,19 @@
-# Sync easyvtuberstudio-develop -> easyvtuberstudio-main (code, docs, packaging, scripts).
-# Preserves main .git; skips local-only heavy state (venv, runtime, addons payloads).
-# Copies shipped workspace seed memory (load_preview_ui_state.json, basic_layers/, masks).
-# Usage:
-#   powershell -ExecutionPolicy Bypass -File scripts\maint\sync_develop_to_fork.ps1
-
-param(
-    [string]$DevRoot = "",
-    [string]$ForkRoot = ""
-)
-
-$ErrorActionPreference = "Stop"
-. (Join-Path $PSScriptRoot "repo_paths.ps1")
-$roots = Resolve-DevelopForkRoots -DevRoot $DevRoot -ForkRoot $ForkRoot
-$DevRoot = $roots.DevRoot
-$ForkRoot = $roots.ForkRoot
-
-$refreshHotspots = Join-Path $DevRoot "scripts\maint\refresh_bug_hotspot_checklist.ps1"
-if (Test-Path $refreshHotspots) {
-    & $refreshHotspots -Quiet
+﻿# dep-043: sync only a verified public CORE; never live workspace or whole dirs.
+# Local only. Does not stage/commit/push. Existing target changes are preserved.
+param([string]$DevRoot='', [string]$ForkRoot='', [string]$CoreRoot='')
+$ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'repo_paths.ps1')
+$roots=Resolve-DevelopForkRoots -DevRoot $DevRoot -ForkRoot $ForkRoot
+$DevRoot=$roots.DevRoot; $ForkRoot=$roots.ForkRoot
+. (Join-Path $DevRoot 'packaging/portable_environment.ps1')
+Initialize-LocalProcessEnvironment $DevRoot
+$python=Join-Path $DevRoot 'runtime/python310/python.exe'
+if(-not(Test-LocalPython $DevRoot $python)) { throw 'Folder-local build Python required' }
+if(-not $CoreRoot) {
+    $CoreRoot=Join-Path $DevRoot ('workspace/release/github-sync-'+[Guid]::NewGuid().ToString('N'))
+    & (Join-Path $DevRoot 'packaging/build_github_zip.ps1') -ForkRoot $DevRoot -StageDir $CoreRoot -OutputZip ($CoreRoot+'.zip')
+    if($LASTEXITCODE -ne 0) { throw 'Public CORE construction failed' }
 }
-
-if (-not (Test-Path (Join-Path $ForkRoot ".git"))) {
-    throw "Fork git repo not found: $ForkRoot"
-}
-
-function Ensure-Dir([string]$Path) {
-    if (-not (Test-Path $Path)) {
-        New-Item -ItemType Directory -Force -Path $Path | Out-Null
-    }
-}
-
-$copyDirs = @(
-    "addons", "assets", "bin", "data", "deps", "distiller-ui-doc", "docs", "face-puppeteer-ui-enhancements-ai-code",
-    "packaging", "plans", "poetry", "scripts", "src", "tools"
-)
-# Root README.md: edit only on easyvtuberstudio-main; never copied develop -> fork (GitHub gets it via push).
-$copyFiles = @(".gitignore", ".python-version", "EasyVtuberStudio.exe", "DEPLOY.bat", "RESET_ADDON.bat")
-
-$excludeDirs = @(
-    "__pycache__", ".codegraph", "venv", "runtime", "external_layer_output", "basic_layers",
-    "face_puppeteer", "tha3_models", "tha4_training", "output_enhancement"
-)
-
-foreach ($dir in $copyDirs) {
-    $src = Join-Path $DevRoot $dir
-    if (-not (Test-Path $src)) { continue }
-    $dst = Join-Path $ForkRoot $dir
-    $args = @(
-        $src, $dst, "/E", "/MIR", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP",
-        "/XD"
-    ) + $excludeDirs
-    robocopy @args | Out-Null
-    if ($LASTEXITCODE -ge 8) {
-        throw "robocopy failed for $dir exit $LASTEXITCODE"
-    }
-}
-
-foreach ($file in $copyFiles) {
-    $src = Join-Path $DevRoot $file
-    if (Test-Path $src) {
-        Copy-Item -Force $src (Join-Path $ForkRoot $file)
-    }
-}
-
-Ensure-Dir (Join-Path $ForkRoot "workspace")
-$gitkeep = Join-Path $ForkRoot "workspace\.gitkeep"
-if (-not (Test-Path $gitkeep)) {
-    New-Item -ItemType File -Force -Path $gitkeep | Out-Null
-}
-
-# CORE fork must not ship optional addons (HF Bucket / DEPLOY installs them).
-foreach ($pack in @("openseeface", "face_puppeteer", "tha3_models", "tha4_training", "output_enhancement")) {
-    $path = Join-Path $ForkRoot "addons\$pack"
-    if (Test-Path $path) {
-        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-$addonsReadme = Join-Path $DevRoot "addons\README.md"
-if (Test-Path $addonsReadme) {
-    Ensure-Dir (Join-Path $ForkRoot "addons")
-    Copy-Item -Force $addonsReadme (Join-Path $ForkRoot "addons\README.md")
-}
-
-& (Join-Path $DevRoot "scripts\maint\restructure_repo.ps1") -RepoRoot $ForkRoot -ForkLayoutOnly
-
-$resetFork = Join-Path $ForkRoot "scripts\maint\reset_fork_fresh_extract.ps1"
-if (Test-Path $resetFork) {
-    & $resetFork -ForkRoot $ForkRoot
-    if ($LASTEXITCODE -ne 0) {
-        throw "reset_fork_fresh_extract failed."
-    }
-} else {
-    Write-Warning "reset_fork_fresh_extract.ps1 not found; fork layout may not match fresh extract."
-}
-
-. (Join-Path $PSScriptRoot "workspace_shipped_memory.ps1")
-Copy-ShippedWorkspaceMemory -SourceRoot $DevRoot -DestRoot $ForkRoot
-
-Write-Host "Synced develop -> fork (code + shipped workspace memory; fork = fresh CORE extract)"
-Write-Host "  Dev:  $DevRoot"
-Write-Host "  Fork: $ForkRoot"
+& $python -I (Join-Path $DevRoot 'packaging/sync_core_to_github.py') --core $CoreRoot --target $ForkRoot
+if($LASTEXITCODE -ne 0) { throw 'CORE-only GitHub synchronization failed; existing target changes were not overwritten' }
+exit 0

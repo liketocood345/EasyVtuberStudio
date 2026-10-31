@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "package_id": "tha4_training",
+  "version": "2026.10.31-r1",
+  "platform": "windows-x64",
+  "ready": false,
+  "status": "local_validated_pending_publish",
+  "bucket_id": "liketocode789/EasyVtuberStudio",
+  "manifest_path": "packages/windows-x64/tha4_training/latest.json",
+  "artifact": {
+    "path": "packages/windows-x64/tha4_training/2026.10.31-r1/tha4_training.zip",
+    "sha256": null,
+    "size_bytes": null
+  },
+  "install_folder": "addons/tha4_training",
+  "entrypoint": "THA4Train.exe",
+  "standalone": false,
+  "training_python": "runtime/venvs/common/Scripts/python.exe",
+  "runtime_profile": "teacher",
+  "required_contents": [
+    "THA4Train.exe",
+    "app/",
+    "src/tha4/",
+    "data/tha4/body_morpher.pt",
+    "data/tha4/eyebrow_decomposer.pt",
+    "data/tha4/eyebrow_morphing_combiner.pt",
+    "data/tha4/face_morpher.pt",
+    "data/tha4/upscaler.pt",
+    "data/pose_dataset.pt",
+    "licenses/",
+    "README.md"
+  ],
+  "excluded_contents": [
+    "runtime/",
+    "_internal/",
+    "workspace/",
+    "*.whl",
+    "*.nupkg"
+  ],
+  "validation": {
+    "training": "not_run",
+    "environment": "initialization_only"
+  }
+}

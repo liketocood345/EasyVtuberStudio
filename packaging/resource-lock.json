@@ -1,0 +1,2119 @@
+{
+  "schema_version": 1,
+  "policy": "local/copy-in -> upstream fixed payload hashes -> HF backup; OSF Binary ABI retained",
+  "modules": {
+    "mediapipe": {
+      "id": "mediapipe",
+      "version": "2026.10.31-r1",
+      "install_root": "addons/face_puppeteer/mediapipe",
+      "files": [
+        {
+          "path": "face_landmarker_v2_with_blendshapes.task",
+          "size_bytes": 3758596,
+          "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+          "source": "task"
+        }
+      ],
+      "sources": [
+        {
+          "id": "task",
+          "kind": "file",
+          "filename": "face_landmarker_v2_with_blendshapes.task",
+          "url": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+        }
+      ],
+      "runtime": "common"
+    },
+    "tha3_models": {
+      "id": "tha3_models",
+      "version": "2026.10.31-r1",
+      "install_root": "addons/tha3_models",
+      "files": [
+        {
+          "path": "separable_float/editor.pt",
+          "size_bytes": 3802999,
+          "sha256": "ecbc46808aeed3088a215d3884d0b162d76337211d73a9bb21cdd92fc45fc50b",
+          "source": "models"
+        },
+        {
+          "path": "separable_float/eyebrow_decomposer.pt",
+          "size_bytes": 13313007,
+          "sha256": "1fbf5015083876653d64885481cc7b7145df0321101648b2692696042f97b799",
+          "source": "models"
+        },
+        {
+          "path": "separable_float/eyebrow_morphing_combiner.pt",
+          "size_bytes": 13334119,
+          "sha256": "de9cacc5d47e65e9c5b4b6317c0e86a31a27a5d01378edff3010a10f6deab106",
+          "source": "models"
+        },
+        {
+          "path": "separable_float/face_morpher.pt",
+          "size_bytes": 13374071,
+          "sha256": "e6977e73e3fcfc7614e37592f255d67d0eeba0cd86e7e700ecacffd7a4e53818",
+          "source": "models"
+        },
+        {
+          "path": "separable_float/two_algo_face_body_rotator.pt",
+          "size_bytes": 14355239,
+          "sha256": "79d2609cdac8fc61335c3f3045dc20094324bd5854d6427b21d4c388928282cf",
+          "source": "models"
+        },
+        {
+          "path": "separable_half/editor.pt",
+          "size_bytes": 1918327,
+          "sha256": "a3b00f325d241df80c1177684b304d76f716f816d43dc3a038bb7eaf6bba6d05",
+          "source": "models"
+        },
+        {
+          "path": "separable_half/eyebrow_decomposer.pt",
+          "size_bytes": 6673071,
+          "sha256": "b2842fbaa865a76f2c573c11eae5043b6e3401997b4ff8f7bfd14aae51aa0e10",
+          "source": "models"
+        },
+        {
+          "path": "separable_half/eyebrow_morphing_combiner.pt",
+          "size_bytes": 6683431,
+          "sha256": "5a3b34d36bfb67c71e08561ef9969c2222cfc262023db10ff28f8bb690f8736b",
+          "source": "models"
+        },
+        {
+          "path": "separable_half/face_morpher.pt",
+          "size_bytes": 6703671,
+          "sha256": "c3e5824c5234ba3048fcc8426e6d1b54e27dd47ac8ff3d3e94268feb369caaaf",
+          "source": "models"
+        },
+        {
+          "path": "separable_half/two_algo_face_body_rotator.pt",
+          "size_bytes": 7195239,
+          "sha256": "cfffc72c4509c9b9d39858049cf756b5697dec227855f3385bae0542f81725e9",
+          "source": "models"
+        },
+        {
+          "path": "standard_float/editor.pt",
+          "size_bytes": 33471839,
+          "sha256": "11953fe7767b6ff98e028e16d025239275bb046e440b9c9c8f59096f9f9c781e",
+          "source": "models"
+        },
+        {
+          "path": "standard_float/eyebrow_decomposer.pt",
+          "size_bytes": 125942879,
+          "sha256": "0648f8f649212b0ebba62630d289112395862d486d927d28a1dda12583e42178",
+          "source": "models"
+        },
+        {
+          "path": "standard_float/eyebrow_morphing_combiner.pt",
+          "size_bytes": 126168279,
+          "sha256": "07211acbba94eec777b894abfef6fe14504a9066dfd97fe828f1889f6031201a",
+          "source": "models"
+        },
+        {
+          "path": "standard_float/face_morpher.pt",
+          "size_bytes": 126444711,
+          "sha256": "64487e894d6a6d7fdac8c9103ab8dcb7313ea0cb19d58116863a6b696ed2faaa",
+          "source": "models"
+        },
+        {
+          "path": "standard_float/two_algo_face_body_rotator.pt",
+          "size_bytes": 130675279,
+          "sha256": "6f5bf9d7430f89641a5971d055fc24bd4306f40c17fe2a0deaed52138a9cb08b",
+          "source": "models"
+        },
+        {
+          "path": "standard_half/editor.pt",
+          "size_bytes": 16748511,
+          "sha256": "3ef0733f62bb8107d25e32d775d0f36abe72ad960b56d1d686ededd62eb8bb31",
+          "source": "models"
+        },
+        {
+          "path": "standard_half/eyebrow_decomposer.pt",
+          "size_bytes": 62984031,
+          "sha256": "56176ef6126c9ecbf2f33a9078a7975044672ce5df7cf62f48b95b6672056080",
+          "source": "models"
+        },
+        {
+          "path": "standard_half/eyebrow_morphing_combiner.pt",
+          "size_bytes": 63096535,
+          "sha256": "ccbbb532f581df140a98f57387503dfc60cfe60fac5c78318259fcd55fbe1652",
+          "source": "models"
+        },
+        {
+          "path": "standard_half/face_morpher.pt",
+          "size_bytes": 63234727,
+          "sha256": "7d4ee28ca05645c2a8ea923f34621bb4778f633a5d5fa5a33c18440a55fac1cc",
+          "source": "models"
+        },
+        {
+          "path": "standard_half/two_algo_face_body_rotator.pt",
+          "size_bytes": 65350735,
+          "sha256": "f20df3d6a5431011454fa8484b02d5e7ce89692fef4ed0b5b68615f837ed4f98",
+          "source": "models"
+        }
+      ],
+      "sources": [
+        {
+          "id": "models",
+          "kind": "zip",
+          "filename": "talking-head-anime-3-models.zip",
+          "url": "https://www.dropbox.com/s/y7b8jl4n2euv8xe/talking-head-anime-3-models.zip?dl=1"
+        }
+      ],
+      "runtime": "common"
+    },
+    "tha4_training": {
+      "id": "tha4_training",
+      "version": "2026.10.31-r1",
+      "install_root": "addons/tha4_training",
+      "files": [
+        {
+          "path": "app/check_runtime.py",
+          "size_bytes": 2411,
+          "sha256": "1a4ef12a05bcd513de318a5cafdc827f58a5dce9c4d3d028f6feb41598e91c33",
+          "from_core": "tools/tha4_teacher_portable/app/check_runtime.py"
+        },
+        {
+          "path": "app/fetch_verified_wheels.py",
+          "size_bytes": 4880,
+          "sha256": "fe308d495937b069b74747266db81b8d8566a94e9a8893bcc9e4a814e0da2d8c",
+          "from_core": "tools/tha4_teacher_portable/app/fetch_verified_wheels.py"
+        },
+        {
+          "path": "app/portable.py",
+          "size_bytes": 3376,
+          "sha256": "577ad67cc7742cac9fbd5796b0b9adcb77441eb2995efb00ea130fca7c605636",
+          "from_core": "tools/tha4_teacher_portable/app/portable.py"
+        },
+        {
+          "path": "app/queue_core.py",
+          "size_bytes": 4689,
+          "sha256": "ddd696e5070416d8510ae3123e1c7427464d6d25a9961ddc8da50b9d31e6fafc",
+          "from_core": "tools/tha4_teacher_portable/app/queue_core.py"
+        },
+        {
+          "path": "app/trainer_gui.py",
+          "size_bytes": 16114,
+          "sha256": "9b0598f57a341d9bd95f55e77f3d7c51454a9b3d79d02cd277763727591aa1d7",
+          "from_core": "tools/tha4_teacher_portable/app/trainer_gui.py"
+        },
+        {
+          "path": "app/worker.py",
+          "size_bytes": 10474,
+          "sha256": "6a5557da5fda4f6432b0030ddb4d85dd02a1f82639951857fd1e311ea43d9a1d",
+          "from_core": "tools/tha4_teacher_portable/app/worker.py"
+        },
+        {
+          "path": "build.ps1",
+          "size_bytes": 540,
+          "sha256": "886c7520a753a40e502b2847ccd34266c972c21c3b50ba56752b25b93c07b152",
+          "from_core": "tools/tha4_teacher_portable/build.ps1"
+        },
+        {
+          "path": "data/pose_dataset.pt",
+          "size_bytes": 90000747,
+          "sha256": "73ac983f68b6e24dea149dd78ff6681d122e8dcc082c3e58571a3d9e8673b437",
+          "source": "pose"
+        },
+        {
+          "path": "data/tha4/body_morpher.pt",
+          "size_bytes": 138892517,
+          "sha256": "882b1f7f0ff1cc4bed9d9fd21bd55a465f9dc9861c016de984d6f2105ea2f073",
+          "source": "models",
+          "source_member": "body_morpher.pt"
+        },
+        {
+          "path": "data/tha4/eyebrow_decomposer.pt",
+          "size_bytes": 125942879,
+          "sha256": "0648f8f649212b0ebba62630d289112395862d486d927d28a1dda12583e42178",
+          "source": "models",
+          "source_member": "eyebrow_decomposer.pt"
+        },
+        {
+          "path": "data/tha4/eyebrow_morphing_combiner.pt",
+          "size_bytes": 126168279,
+          "sha256": "07211acbba94eec777b894abfef6fe14504a9066dfd97fe828f1889f6031201a",
+          "source": "models",
+          "source_member": "eyebrow_morphing_combiner.pt"
+        },
+        {
+          "path": "data/tha4/face_morpher.pt",
+          "size_bytes": 126444711,
+          "sha256": "64487e894d6a6d7fdac8c9103ab8dcb7313ea0cb19d58116863a6b696ed2faaa",
+          "source": "models",
+          "source_member": "face_morpher.pt"
+        },
+        {
+          "path": "data/tha4/upscaler.pt",
+          "size_bytes": 140255005,
+          "sha256": "a6bc1c8ad2c56ee25d7a8e29796f922d9210c65ed2969fa512726278a5e2cb0f",
+          "source": "models",
+          "source_member": "upscaler.pt"
+        },
+        {
+          "path": "launcher.py",
+          "size_bytes": 2408,
+          "sha256": "538eaa6bbb1e68d44015ec1b10cb788bde03e4c8c03615bd7adb0e4d6cd48fd9",
+          "from_core": "tools/tha4_teacher_portable/launcher.py"
+        },
+        {
+          "path": "licenses/THA4-MIT.txt",
+          "size_bytes": 1087,
+          "sha256": "7928b589c2c27f418e3b0d10ba59ce8a9ac248f29db3ff9d8e28704069fbb7cb",
+          "from_core": "tools/tha4_teacher_portable/licenses/THA4-MIT.txt"
+        },
+        {
+          "path": "package.py",
+          "size_bytes": 413,
+          "sha256": "528cc763adb25bb63b3e453e9d10184a75ee23b7ccafe956879703ef219b6c32",
+          "from_core": "tools/tha4_teacher_portable/package.py"
+        },
+        {
+          "path": "package_contract.json",
+          "size_bytes": 1208,
+          "sha256": "fa249db9d02d2ec1dc50a61ebaa31c876b651c810eaba3e0d3e262fb86efbdbc",
+          "from_core": "tools/tha4_teacher_portable/package_contract.json"
+        },
+        {
+          "path": "README.md",
+          "size_bytes": 912,
+          "sha256": "97c8c3181b95c77ca4b70dece2fb7f26a51082db51dfa42d1c811b9d621aeaa4",
+          "from_core": "tools/tha4_teacher_portable/README.md"
+        },
+        {
+          "path": "requirements.txt",
+          "size_bytes": 545,
+          "sha256": "debc25296834a8fb4285ea3932ff021b963d6e66b65e9f3a194f475e60acb7d4",
+          "from_core": "tools/tha4_teacher_portable/requirements.txt"
+        },
+        {
+          "path": "setup.ps1",
+          "size_bytes": 1560,
+          "sha256": "faefcdc25688f48dfb8559b77663921b507cc0e801d922911e1d8b5e0ece76b4",
+          "from_core": "tools/tha4_teacher_portable/setup.ps1"
+        },
+        {
+          "path": "src/tha4/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/__init__.py"
+        },
+        {
+          "path": "src/tha4/app/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/app/__init__.py"
+        },
+        {
+          "path": "src/tha4/app/character_model_ifacialmocap_puppeteer.py",
+          "size_bytes": 18708,
+          "sha256": "682c02901f0fcecc79b6777a1345aa5cf80981668d6c210f76cda6bfdfa1e422",
+          "from_core": "src/tha4/app/character_model_ifacialmocap_puppeteer.py"
+        },
+        {
+          "path": "src/tha4/app/character_model_manual_poser.py",
+          "size_bytes": 19403,
+          "sha256": "8ffa45b02d63cb7e6ecc55e9622c2eecf240ecd85bcb2b6e3196d2217c7ae99a",
+          "from_core": "src/tha4/app/character_model_manual_poser.py"
+        },
+        {
+          "path": "src/tha4/app/character_model_mediapipe_puppeteer.py",
+          "size_bytes": 18756,
+          "sha256": "f1230e8b3a7775f416027c8d065ac15eef51ee0a31419db85eb4b78e52693289",
+          "from_core": "src/tha4/app/character_model_mediapipe_puppeteer.py"
+        },
+        {
+          "path": "src/tha4/app/distill.py",
+          "size_bytes": 795,
+          "sha256": "1300e4cb89d1100a6bffddda10912f86bcaf1cc5da3fb16e3a37686b7316748a",
+          "from_core": "src/tha4/app/distill.py"
+        },
+        {
+          "path": "src/tha4/app/distiller_ui.py",
+          "size_bytes": 372,
+          "sha256": "3cc98ee82bfc261ef0947904073fa9bb77c30285938a64f07599cba0ec7ffaf1",
+          "from_core": "src/tha4/app/distiller_ui.py"
+        },
+        {
+          "path": "src/tha4/app/full_manual_poser.py",
+          "size_bytes": 20773,
+          "sha256": "5552c5767e49949412f40cb39f8a4c29be1bc29e5def4e284abd99680ad4f624",
+          "from_core": "src/tha4/app/full_manual_poser.py"
+        },
+        {
+          "path": "src/tha4/charmodel/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/charmodel/__init__.py"
+        },
+        {
+          "path": "src/tha4/charmodel/character_model.py",
+          "size_bytes": 2927,
+          "sha256": "8d69f3a38aa91422b5ea0fdad0239edcaf694a2870fbb3ad39dda2e0522459a4",
+          "from_core": "src/tha4/charmodel/character_model.py"
+        },
+        {
+          "path": "src/tha4/dataset/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/dataset/__init__.py"
+        },
+        {
+          "path": "src/tha4/dataset/image_poses_and_aother_images_dataset.py",
+          "size_bytes": 1321,
+          "sha256": "305326560ed7ed66c99ba4687d84cc7d763321923f45ffbbf8b7566a4df8d4aa",
+          "from_core": "src/tha4/dataset/image_poses_and_aother_images_dataset.py"
+        },
+        {
+          "path": "src/tha4/distiller/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/distiller/__init__.py"
+        },
+        {
+          "path": "src/tha4/distiller/config_based_training_tasks.py",
+          "size_bytes": 4161,
+          "sha256": "6be27573902d433d20fcb17bb454e200f4c81f8c14c0421e6cc135576fc04698",
+          "from_core": "src/tha4/distiller/config_based_training_tasks.py"
+        },
+        {
+          "path": "src/tha4/distiller/distill_body_morpher.py",
+          "size_bytes": 558,
+          "sha256": "3bfc85b2f58fc465182051c092993f0cb96b9bd1955d25cda7afe1450714bf13",
+          "from_core": "src/tha4/distiller/distill_body_morpher.py"
+        },
+        {
+          "path": "src/tha4/distiller/distill_face_morpher.py",
+          "size_bytes": 558,
+          "sha256": "9f1a92d4b5e61ac191836cd9d240d4effa8a260b681d77e503fc434afffde334",
+          "from_core": "src/tha4/distiller/distill_face_morpher.py"
+        },
+        {
+          "path": "src/tha4/distiller/distiller_config.py",
+          "size_bytes": 14563,
+          "sha256": "5ba16f5d82084ef209ad36a39ffc18e38654a59b13935a82e14aaaf033788030",
+          "from_core": "src/tha4/distiller/distiller_config.py"
+        },
+        {
+          "path": "src/tha4/distiller/ui/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/distiller/ui/__init__.py"
+        },
+        {
+          "path": "src/tha4/distiller/ui/distiller_config_state.py",
+          "size_bytes": 7149,
+          "sha256": "5a6d5b0ff19315753ca0b0613ecb5c781ca5e079d694f11544278c8d4d8babff",
+          "from_core": "src/tha4/distiller/ui/distiller_config_state.py"
+        },
+        {
+          "path": "src/tha4/distiller/ui/distiller_ui_main_frame.py",
+          "size_bytes": 38362,
+          "sha256": "52bcdc16fbb149c481d5530899174193726596bac6bd2d009594cfa986df9aa2",
+          "from_core": "src/tha4/distiller/ui/distiller_ui_main_frame.py"
+        },
+        {
+          "path": "src/tha4/image_util.py",
+          "size_bytes": 2487,
+          "sha256": "3060c5bf16cb909e611fa0ffc8d0ee13a4baaf37dfecc4315c5f10ed837f10f6",
+          "from_core": "src/tha4/image_util.py"
+        },
+        {
+          "path": "src/tha4/mocap/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/mocap/__init__.py"
+        },
+        {
+          "path": "src/tha4/mocap/ifacialmocap_constants.py",
+          "size_bytes": 6702,
+          "sha256": "37ba6cf643548a001bb1c956121180f1b7a128054f4782ae14d4f4b0e1140a18",
+          "from_core": "src/tha4/mocap/ifacialmocap_constants.py"
+        },
+        {
+          "path": "src/tha4/mocap/ifacialmocap_pose.py",
+          "size_bytes": 891,
+          "sha256": "e5c8f05179645b5aeb4acfa3f430c58ee2966f2198ee5353fc8d6b26675713e7",
+          "from_core": "src/tha4/mocap/ifacialmocap_pose.py"
+        },
+        {
+          "path": "src/tha4/mocap/ifacialmocap_pose_converter.py",
+          "size_bytes": 307,
+          "sha256": "a1a586085006f5f2dc430b8074be29f4d202164a6fb4d2f56db2903e840eb041",
+          "from_core": "src/tha4/mocap/ifacialmocap_pose_converter.py"
+        },
+        {
+          "path": "src/tha4/mocap/ifacialmocap_pose_converter_25.py",
+          "size_bytes": 30209,
+          "sha256": "0860de005206aad5574245d8259eae69cf9d500dd130dd4f70311562c368314b",
+          "from_core": "src/tha4/mocap/ifacialmocap_pose_converter_25.py"
+        },
+        {
+          "path": "src/tha4/mocap/ifacialmocap_v2.py",
+          "size_bytes": 4135,
+          "sha256": "b42c138dc207a7325fd00bce763779bb52262277b720f2e9cc316edbd5cfe397",
+          "from_core": "src/tha4/mocap/ifacialmocap_v2.py"
+        },
+        {
+          "path": "src/tha4/mocap/mediapipe_constants.py",
+          "size_bytes": 5902,
+          "sha256": "8a1dfc3ca95508152c8a42935e6eadd8e9054abec01168cfe3311748583b4e57",
+          "from_core": "src/tha4/mocap/mediapipe_constants.py"
+        },
+        {
+          "path": "src/tha4/mocap/mediapipe_face_pose.py",
+          "size_bytes": 1422,
+          "sha256": "39861f380772513a4376416b476b443197eeb27d1d1fa44deb0fc472ba23605a",
+          "from_core": "src/tha4/mocap/mediapipe_face_pose.py"
+        },
+        {
+          "path": "src/tha4/mocap/mediapipe_face_pose_converter.py",
+          "size_bytes": 495,
+          "sha256": "79a9ff8cc7ab05ae04032169d54615e4a65c8797f7cd82a20b3b5d3757610fd8",
+          "from_core": "src/tha4/mocap/mediapipe_face_pose_converter.py"
+        },
+        {
+          "path": "src/tha4/mocap/mediapipe_face_pose_converter_00.py",
+          "size_bytes": 32214,
+          "sha256": "182ce9ff1847f0f209fc190d528b9cf032b28251855b8b660f5f1535680878b2",
+          "from_core": "src/tha4/mocap/mediapipe_face_pose_converter_00.py"
+        },
+        {
+          "path": "src/tha4/nn/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/nn/__init__.py"
+        },
+        {
+          "path": "src/tha4/nn/common/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/nn/common/__init__.py"
+        },
+        {
+          "path": "src/tha4/nn/common/conv_block_factory.py",
+          "size_bytes": 2781,
+          "sha256": "860b331ecebcf7e1a7574e94444ce72b1ece6ee0804063c8133e57b39eb8b944",
+          "from_core": "src/tha4/nn/common/conv_block_factory.py"
+        },
+        {
+          "path": "src/tha4/nn/common/poser_args.py",
+          "size_bytes": 2510,
+          "sha256": "371ceabe37776bb4801ebda25d3033894119f9f2e8ee9b4a47e6e30c66370222",
+          "from_core": "src/tha4/nn/common/poser_args.py"
+        },
+        {
+          "path": "src/tha4/nn/common/poser_encoder_decoder_00.py",
+          "size_bytes": 5285,
+          "sha256": "b607bdc56d94e3459e0db04347378fc440aa7c1f99983e2c40839983864852a1",
+          "from_core": "src/tha4/nn/common/poser_encoder_decoder_00.py"
+        },
+        {
+          "path": "src/tha4/nn/common/poser_encoder_decoder_00_separable.py",
+          "size_bytes": 4098,
+          "sha256": "50b8d5a4621abe3d9703b522a55e5457b3407fc13c8a69b59df1590e7b9e8dd8",
+          "from_core": "src/tha4/nn/common/poser_encoder_decoder_00_separable.py"
+        },
+        {
+          "path": "src/tha4/nn/common/resize_conv_encoder_decoder.py",
+          "size_bytes": 4543,
+          "sha256": "4633885fe30b782404ce6c3051b36a79e821c09b77be141d69483dec6ad19ede",
+          "from_core": "src/tha4/nn/common/resize_conv_encoder_decoder.py"
+        },
+        {
+          "path": "src/tha4/nn/common/resize_conv_unet.py",
+          "size_bytes": 4396,
+          "sha256": "360e4d54a5a5c8da6d4909623b13a322fa6817f987527303ffc2b67055057c4b",
+          "from_core": "src/tha4/nn/common/resize_conv_unet.py"
+        },
+        {
+          "path": "src/tha4/nn/common/unet.py",
+          "size_bytes": 28058,
+          "sha256": "bb32ec228c4bdd855288769e2f22537f603eab46f341ca523ccd4f5ec6194c1b",
+          "from_core": "src/tha4/nn/common/unet.py"
+        },
+        {
+          "path": "src/tha4/nn/conv.py",
+          "size_bytes": 9301,
+          "sha256": "59086a47507a0bcb397a0874d05471f454f706b45ae5897046f3f18105d28e82",
+          "from_core": "src/tha4/nn/conv.py"
+        },
+        {
+          "path": "src/tha4/nn/eyebrow_decomposer/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/nn/eyebrow_decomposer/__init__.py"
+        },
+        {
+          "path": "src/tha4/nn/eyebrow_decomposer/eyebrow_decomposer_00.py",
+          "size_bytes": 3049,
+          "sha256": "9e21b5f1ae6f54c98d722320555a3c6e3640479656482bacce46d4f9fa7eb1fe",
+          "from_core": "src/tha4/nn/eyebrow_decomposer/eyebrow_decomposer_00.py"
+        },
+        {
+          "path": "src/tha4/nn/eyebrow_morphing_combiner/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/nn/eyebrow_morphing_combiner/__init__.py"
+        },
+        {
+          "path": "src/tha4/nn/eyebrow_morphing_combiner/eyebrow_morphing_combiner_00.py",
+          "size_bytes": 3865,
+          "sha256": "6e6d72347ef8e92e85fae2242244805859e788b4af3b2f917f6f188a6646b360",
+          "from_core": "src/tha4/nn/eyebrow_morphing_combiner/eyebrow_morphing_combiner_00.py"
+        },
+        {
+          "path": "src/tha4/nn/face_morpher/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/nn/face_morpher/__init__.py"
+        },
+        {
+          "path": "src/tha4/nn/face_morpher/face_morpher_08.py",
+          "size_bytes": 9087,
+          "sha256": "0f5037a1931474a3fa2bbc66de5b00c3d2f349d23f71b676752077be6b581979",
+          "from_core": "src/tha4/nn/face_morpher/face_morpher_08.py"
+        },
+        {
+          "path": "src/tha4/nn/image_processing_util.py",
+          "size_bytes": 2334,
+          "sha256": "8b585467c503fb3052edd5bf0c77d0221972cc8fde605ba9a02ed0ddf7429314",
+          "from_core": "src/tha4/nn/image_processing_util.py"
+        },
+        {
+          "path": "src/tha4/nn/init_function.py",
+          "size_bytes": 2251,
+          "sha256": "3bc27043394663391c1ed32adaafd10e88b372e9ac233d9bcbd6d241a026549b",
+          "from_core": "src/tha4/nn/init_function.py"
+        },
+        {
+          "path": "src/tha4/nn/morpher/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/nn/morpher/__init__.py"
+        },
+        {
+          "path": "src/tha4/nn/morpher/morpher_00.py",
+          "size_bytes": 2714,
+          "sha256": "da5a7a6fa1c98c96bca9e5eb9ee64dcd5ec6d996190ef38561e05f959150364d",
+          "from_core": "src/tha4/nn/morpher/morpher_00.py"
+        },
+        {
+          "path": "src/tha4/nn/nonlinearity_factory.py",
+          "size_bytes": 1978,
+          "sha256": "121564248123c6f1ee77c561bee32141fa1c1414de69e500d64f4d6c48a223e9",
+          "from_core": "src/tha4/nn/nonlinearity_factory.py"
+        },
+        {
+          "path": "src/tha4/nn/normalization.py",
+          "size_bytes": 3871,
+          "sha256": "4d91e01b89e65f9c04ff0d85100690dbce0879b64cd36b6b9b70c915019000a9",
+          "from_core": "src/tha4/nn/normalization.py"
+        },
+        {
+          "path": "src/tha4/nn/pass_through.py",
+          "size_bytes": 159,
+          "sha256": "90f23c4250c56316ffa7215b6a654f3ef4a6ecabe61780791a86bdb8401f00c5",
+          "from_core": "src/tha4/nn/pass_through.py"
+        },
+        {
+          "path": "src/tha4/nn/resnet_block.py",
+          "size_bytes": 3169,
+          "sha256": "80bf0d09d88ba02a46206a930cf6ca8e87e48371b04c1f1a8ec505a47a5f2c90",
+          "from_core": "src/tha4/nn/resnet_block.py"
+        },
+        {
+          "path": "src/tha4/nn/resnet_block_seperable.py",
+          "size_bytes": 3184,
+          "sha256": "fd35e8726e506869b612defcef4c44679930ae6723ae98de371f200e1719d12d",
+          "from_core": "src/tha4/nn/resnet_block_seperable.py"
+        },
+        {
+          "path": "src/tha4/nn/separable_conv.py",
+          "size_bytes": 5758,
+          "sha256": "164bb460d9b18e481de6f8c980a5aa5f17ad8b3a86bf4994f02e15d9e266fd81",
+          "from_core": "src/tha4/nn/separable_conv.py"
+        },
+        {
+          "path": "src/tha4/nn/siren/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/nn/siren/__init__.py"
+        },
+        {
+          "path": "src/tha4/nn/siren/face_morpher/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/nn/siren/face_morpher/__init__.py"
+        },
+        {
+          "path": "src/tha4/nn/siren/face_morpher/siren_face_morpher_00.py",
+          "size_bytes": 2036,
+          "sha256": "f6ac2a0eee39fb7783d5366cb014fcd8ba53d2c689aba3cf382c9fcd838c80d6",
+          "from_core": "src/tha4/nn/siren/face_morpher/siren_face_morpher_00.py"
+        },
+        {
+          "path": "src/tha4/nn/siren/face_morpher/siren_face_morpher_00_trainer.py",
+          "size_bytes": 10200,
+          "sha256": "03ccc4b5fd54c7565400fec966917dccdad4bb887314a9ecf39c6f47ee8fca50",
+          "from_core": "src/tha4/nn/siren/face_morpher/siren_face_morpher_00_trainer.py"
+        },
+        {
+          "path": "src/tha4/nn/siren/face_morpher/siren_face_morpher_protocols_00.py",
+          "size_bytes": 10190,
+          "sha256": "77c0563dbb87ccf3bba46546fc7600c89155e1bd5237e4ba43a0f94d14301893",
+          "from_core": "src/tha4/nn/siren/face_morpher/siren_face_morpher_protocols_00.py"
+        },
+        {
+          "path": "src/tha4/nn/siren/morpher/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/nn/siren/morpher/__init__.py"
+        },
+        {
+          "path": "src/tha4/nn/siren/morpher/siren_morpher_03.py",
+          "size_bytes": 5585,
+          "sha256": "d5c5aa50788765d81b061584bc1cc0543ab49041e41f62e63edba0aa34fdaf5a",
+          "from_core": "src/tha4/nn/siren/morpher/siren_morpher_03.py"
+        },
+        {
+          "path": "src/tha4/nn/siren/morpher/siren_morpher_03_trainer.py",
+          "size_bytes": 12033,
+          "sha256": "6f1d43abd75150982d6b14db4e5e6c90a4caf5e5ace04947be00494874af9341",
+          "from_core": "src/tha4/nn/siren/morpher/siren_morpher_03_trainer.py"
+        },
+        {
+          "path": "src/tha4/nn/siren/morpher/siren_morpher_protocols_03.py",
+          "size_bytes": 15914,
+          "sha256": "8446df04e5996adc8a137a12f66edbf791618698c85e6cdd5bd6eab8cae664ff",
+          "from_core": "src/tha4/nn/siren/morpher/siren_morpher_protocols_03.py"
+        },
+        {
+          "path": "src/tha4/nn/siren/vanilla/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/nn/siren/vanilla/__init__.py"
+        },
+        {
+          "path": "src/tha4/nn/siren/vanilla/siren.py",
+          "size_bytes": 3280,
+          "sha256": "32abb1d2360b9209c1944021a58f06b525151830aef1192478ce818c65dcfedc",
+          "from_core": "src/tha4/nn/siren/vanilla/siren.py"
+        },
+        {
+          "path": "src/tha4/nn/spectral_norm.py",
+          "size_bytes": 261,
+          "sha256": "9ee192e24154eff7ea8f0c0f34cead3ffa2d8c64365175fb74fdf8f847c46ff2",
+          "from_core": "src/tha4/nn/spectral_norm.py"
+        },
+        {
+          "path": "src/tha4/nn/upscaler/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/nn/upscaler/__init__.py"
+        },
+        {
+          "path": "src/tha4/nn/upscaler/upscaler_02.py",
+          "size_bytes": 4030,
+          "sha256": "7e07c1349957267074aa5e1770dfe084b7c7b71c62f3d73e9a033c6c0f6bba18",
+          "from_core": "src/tha4/nn/upscaler/upscaler_02.py"
+        },
+        {
+          "path": "src/tha4/nn/util.py",
+          "size_bytes": 1831,
+          "sha256": "67436eb05e6733273ea0eab579014aa5364cac16cbfe35621a41847164d20846",
+          "from_core": "src/tha4/nn/util.py"
+        },
+        {
+          "path": "src/tha4/poser/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/poser/__init__.py"
+        },
+        {
+          "path": "src/tha4/poser/general_poser_02.py",
+          "size_bytes": 3433,
+          "sha256": "cbbb939972cc22ef33c6a83ae8de9c85f6f9a756d1d7c1aa35cf3beb9d1e1c9d",
+          "from_core": "src/tha4/poser/general_poser_02.py"
+        },
+        {
+          "path": "src/tha4/poser/modes/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/poser/modes/__init__.py"
+        },
+        {
+          "path": "src/tha4/poser/modes/mode_07.py",
+          "size_bytes": 14097,
+          "sha256": "679e9fd7b11c5b48b73cad0c24054de3f2523006faf5d1c83479ff5716f95fa8",
+          "from_core": "src/tha4/poser/modes/mode_07.py"
+        },
+        {
+          "path": "src/tha4/poser/modes/mode_12.py",
+          "size_bytes": 9009,
+          "sha256": "57ff604ffbc69b72ac1f6190880e1013fbea70cc54dce49387a422505f580d9d",
+          "from_core": "src/tha4/poser/modes/mode_12.py"
+        },
+        {
+          "path": "src/tha4/poser/modes/mode_14.py",
+          "size_bytes": 6431,
+          "sha256": "134cea44b88d0d5db53b1791b64d97fba8107bb685074bd292f73df98cd6541b",
+          "from_core": "src/tha4/poser/modes/mode_14.py"
+        },
+        {
+          "path": "src/tha4/poser/modes/pose_parameters.py",
+          "size_bytes": 2965,
+          "sha256": "6f8bea3d7b1e6e4d5d9d8544398099fbc3db9381496c4df20987df1ccc0e40c7",
+          "from_core": "src/tha4/poser/modes/pose_parameters.py"
+        },
+        {
+          "path": "src/tha4/poser/poser.py",
+          "size_bytes": 4815,
+          "sha256": "09dd3de8140029ee7a944b93c4859c9f98ec6c8684a7c03c6383e108f412fc64",
+          "from_core": "src/tha4/poser/poser.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/pytasuku/__init__.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/indexed/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/pytasuku/indexed/__init__.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/indexed/all_tasks.py",
+          "size_bytes": 924,
+          "sha256": "9b92dfb83f585286e3564fb57b193a49754fbe18c4d92766d5c99abdeb7e32a7",
+          "from_core": "src/tha4/pytasuku/indexed/all_tasks.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/indexed/bundled_indexed_file_tasks.py",
+          "size_bytes": 1043,
+          "sha256": "c0ab479e95b7e902a347fd421d2efec7fae96e9f1fcefc7307f0d7ea6fdf916a",
+          "from_core": "src/tha4/pytasuku/indexed/bundled_indexed_file_tasks.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/indexed/indexed_file_tasks.py",
+          "size_bytes": 493,
+          "sha256": "fcdf46ce73ebc716761d150899fd9b47b79c015c779a19755dc2cd60d8f353ac",
+          "from_core": "src/tha4/pytasuku/indexed/indexed_file_tasks.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/indexed/indexed_tasks.py",
+          "size_bytes": 676,
+          "sha256": "a4deb64adb5a37f26b0cb9a42a7135dfb4491852d37e68d6bdbf8e4e9b762e47",
+          "from_core": "src/tha4/pytasuku/indexed/indexed_tasks.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/indexed/no_index_command_tasks.py",
+          "size_bytes": 1200,
+          "sha256": "35b725de74beef6c17646b007838a1816df29394f0eac830ae9eb0dd9b1ae151",
+          "from_core": "src/tha4/pytasuku/indexed/no_index_command_tasks.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/indexed/no_index_file_tasks.py",
+          "size_bytes": 1646,
+          "sha256": "3b79534768626cfb22af3ce33814cb5db7300af27f1e91a2e9a85216e7670d46",
+          "from_core": "src/tha4/pytasuku/indexed/no_index_file_tasks.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/indexed/one_index_file_tasks.py",
+          "size_bytes": 2077,
+          "sha256": "dfc047bda54f7e407630169eec1e9007c9f549ab0962bb460325ad25544352a9",
+          "from_core": "src/tha4/pytasuku/indexed/one_index_file_tasks.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/indexed/simple_no_index_file_tasks.py",
+          "size_bytes": 993,
+          "sha256": "4a359c0d0978992ac2db8898311536552c2aad9689d704eb958f9ae570457cfe",
+          "from_core": "src/tha4/pytasuku/indexed/simple_no_index_file_tasks.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/indexed/two_indices_file_tasks.py",
+          "size_bytes": 2283,
+          "sha256": "55b6f8cd53b40dbd6a940bb438d592a1040183847b2ad2c5f583a1b5a8842f54",
+          "from_core": "src/tha4/pytasuku/indexed/two_indices_file_tasks.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/indexed/util.py",
+          "size_bytes": 2453,
+          "sha256": "1590f6f9230c0c6251e4e9be830520f0aacac7b3a44b4d005f9ee650716108de",
+          "from_core": "src/tha4/pytasuku/indexed/util.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/task.py",
+          "size_bytes": 2964,
+          "sha256": "29affac6c6aba7d8f2bed6ebec89d7cd4b83c9b0ede9dc82cb93d72bee7e8fc3",
+          "from_core": "src/tha4/pytasuku/task.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/task_selector_ui.py",
+          "size_bytes": 4221,
+          "sha256": "b2f1628c8a96f6fea218b59cff7b742700cc495bbcc3caf2d69ee3994703a17e",
+          "from_core": "src/tha4/pytasuku/task_selector_ui.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/util.py",
+          "size_bytes": 427,
+          "sha256": "ef35cc0319406f718d1caf68b0bac0814be58fe1208efc5a2c87f98f0022823e",
+          "from_core": "src/tha4/pytasuku/util.py"
+        },
+        {
+          "path": "src/tha4/pytasuku/workspace.py",
+          "size_bytes": 5222,
+          "sha256": "def6d795cd1a93fce7eee4f2851f5ab7a4f536b9c34c6cfd39cde2a64fc7b984",
+          "from_core": "src/tha4/pytasuku/workspace.py"
+        },
+        {
+          "path": "src/tha4/sampleoutput/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/sampleoutput/__init__.py"
+        },
+        {
+          "path": "src/tha4/sampleoutput/general_sample_output_protocol.py",
+          "size_bytes": 6246,
+          "sha256": "789f1a13c947343270fbd7cea3bd778f60a43eb887918065a54ac6bb7b5aeb43",
+          "from_core": "src/tha4/sampleoutput/general_sample_output_protocol.py"
+        },
+        {
+          "path": "src/tha4/sampleoutput/poser_sampler_output_protocol.py",
+          "size_bytes": 3791,
+          "sha256": "2ed7d57c2111e1a2a9719391cf92036d9587eb1c7f8f5af4902621071ab3bbdc",
+          "from_core": "src/tha4/sampleoutput/poser_sampler_output_protocol.py"
+        },
+        {
+          "path": "src/tha4/sampleoutput/sample_image_creator.py",
+          "size_bytes": 5972,
+          "sha256": "2ea9de8cdafd8abe7f5e4c189c496b7571927267060f0359a6325b4be6e30509",
+          "from_core": "src/tha4/sampleoutput/sample_image_creator.py"
+        },
+        {
+          "path": "src/tha4/shion/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/shion/__init__.py"
+        },
+        {
+          "path": "src/tha4/shion/base/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/shion/base/__init__.py"
+        },
+        {
+          "path": "src/tha4/shion/base/dataset/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/shion/base/dataset/__init__.py"
+        },
+        {
+          "path": "src/tha4/shion/base/dataset/lazy_dataset.py",
+          "size_bytes": 508,
+          "sha256": "93352db461ff4ef93af7b84d83f1802a66784c8a675a52c5a4ec863f96d24609",
+          "from_core": "src/tha4/shion/base/dataset/lazy_dataset.py"
+        },
+        {
+          "path": "src/tha4/shion/base/dataset/lazy_tensor_dataset.py",
+          "size_bytes": 1003,
+          "sha256": "680dab446580db4f736226d5969a56d9a3225b3bcf8405e4b271e180f9630abc",
+          "from_core": "src/tha4/shion/base/dataset/lazy_tensor_dataset.py"
+        },
+        {
+          "path": "src/tha4/shion/base/dataset/png_in_dir_dataset.py",
+          "size_bytes": 1944,
+          "sha256": "42b4a45faa118212c08f73080d21d3d5c035f2060e3ba942c18d4ecbd96844be",
+          "from_core": "src/tha4/shion/base/dataset/png_in_dir_dataset.py"
+        },
+        {
+          "path": "src/tha4/shion/base/dataset/util.py",
+          "size_bytes": 1061,
+          "sha256": "d5c3d3ee201476ac12028c31ab7344648625262af61fe040a8eb16f3ecb7b3a8",
+          "from_core": "src/tha4/shion/base/dataset/util.py"
+        },
+        {
+          "path": "src/tha4/shion/base/dataset/xformed_dataset.py",
+          "size_bytes": 400,
+          "sha256": "6a3e30268390790fe81b90a4c9f583cc3da3a3222253b4a170b9a9b267335ad4",
+          "from_core": "src/tha4/shion/base/dataset/xformed_dataset.py"
+        },
+        {
+          "path": "src/tha4/shion/base/image_util.py",
+          "size_bytes": 9938,
+          "sha256": "0ca6c0b8807860c33d21cc0d29a37c9c24fbbd5a8ca0fd31378ef628929cbd95",
+          "from_core": "src/tha4/shion/base/image_util.py"
+        },
+        {
+          "path": "src/tha4/shion/base/loss/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/shion/base/loss/__init__.py"
+        },
+        {
+          "path": "src/tha4/shion/base/loss/computed_scale_loss.py",
+          "size_bytes": 787,
+          "sha256": "a87bdafcc0939692987483becf1056b3e15fef2d381512cab5be2ab5228d6230",
+          "from_core": "src/tha4/shion/base/loss/computed_scale_loss.py"
+        },
+        {
+          "path": "src/tha4/shion/base/loss/computed_scaled_l2_loss.py",
+          "size_bytes": 1125,
+          "sha256": "4df03d93dbe6be19c979d31c6bbf76141d38553e0da7e72693e69c64044b0037",
+          "from_core": "src/tha4/shion/base/loss/computed_scaled_l2_loss.py"
+        },
+        {
+          "path": "src/tha4/shion/base/loss/l1_loss.py",
+          "size_bytes": 2560,
+          "sha256": "1b9b64500dc6ca8e87ac144d5654639d7e8987f4dec103d7d6cc36e38da5b53b",
+          "from_core": "src/tha4/shion/base/loss/l1_loss.py"
+        },
+        {
+          "path": "src/tha4/shion/base/loss/l2_loss.py",
+          "size_bytes": 897,
+          "sha256": "1e8ef83b77ae50d62dbaea54ee51b74236b015d21fb8be41f2e1f5199e713ae9",
+          "from_core": "src/tha4/shion/base/loss/l2_loss.py"
+        },
+        {
+          "path": "src/tha4/shion/base/loss/sum_loss.py",
+          "size_bytes": 1060,
+          "sha256": "0fc648189e19a4fba3c1f2071f19bad95477684b10b7086fd588d2e50d40a4e8",
+          "from_core": "src/tha4/shion/base/loss/sum_loss.py"
+        },
+        {
+          "path": "src/tha4/shion/base/loss/time_dependently_weighted_loss.py",
+          "size_bytes": 1056,
+          "sha256": "8c777d34b756f811d0f2ff72f2065452c3f2fe8a7e566964195ec89bbbffb178",
+          "from_core": "src/tha4/shion/base/loss/time_dependently_weighted_loss.py"
+        },
+        {
+          "path": "src/tha4/shion/base/module_accumulators.py",
+          "size_bytes": 1252,
+          "sha256": "c39866ab0faf2e429768363d5369ddc61e7b38a32921fc3ccc07ed4a61cd3094",
+          "from_core": "src/tha4/shion/base/module_accumulators.py"
+        },
+        {
+          "path": "src/tha4/shion/base/optimizer_factories.py",
+          "size_bytes": 1752,
+          "sha256": "9853a4488523f5a897a6feeb81011ea633057129e41934ef28f1bfc3c4f92088",
+          "from_core": "src/tha4/shion/base/optimizer_factories.py"
+        },
+        {
+          "path": "src/tha4/shion/base/protocol/single_network_from_batch_input_computation_protocol.py",
+          "size_bytes": 1226,
+          "sha256": "8e5aeb65eac1ad941a89f71071e1904c62994c5fe093d37341bf7df309320fef",
+          "from_core": "src/tha4/shion/base/protocol/single_network_from_batch_input_computation_protocol.py"
+        },
+        {
+          "path": "src/tha4/shion/base/training/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/shion/base/training/__init__.py"
+        },
+        {
+          "path": "src/tha4/shion/base/training/single_network.py",
+          "size_bytes": 4218,
+          "sha256": "c0d7a8f0a512683c51c0be8b707b51fdcbd36c195953724c383ea1d7ec577acb",
+          "from_core": "src/tha4/shion/base/training/single_network.py"
+        },
+        {
+          "path": "src/tha4/shion/base/training/single_network_with_minibatch.py",
+          "size_bytes": 3490,
+          "sha256": "c1d98d7e173965459db02e613f11da10319d01af9e7c7eef02e908ed73078b78",
+          "from_core": "src/tha4/shion/base/training/single_network_with_minibatch.py"
+        },
+        {
+          "path": "src/tha4/shion/base/training/two_networks_training_protocol.py",
+          "size_bytes": 4539,
+          "sha256": "b3df56dbcd5fec787158cb0485cfbef9383bb627ba4135e930daaceff87999b3",
+          "from_core": "src/tha4/shion/base/training/two_networks_training_protocol.py"
+        },
+        {
+          "path": "src/tha4/shion/core/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/shion/core/__init__.py"
+        },
+        {
+          "path": "src/tha4/shion/core/cached_computation.py",
+          "size_bytes": 3365,
+          "sha256": "9a30810b44dee0bc5b5e2c10ebff08fb19d8df4c7ea3c9c66d266eedf9873f1b",
+          "from_core": "src/tha4/shion/core/cached_computation.py"
+        },
+        {
+          "path": "src/tha4/shion/core/load_save.py",
+          "size_bytes": 341,
+          "sha256": "af6d6f3eb0e3b1679de13eb9f42a5ec5215e35784b7dee79490bc8f2b238e5a9",
+          "from_core": "src/tha4/shion/core/load_save.py"
+        },
+        {
+          "path": "src/tha4/shion/core/loss.py",
+          "size_bytes": 384,
+          "sha256": "441891539ddbd0e1ff8413f6761ba26b325ba6ce029a1fd8cf651ab49a366a4b",
+          "from_core": "src/tha4/shion/core/loss.py"
+        },
+        {
+          "path": "src/tha4/shion/core/module_accumulator.py",
+          "size_bytes": 280,
+          "sha256": "2679c8c319991a7d0852b19ccefbd9091ba417f5f3dacfb3238e826097250d59",
+          "from_core": "src/tha4/shion/core/module_accumulator.py"
+        },
+        {
+          "path": "src/tha4/shion/core/module_factory.py",
+          "size_bytes": 165,
+          "sha256": "ca4f9c804e31e301bf0a2c06ac3e1d690abfa4218dd27ec69a847c2ed79edfe6",
+          "from_core": "src/tha4/shion/core/module_factory.py"
+        },
+        {
+          "path": "src/tha4/shion/core/optimizer_factory.py",
+          "size_bytes": 225,
+          "sha256": "8e3ae94c849fd5eedc24a195104b5c77efad9d70b16320a145230f826868d5aa",
+          "from_core": "src/tha4/shion/core/optimizer_factory.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/shion/core/training/__init__.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/distrib/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/shion/core/training/distrib/__init__.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/distrib/device_mapper.py",
+          "size_bytes": 452,
+          "sha256": "ab64b8f3f8cfc629a88c5d48110982ef0ba79a195a598f43acbaca40530cb583",
+          "from_core": "src/tha4/shion/core/training/distrib/device_mapper.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/distrib/distributed_trainer.py",
+          "size_bytes": 20483,
+          "sha256": "b3d3270aa91f97886d8549cda5fa852dbf9c044806073501385561d70a525985",
+          "from_core": "src/tha4/shion/core/training/distrib/distributed_trainer.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/distrib/distributed_training_states.py",
+          "size_bytes": 10887,
+          "sha256": "4197b9a6c10af3b1bd80792ad48f9fc32d096b184054d2107deaa172c011a6c3",
+          "from_core": "src/tha4/shion/core/training/distrib/distributed_training_states.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/distrib/distributed_training_tasks.py",
+          "size_bytes": 5479,
+          "sha256": "75494dbdad4bab6d505bf46106ad1d063fcda27365d0cd01284f5e8adfa9439f",
+          "from_core": "src/tha4/shion/core/training/distrib/distributed_training_tasks.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/sample_output_protocol.py",
+          "size_bytes": 1243,
+          "sha256": "6af69e7125cea910b5150b5c3bac8a646e4908ba001c09ab69d7684ae5c9cfe5",
+          "from_core": "src/tha4/shion/core/training/sample_output_protocol.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/single/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/shion/core/training/single/__init__.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/single/training_states.py",
+          "size_bytes": 8283,
+          "sha256": "636e48c33f4a2a9caeefde00500bb813cb130e07e977591ffab83acbeb108305",
+          "from_core": "src/tha4/shion/core/training/single/training_states.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/single/training_tasks.py",
+          "size_bytes": 17471,
+          "sha256": "f9747fa7b6ffbf659cb6ec376310f8ebfdff9d85a8cd4b4368fca5b65f8876a4",
+          "from_core": "src/tha4/shion/core/training/single/training_tasks.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/swarm/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/shion/core/training/swarm/__init__.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/swarm/swarm_training_tasks.py",
+          "size_bytes": 2953,
+          "sha256": "c0c8176a86f3051541ba16655921852f0b4ffdf974fc35cd79147ef90ee953c4",
+          "from_core": "src/tha4/shion/core/training/swarm/swarm_training_tasks.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/swarm/swarm_unit_trainer.py",
+          "size_bytes": 16704,
+          "sha256": "89f0622949fdd6442e020e95aa869aa88c111d8871329f76624c66c184490cdb",
+          "from_core": "src/tha4/shion/core/training/swarm/swarm_unit_trainer.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/training_protocol.py",
+          "size_bytes": 2324,
+          "sha256": "d89eee6e395f06c171bb0d8d849818e79764c29ccc3263d960cd868112f41926",
+          "from_core": "src/tha4/shion/core/training/training_protocol.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/util.py",
+          "size_bytes": 1155,
+          "sha256": "22ae46c44a418ab9df2f333961a463251b050078fc712e1661ed97aa513fc76c",
+          "from_core": "src/tha4/shion/core/training/util.py"
+        },
+        {
+          "path": "src/tha4/shion/core/training/validation_protocol.py",
+          "size_bytes": 1266,
+          "sha256": "dedad92080126cb073f2e9aab13e7eff7f06ee6c589040e26ea07f5c48039bdf",
+          "from_core": "src/tha4/shion/core/training/validation_protocol.py"
+        },
+        {
+          "path": "src/tha4/shion/nn00/__init__.py",
+          "size_bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "from_core": "src/tha4/shion/nn00/__init__.py"
+        },
+        {
+          "path": "src/tha4/shion/nn00/block_args.py",
+          "size_bytes": 1080,
+          "sha256": "c0ef3c067149575c0afbc06149987546133d2b6485e4513b94b0739ad6a11f9f",
+          "from_core": "src/tha4/shion/nn00/block_args.py"
+        },
+        {
+          "path": "src/tha4/shion/nn00/conv.py",
+          "size_bytes": 3784,
+          "sha256": "eac7e33dcdfff1594b461b557fbe9a1c7f9139b848e3f193279b16d80f11452c",
+          "from_core": "src/tha4/shion/nn00/conv.py"
+        },
+        {
+          "path": "src/tha4/shion/nn00/initialization_funcs.py",
+          "size_bytes": 1641,
+          "sha256": "a8e6276183d45667703292d4868b86864fa025344318a5ceaef8d5a9a92f76f3",
+          "from_core": "src/tha4/shion/nn00/initialization_funcs.py"
+        },
+        {
+          "path": "src/tha4/shion/nn00/linear_module_args.py",
+          "size_bytes": 1090,
+          "sha256": "a2819c4e929a919338670c7380b456e8f98a214b34b8f5877db0ad3fd33859ba",
+          "from_core": "src/tha4/shion/nn00/linear_module_args.py"
+        },
+        {
+          "path": "src/tha4/shion/nn00/nonlinearity_factories.py",
+          "size_bytes": 2269,
+          "sha256": "f89b2ba2c6692d29766b24f0dc5acd70438d6a9384d6859dae73135636d4f440",
+          "from_core": "src/tha4/shion/nn00/nonlinearity_factories.py"
+        },
+        {
+          "path": "src/tha4/shion/nn00/normalization_layer_factories.py",
+          "size_bytes": 3647,
+          "sha256": "5c171068ecc53dd541ff5d259a54bb35d30676280b8cd4a22b1ae7f2bf303203",
+          "from_core": "src/tha4/shion/nn00/normalization_layer_factories.py"
+        },
+        {
+          "path": "src/tha4/shion/nn00/normalization_layer_factory.py",
+          "size_bytes": 274,
+          "sha256": "01a1cf35aafab2dc313901e6c9a4635a5ad695c357b088bc56325f2b15c34365",
+          "from_core": "src/tha4/shion/nn00/normalization_layer_factory.py"
+        },
+        {
+          "path": "src/tha4/shion/nn00/pass_through.py",
+          "size_bytes": 159,
+          "sha256": "90f23c4250c56316ffa7215b6a654f3ef4a6ecabe61780791a86bdb8401f00c5",
+          "from_core": "src/tha4/shion/nn00/pass_through.py"
+        },
+        {
+          "path": "src/tha4/shion/nn00/resnet_block.py",
+          "size_bytes": 2125,
+          "sha256": "c1f6c32b8b4e7e1d1f31c4746a7c45ab3b2f8c4ebf808140c0cc7672e087c129",
+          "from_core": "src/tha4/shion/nn00/resnet_block.py"
+        },
+        {
+          "path": "THA4Train.exe",
+          "size_bytes": 68096,
+          "sha256": "d90b857bf6da78467863ab0f0da23855af12939f7405739fbb52c2bf71ea5351",
+          "from_core": "tools/tha4_teacher_portable/THA4Train.exe"
+        }
+      ],
+      "sources": [
+        {
+          "id": "models",
+          "kind": "zip",
+          "filename": "tha4-models.zip",
+          "url": "https://www.dropbox.com/scl/fi/7wec0sur7449iqgtlpi3n/tha4-models.zip?rlkey=0f9d1djmbvjjjn09469s1adx8&dl=1"
+        },
+        {
+          "id": "pose",
+          "kind": "file",
+          "filename": "pose_dataset.pt",
+          "url": "https://www.dropbox.com/scl/fi/du10e6buzr5bslbe025qu/pose_dataset.pt?rlkey=y052g4n3xb14nu2elctzouc5x&dl=1"
+        }
+      ],
+      "runtime": "common"
+    },
+    "openseeface": {
+      "id": "openseeface",
+      "version": "2026.10.31-r1",
+      "install_root": "addons/openseeface",
+      "files": [
+        {
+          "path": "Binary/_bz2.pyd",
+          "size_bytes": 89104,
+          "sha256": "0b86ef4810d53e79f1d934b427fdbacf3792eebb37ed241bc89148238af763fa",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/_ctypes.pyd",
+          "size_bytes": 134160,
+          "sha256": "6bbde732c5bcb89455f43f370a444bb6bca321825de56f9a1f2e947b0a006f1c",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/_decimal.pyd",
+          "size_bytes": 267792,
+          "sha256": "8efc86d36b88a77dfde9c2efcbe22bb5743a824175cfb2e8d7679bc1f40c7530",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/_elementtree.pyd",
+          "size_bytes": 208400,
+          "sha256": "75b93ebab7de27022d1d9f468c5051be5ac64b436b6a10928d75b3de19dbcb6b",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/_hashlib.pyd",
+          "size_bytes": 38928,
+          "sha256": "30dfbd97883b1545513ca5bb857a9aad6e9bf4b8b4272569818346eaf25033f7",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/_lzma.pyd",
+          "size_bytes": 257040,
+          "sha256": "bb78ca0dd1478027e2e9f06f56fc7c3cc6f157b4151562d58a7f6646e463fcc2",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/_multiprocessing.pyd",
+          "size_bytes": 29200,
+          "sha256": "131d82961e805b4744b65a0db9e73d0197f403f15cecb335294d15d5997c42c8",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/_queue.pyd",
+          "size_bytes": 27664,
+          "sha256": "28136612834be0dd236f085f46c1d9b8a1830b9c073557464e22bc006d81e494",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/_socket.pyd",
+          "size_bytes": 75792,
+          "sha256": "6fcc31573ae6b380db1d4e23731755465fd2cee0856e7a6c0e396759bcbf73b5",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/_ssl.pyd",
+          "size_bytes": 124432,
+          "sha256": "4fed9f05da139d66e0582b47c20ee91c91be44d379c225f89b22462bedc989d3",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-console-l1-1-0.dll",
+          "size_bytes": 3584,
+          "sha256": "a3db4aca7b1ba6f802df24916f086e4a803093ffb29f8902c18b8a09aa18ddcb",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-datetime-l1-1-0.dll",
+          "size_bytes": 2560,
+          "sha256": "93ebce911997392650aee0f22b72687787c55c7a4a731724a58c45dc3e1f6cc6",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-debug-l1-1-0.dll",
+          "size_bytes": 2560,
+          "sha256": "dcafa02c5e11d38c590754ee6a23dc65c3342308bb28435efb75de914f2b3652",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-errorhandling-l1-1-0.dll",
+          "size_bytes": 2560,
+          "sha256": "5eb1c0679756b46c57acaf600246ceff260b88f602215e4a94231ef0c30b0af7",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-file-l1-1-0.dll",
+          "size_bytes": 4608,
+          "sha256": "34790e8f47a8f478a4ba4f89695cea1be64d16ff416542ec3036acb5633009ed",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-file-l1-2-0.dll",
+          "size_bytes": 4608,
+          "sha256": "b2d983883afd758913a7db54222a2db4bfeb1051b0c0f92e8faae93c0bc90fc4",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-file-l2-1-0.dll",
+          "size_bytes": 2560,
+          "sha256": "3144bccc1385efc1ff204442a5aecc0a990776341a268fad15aa605449fca04a",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-handle-l1-1-0.dll",
+          "size_bytes": 2560,
+          "sha256": "1ab5fe4396f72938193a8ce5e18fcb522f84dd24591f39ec1302fc822f875496",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-heap-l1-1-0.dll",
+          "size_bytes": 3072,
+          "sha256": "59d807fe256fc61866ee54dc4f18bb4f8901d902f7e23b15ecbf7b7a4dc6fc5f",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-interlocked-l1-1-0.dll",
+          "size_bytes": 2560,
+          "sha256": "65912b7d8ad3423ad4609b9e2e3c262647d5273706796f043c9b515f1e8c78f2",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-libraryloader-l1-1-0.dll",
+          "size_bytes": 3584,
+          "sha256": "e68ff1811bfe8cd7682c45a1d562c90ccb35a70971cd75d195c7773d668e1dc4",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-localization-l1-2-0.dll",
+          "size_bytes": 4096,
+          "sha256": "0c62b8ab1e5f30d4a9eadcd412677e0ab5e4e9304f0870a4ee562f08d09ccc7e",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-memory-l1-1-0.dll",
+          "size_bytes": 3072,
+          "sha256": "3115632c9bea1ccdeb7747689aa65fa36291788339793fce306afb03ca748a6c",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-namedpipe-l1-1-0.dll",
+          "size_bytes": 3072,
+          "sha256": "c0d62d6a9350e66fb144e297c49ae2a8efb997148807a60dbac1aa95c88fa8f4",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-processenvironment-l1-1-0.dll",
+          "size_bytes": 3584,
+          "sha256": "f4cae758d318b23e76ddf50202768f4cbea9cc16d36114f4cecb15957206e4af",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-processthreads-l1-1-0.dll",
+          "size_bytes": 4096,
+          "sha256": "83a0079fbf50719b46275f9cc5675a299c987862ba7ad3ad0ee5f6e714400af5",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-processthreads-l1-1-1.dll",
+          "size_bytes": 4608,
+          "sha256": "053a83b3f8ac76232952bdb8fb5c5067f06ba48f82b474829c25326adbd26361",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-profile-l1-1-0.dll",
+          "size_bytes": 2560,
+          "sha256": "a124c3f8402636219e06beb708d8be67f6dbaa7ff4f6d402b50734230fcfba1b",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-rtlsupport-l1-1-0.dll",
+          "size_bytes": 3072,
+          "sha256": "f8dd900d459335eedbe3855f1ba7858e19dfc0d348ebd25e6548d4ecb0da61b1",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-string-l1-1-0.dll",
+          "size_bytes": 2560,
+          "sha256": "b5082680b5ca71fdea49e8e23efbda2b72f6e1b1a48782b4b63530ee7be19a2c",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-synch-l1-1-0.dll",
+          "size_bytes": 3584,
+          "sha256": "c75a838ff92199678df2ad04a31f609309967cf6b66d34c58d26eb3909e6daa5",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-synch-l1-2-0.dll",
+          "size_bytes": 4096,
+          "sha256": "7f840e721c8cd073631f03159565219d24128eaca905668cfc7394889b908b9e",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-sysinfo-l1-1-0.dll",
+          "size_bytes": 3584,
+          "sha256": "1d7a5a3cd3185d839d31c83dcb2192a08a80c4a7ec17eae550ab5a4d84b189d9",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-timezone-l1-1-0.dll",
+          "size_bytes": 3072,
+          "sha256": "e4d28023eca5bd147ac645048b18bd7272735da10c30c2dbc83cd1c96703d869",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-core-util-l1-1-0.dll",
+          "size_bytes": 2560,
+          "sha256": "84ce120aae88dd77a71c30630d409382f2ad22b11be4ccedd1800c4bb2ca4937",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-crt-conio-l1-1-0.dll",
+          "size_bytes": 12640,
+          "sha256": "30b677b95de5fcbaa2ae67088822a5feabdb63a53101cc44de83067018b457c8",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-crt-convert-l1-1-0.dll",
+          "size_bytes": 15704,
+          "sha256": "053e6f664d1aebe7fd120bf89056f2612b7667e1f71df0dddb504e04c58a508a",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-crt-environment-l1-1-0.dll",
+          "size_bytes": 12120,
+          "sha256": "5cde06aaddd28e0bb3afe756215d6ae5f2eb20b00413a6a1d2095d81493c5ddd",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-crt-filesystem-l1-1-0.dll",
+          "size_bytes": 13656,
+          "sha256": "c1a072b49acb82640104aada665ff948415cc57dfcbc495d4d85b1f18d84a1a3",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-crt-heap-l1-1-0.dll",
+          "size_bytes": 12120,
+          "sha256": "6e0460ea48738b50c8628038368e4e4b425fb6aa5de76f7fe06f2473fabc0e9e",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-crt-locale-l1-1-0.dll",
+          "size_bytes": 12120,
+          "sha256": "3a292b3ae218086edd2d136fcc9eb65e788caa6933c864908a07f004fecd9972",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-crt-math-l1-1-0.dll",
+          "size_bytes": 20824,
+          "sha256": "f7117aa5df8fbfed9f625cbe11cd64fdac1220099484b3ae534107d02a99058d",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-crt-process-l1-1-0.dll",
+          "size_bytes": 12632,
+          "sha256": "0e16041aa9cff135af254e79d85b5f3944bf21e9448bc07f058894eb2013f724",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-crt-runtime-l1-1-0.dll",
+          "size_bytes": 16216,
+          "sha256": "fd40b4d21e907f8c168504bba248ca7eed4a84537ceec8a9903112e531b6a406",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-crt-stdio-l1-1-0.dll",
+          "size_bytes": 17752,
+          "sha256": "37dfd6cd14f191e97e5f1674422e79febfcae062b4a56959f76ff63803e58a55",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-crt-string-l1-1-0.dll",
+          "size_bytes": 17752,
+          "sha256": "e01b24d0fe72ae8d2c76b287d1286741940b84808e4bf11514402a0a6d2706f9",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-crt-time-l1-1-0.dll",
+          "size_bytes": 14168,
+          "sha256": "e4fd646a54d9a21c52c1480e5ae36bb519a7e2237a026725570776d61a43b5a1",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/api-ms-win-crt-utility-l1-1-0.dll",
+          "size_bytes": 12120,
+          "sha256": "91067f7c04812981dd32ea882c7931d128219eb376190500389bc5e60a5a116e",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/base_library.zip",
+          "size_bytes": 786689,
+          "sha256": "bb27d4594b2dafc6f09929ee55d0c56dc34328d3c5721d92a5686f38b28428b8",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/concrt140.dll",
+          "size_bytes": 333592,
+          "sha256": "dabdb0732b2fc14040cedbbfd369d9eb3c7a2e66b38a79892e1c05e6d6a8526d",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/cv2/cv2.cp37-win_amd64.pyd",
+          "size_bytes": 61168640,
+          "sha256": "0a61e6d654e6e58848f8640dbf955179548070a038d1bffb0dc69c2b7a368e59",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/dshowcapture_x64.dll",
+          "size_bytes": 116736,
+          "sha256": "1adc9d198537893d60104afc7e1455600430cd6aeebca4b3a6fd2788e4aa1985",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/dshowcapture_x86.dll",
+          "size_bytes": 104960,
+          "sha256": "6c7eaf4b94c2bc530f6abc3c0cf97240915a3c66600aa59f5c119966b9c5e1ce",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/escapi_x64.dll",
+          "size_bytes": 121856,
+          "sha256": "43faefd2cb49ac2e2c88f8a948162546b95bb6cca307fc35828efe173ab5f6c6",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/escapi_x86.dll",
+          "size_bytes": 98304,
+          "sha256": "f107912748e4ebe5bbaf4dbd1174e661307be3f87170ae2f268c6a084d2d1143",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/facetracker.exe",
+          "size_bytes": 4711965,
+          "sha256": "ee44485d440a8528cf9ed5c8e4d3a4be750763c34088ab829602f3dc145e25a9",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/facetracker.exe.manifest",
+          "size_bytes": 1271,
+          "sha256": "d3dfb968eca9a85f4580ae3d13a58e17d4a7c78b898979058cb1608da72c7989",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/importlib_metadata-1.5.0-py3.7.egg-info/INSTALLER",
+          "size_bytes": 4,
+          "sha256": "ceebae7b8927a3227e5303cf5e0f1f7b34bb542ad7250ac03fbcde36ec2f1508",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/importlib_metadata-1.5.0-py3.7.egg-info/LICENSE",
+          "size_bytes": 571,
+          "sha256": "c0d7ba740721989d55bd507c0fda1373e8071da742b9a48101ebf7eac60433a5",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/importlib_metadata-1.5.0-py3.7.egg-info/METADATA",
+          "size_bytes": 2093,
+          "sha256": "a6e2bd8f8ffa39cc688151fb02f6e31f1ba0abc7b9d40b4741bf942a45bee9c3",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/importlib_metadata-1.5.0-py3.7.egg-info/RECORD",
+          "size_bytes": 2771,
+          "sha256": "1486eb13051362cb62773bf9cf6bbff401ac125a2e44f8613ad5bd4fd0f8ce4f",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/importlib_metadata-1.5.0-py3.7.egg-info/top_level.txt",
+          "size_bytes": 19,
+          "sha256": "08eddf0fdcb29403625e4acca38a872d5fe6a972f6b02e4914a82dd725804fe0",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/importlib_metadata-1.5.0-py3.7.egg-info/WHEEL",
+          "size_bytes": 110,
+          "sha256": "f3335865bc10497a01f487d73a33df78dc2f02c00b0237df824dbb16abc259ba",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/Include/pyconfig.h",
+          "size_bytes": 20736,
+          "sha256": "10ca3d6023d9f6400ef9ae225fa0c2b189e9f1c5de089a22a02e85e9a1048c13",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/lib2to3/Grammar.txt",
+          "size_bytes": 6726,
+          "sha256": "91887e3e49bdabdb01909dcce7d220e229843f84a2595ca86b412c45d6417cd9",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/lib2to3/Grammar3.7.6.final.0.pickle",
+          "size_bytes": 32218,
+          "sha256": "603f84be0338f5210f36b2f38ce596e6b92c38a53a3db835f108a2b6e6d1e39e",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/lib2to3/PatternGrammar.txt",
+          "size_bytes": 821,
+          "sha256": "9bac1f5a4ef2dfe428df9afbecd59d250efc5cbd42a93fcf9b4c6be9e08e7693",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/lib2to3/PatternGrammar3.7.6.final.0.pickle",
+          "size_bytes": 2093,
+          "sha256": "edb7f84f6a386161434bf3cdb64db03b29b80717cedd1c492789578454bc3d05",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/lib2to3/tests/data/README",
+          "size_bytes": 410,
+          "sha256": "b7442a0d467c1bc14706408cdb44109df70728ad4472e1fb0b60947a053752f1",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/libcrypto-1_1.dll",
+          "size_bytes": 3381792,
+          "sha256": "012866b68f458ec204b9bce067af8f4a488860774e7e17973c49e583b52b828d",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/libminibmcapture32.dll",
+          "size_bytes": 34816,
+          "sha256": "7ca0db61939fe18b7ae4fec569266d89c4185454a11e4a16a72e373a61c51e4d",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/libminibmcapture64.dll",
+          "size_bytes": 39424,
+          "sha256": "d7c41aff47f1f9f69d7231a61486e99d6832a3a4c74d16a6df61080638c90d73",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/libopenblas.PYQHXLVVQ7VESDPUVUADXEVJOBGHJPAY.gfortran-win_amd64.dll",
+          "size_bytes": 33123468,
+          "sha256": "e27abcc5919c13670887e0950ce8af21b6199eb651524f31e05982630d6d171c",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/libssl-1_1.dll",
+          "size_bytes": 686112,
+          "sha256": "1ce7ba99e817c1c2d71bc88a1bdd6fcad82aa5c3e519b91ebd56c96f22e3543b",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/msvcp140.dll",
+          "size_bytes": 618264,
+          "sha256": "f87819ae8c6f7c90d3237a1abb9809e8cba9dcd0c80ac3f0969a5e68ef652ca4",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/core/_multiarray_tests.cp37-win_amd64.pyd",
+          "size_bytes": 102912,
+          "sha256": "17e1c6929018cc2a5aac554e700cf8e2a14f5bfd6afdad14b0229698ba1293fa",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/core/_multiarray_umath.cp37-win_amd64.pyd",
+          "size_bytes": 2691072,
+          "sha256": "19370a96850ae6f90e153f97c1ba522cda0ab274518d5f34d34ec2fb14f02fe6",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/fft/_pocketfft_internal.cp37-win_amd64.pyd",
+          "size_bytes": 109568,
+          "sha256": "fa1ef7a3924fa96f609e55c92ddaf3558f3110ad3273bffdf4b51628785583aa",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/linalg/_umath_linalg.cp37-win_amd64.pyd",
+          "size_bytes": 131584,
+          "sha256": "99726f13409bb53f3cb9c9ad1fcb90972d0cbc7bd0a85cdb142deb1c6087f095",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/linalg/lapack_lite.cp37-win_amd64.pyd",
+          "size_bytes": 23552,
+          "sha256": "528f158a6cf6f60eb94aa98f4d6bf5d96d7a1953cea232a400e581e539752224",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/random/_bit_generator.cp37-win_amd64.pyd",
+          "size_bytes": 155648,
+          "sha256": "6f3ab4a1db4b8e51429df132f1caeec583e9eb1d2f5c43797b87d5db865b4ae4",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/random/_bounded_integers.cp37-win_amd64.pyd",
+          "size_bytes": 276992,
+          "sha256": "e2ce3a113bc435def34e85f8564287ffd8aee0b53d06733d990b793556ae34ef",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/random/_common.cp37-win_amd64.pyd",
+          "size_bytes": 173056,
+          "sha256": "8f7ad6829b0274f1fb94a2bb8eaca53e27f7e0e342591a571dd303d86e2cb8ea",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/random/_generator.cp37-win_amd64.pyd",
+          "size_bytes": 642048,
+          "sha256": "b2e97c6a923c421f47592b53f3dbbc3d654765ef5c274444315f70398506dcc0",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/random/_mt19937.cp37-win_amd64.pyd",
+          "size_bytes": 97280,
+          "sha256": "d99a990265c89f4d20093fdedabdf31786cd5f83c7031756c2d81aa74108865e",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/random/_pcg64.cp37-win_amd64.pyd",
+          "size_bytes": 65024,
+          "sha256": "7c54791dd3989efd9261007c64392f1521cf7a8f7c0165c0b8bf27575cafc362",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/random/_philox.cp37-win_amd64.pyd",
+          "size_bytes": 74240,
+          "sha256": "c33c7222de30dfd871922d76a3240a3232d76e8fbfae9850068a70512f1f98f6",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/random/_sfc64.cp37-win_amd64.pyd",
+          "size_bytes": 52224,
+          "sha256": "7a0d2d50937a7cd29169952ed030580e4b57346be518c79a554d59eda2329ece",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/numpy/random/mtrand.cp37-win_amd64.pyd",
+          "size_bytes": 569344,
+          "sha256": "6ec9c8ee44727cd785b315a8fa401b0ff4b43a4a8c503bc878b49baeffd39dba",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/onnxruntime/capi/onnxruntime_pybind11_state.pyd",
+          "size_bytes": 8467968,
+          "sha256": "860270a0610a97a0791fd4281b02c45a5595aa14d0fb686f2f6a3e05aa1e264d",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/PIL/_imaging.cp37-win_amd64.pyd",
+          "size_bytes": 2543104,
+          "sha256": "e959e5a1dab9dc5c6c99e4c0d8a724bfc956b8c106085cea4aa9e7632e4989f2",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/PIL/_imagingtk.cp37-win_amd64.pyd",
+          "size_bytes": 15360,
+          "sha256": "cb831c9a2f876d91d5e2ad61e819a902b1a149ab40352e9e3b36123869c2c32e",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/PIL/_webp.cp37-win_amd64.pyd",
+          "size_bytes": 549376,
+          "sha256": "bda06fdfc5ed64709e17a4813836c944e1e5acc605dd725fe9f0e23c3b67635d",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/psutil/_psutil_windows.cp37-win_amd64.pyd",
+          "size_bytes": 73216,
+          "sha256": "f6a78b6062aab03652e715e4b8ad5a425686e4b72e5f19b1ab9de673b861480a",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/pyexpat.pyd",
+          "size_bytes": 199184,
+          "sha256": "0cb9ae2dfd64c291de65aee89a524a0bbfe7755c34c8215e8b47a4f409ef3743",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/python37.dll",
+          "size_bytes": 3750928,
+          "sha256": "e11aa3893597d7c408349ebb11f47a24e388fd702c4d38b5d6f363f7ad6e8e5f",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/run.bat",
+          "size_bytes": 469,
+          "sha256": "5da36b5fdae917168549f5e2a620c503eeff07b21a5970fc48bdc77e38c78000",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/run.bat - 快捷方式.lnk",
+          "size_bytes": 1334,
+          "sha256": "d7cfb19cfeb528c133bf63e67b7de02c585d32d0f1eddd5b0b9f1f584fa2c162",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/select.pyd",
+          "size_bytes": 26640,
+          "sha256": "4595675949851bd0ff65521e936647fcc5c8d2f32f0ac2641a262fb6323896dd",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/ucrtbase.dll",
+          "size_bytes": 994384,
+          "sha256": "ce2621719f1358508c2c33bcc1380d78a737ca20cd18c0ac89f38e1be788d9a2",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/unicodedata.pyd",
+          "size_bytes": 1072656,
+          "sha256": "96eafcb208518f6df0674ef6f1a48f4687eb73f785c87b11cb4a52dcf1ce5c66",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/vccorlib140.dll",
+          "size_bytes": 366360,
+          "sha256": "41b6af9484c860804c69e00c9d7fee22efe5f769c51355936fc9de248221de94",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/VCOMP140.DLL",
+          "size_bytes": 160024,
+          "sha256": "bbcb6a4b9d113c46d13762e5687e14d95c599e34da59c3b4c4873b86a6f0653c",
+          "source": "osf"
+        },
+        {
+          "path": "Binary/VCRUNTIME140.dll",
+          "size_bytes": 89752,
+          "sha256": "bf5ff4603557c9959acec995653d052d9054ad4826df967974efd2f377c723d1",
+          "source": "osf"
+        },
+        {
+          "path": "models/benchmark.bin",
+          "size_bytes": 84833,
+          "sha256": "ab169ee3410eb8b8ab97d2fd76682c20edc61da670af273b1d95c398a404bf08",
+          "source": "osf"
+        },
+        {
+          "path": "models/lm_model0_opt.onnx",
+          "size_bytes": 1902521,
+          "sha256": "43c9c58f03701cc15b8423c49b78af348a6397334d348887e0fda59013275c29",
+          "source": "osf"
+        },
+        {
+          "path": "models/lm_model1_opt.onnx",
+          "size_bytes": 4842329,
+          "sha256": "5bec42b298a24142cdb249a7256d65bc3fc0fbc673fa1752a64f4d7164719c9f",
+          "source": "osf"
+        },
+        {
+          "path": "models/lm_model2_opt.onnx",
+          "size_bytes": 8494061,
+          "sha256": "16b33ba7d854a0643875ab3da3a620b4b650f2a7f032dd6f634f881cac108304",
+          "source": "osf"
+        },
+        {
+          "path": "models/lm_model3_opt.onnx",
+          "size_bytes": 13500226,
+          "sha256": "5aa0ab2594acaf2e1d3916a8de592cffeb1f1a7a7f778cad2f37948bff6549d1",
+          "source": "osf"
+        },
+        {
+          "path": "models/lm_model4_opt.onnx",
+          "size_bytes": 13501414,
+          "sha256": "2aae9c99a700f756e71781f114ebeac87cdf635f9275a71df80456388c29ceef",
+          "source": "osf"
+        },
+        {
+          "path": "models/lm_modelT_opt.onnx",
+          "size_bytes": 13354685,
+          "sha256": "b8cc2242b10ff9297cfe1b93a61c1517c79e5c89b0726b0007f91f893c8dadaa",
+          "source": "osf"
+        },
+        {
+          "path": "models/lm_modelU_opt.onnx",
+          "size_bytes": 4843555,
+          "sha256": "53aeb0ad17638089faac5e7969931b269eaa5be9ccf67d354776d9b301d81c7b",
+          "source": "osf"
+        },
+        {
+          "path": "models/lm_modelV_opt.onnx",
+          "size_bytes": 13501412,
+          "sha256": "2cf5a9f2219660c5b6319ca46d45f1c2eff6df09aabbd21727f1d96f5877952c",
+          "source": "osf"
+        },
+        {
+          "path": "models/mnv3_detection_opt.onnx",
+          "size_bytes": 568302,
+          "sha256": "0e8e4806766d85ab067a52c7af0dcb59eb7f9dfe580b44f20a8e6ab712d89809",
+          "source": "osf"
+        },
+        {
+          "path": "models/mnv3_gaze32_split_opt.onnx",
+          "size_bytes": 3922610,
+          "sha256": "1d49e9675cfda0cc26a2e7758af2105c50141753c6e538f0dbafcf651a03a6c0",
+          "source": "osf"
+        },
+        {
+          "path": "models/priorbox_640x640.json",
+          "size_bytes": 1337121,
+          "sha256": "cd4f52b281b509ee8e4f056cc49842c52dc35baa71e15a61b93182f0ae6d4763",
+          "source": "osf"
+        },
+        {
+          "path": "models/retinaface_640x640_opt.onnx",
+          "size_bytes": 1713525,
+          "sha256": "c8672bf91ca858d7b51e258ac39e41eb2a03309502ccb868e4fa1e4354dd0f89",
+          "source": "osf"
+        },
+        {
+          "path": "Licenses/DShowCapture.txt",
+          "size_bytes": 27106,
+          "sha256": "ab9a84df19042bdb5e7d7d81ee0d907eef3e3ab158127ecc0d1f22dc88c9f405",
+          "source": "osf"
+        },
+        {
+          "path": "Licenses/escapi.txt",
+          "size_bytes": 1367,
+          "sha256": "ad545d05897cdb6e5bb9430a43f34492f7248413f2a419a9a28c3b23f521772a",
+          "source": "osf"
+        },
+        {
+          "path": "Licenses/IL2cppStartProcess.txt",
+          "size_bytes": 1120,
+          "sha256": "2ea869f6b41d78b2db3efb203293782b317caff0c7c3b743ec3a9ac174b597fc",
+          "source": "osf"
+        },
+        {
+          "path": "Licenses/libminibmcapture.txt",
+          "size_bytes": 884,
+          "sha256": "061ac695f3591dfb2abd270654cc7b8a5f28e59ff807c7053f5c9a430449c239",
+          "source": "osf"
+        },
+        {
+          "path": "Licenses/libsvm.txt",
+          "size_bytes": 1528,
+          "sha256": "fc47be28c43b4132b85ced500e6e4ab042f91c2b9109bf2e46b627cb9d87ab8a",
+          "source": "osf"
+        },
+        {
+          "path": "Licenses/onnxruntime.txt",
+          "size_bytes": 1097,
+          "sha256": "5fe19cfac14e0b738959e0ce3b1d2afebdb2617022a3af67e316e40b3ca7cb7d",
+          "source": "osf"
+        },
+        {
+          "path": "Licenses/OpenCV.txt",
+          "size_bytes": 2170,
+          "sha256": "6ea2fe06fbdcd99502cf4fc79a66268e4025126d04d3d3b1861b69c3c796c1ae",
+          "source": "osf"
+        },
+        {
+          "path": "Licenses/OpenSeeFace.txt",
+          "size_bytes": 1389,
+          "sha256": "3501f5343a2be5b673b25643a5c9becad2d067d9851d251cec372a0f57100ecb",
+          "source": "osf"
+        },
+        {
+          "path": "Licenses/Pytorch_Retinaface.txt",
+          "size_bytes": 1076,
+          "sha256": "397a16d263b79c09296574e746e5fa8b228df93e79ec99cb82834e3deebd7cce",
+          "source": "osf"
+        },
+        {
+          "path": "Licenses/Remedian.txt",
+          "size_bytes": 1107,
+          "sha256": "b0fd29456a1d52b578d13f64a49d3b397bccdf36beacdf78b10d0ec0b1b44ab5",
+          "source": "osf"
+        },
+        {
+          "path": "Licenses/scikit-image.txt",
+          "size_bytes": 4379,
+          "sha256": "0ff08051c3e78242d05b51c4b7d67b49d4637b4f196896905b20ae108e40c757",
+          "source": "osf"
+        },
+        {
+          "path": "Licenses/ThunderSVM.txt",
+          "size_bytes": 11558,
+          "sha256": "e03ba41d7fab20700769fe4118bab50d800cb74f990353a05d2f5fff1c228363",
+          "source": "osf"
+        }
+      ],
+      "sources": [
+        {
+          "id": "osf",
+          "kind": "zip",
+          "filename": "OpenSeeFace-v1.20.5.zip",
+          "url": "https://github.com/emilianavt/OpenSeeFace/releases/download/v1.20.5/OpenSeeFace-v1.20.5.zip"
+        }
+      ],
+      "runtime": "private_frozen_binary_abi"
+    },
+    "output_enhancement": {
+      "id": "output_enhancement",
+      "version": "2026.10.31-r1",
+      "install_root": "addons/output_enhancement/ezvtb_data",
+      "files": [
+        {
+          "path": "rife/rife_x2_fp16.onnx",
+          "size_bytes": 37584439,
+          "sha256": "f6810cf8b135c6a17dd885eb1a0e340a6bfb32d50f13471d0a0d080b45a8ab33",
+          "source": "nn"
+        },
+        {
+          "path": "rife/rife_x2_fp32.onnx",
+          "size_bytes": 49872850,
+          "sha256": "485268607df1fa90b22bd12106746c8a4e971c72d54611584412538e82b269d0",
+          "source": "nn"
+        },
+        {
+          "path": "rife/rife_x3_fp16.onnx",
+          "size_bytes": 38244573,
+          "sha256": "7ef2270d81af39b47946f85f3b279aed9611a589fcad6d777c802a33d4c803c5",
+          "source": "nn"
+        },
+        {
+          "path": "rife/rife_x3_fp32.onnx",
+          "size_bytes": 51188346,
+          "sha256": "3a65851f00d98246e8502eaf2738d7311328cc08e644c9bd6c2187779d7223fb",
+          "source": "nn"
+        },
+        {
+          "path": "rife/rife_x4_fp16.onnx",
+          "size_bytes": 38904238,
+          "sha256": "7527eb815846792839638db014f078305a97710b0dfdcc4eff8b6fa3235ef932",
+          "source": "nn"
+        },
+        {
+          "path": "rife/rife_x4_fp32.onnx",
+          "size_bytes": 52503371,
+          "sha256": "d05594b28b9d08c181a145d3f3cb038cb7e142a8353da3f67e8f08e9daa9e013",
+          "source": "nn"
+        },
+        {
+          "path": "waifu2x/noise0_scale2x_fp16.onnx",
+          "size_bytes": 1123740,
+          "sha256": "aff0963715044263de4f7297efd8592b70f79a1b955e938535372c7b15793d4e",
+          "source": "nn"
+        },
+        {
+          "path": "waifu2x/noise0_scale2x_fp32.onnx",
+          "size_bytes": 2228413,
+          "sha256": "ecab27a7a4e43b0ca89043fa1352a5762a13ecaf8fb064c1f74f9e69f01037fc",
+          "source": "nn"
+        },
+        {
+          "path": "Real-ESRGAN/exported_256_fp16.onnx",
+          "size_bytes": 1279882,
+          "sha256": "76ed56de4655c8dea7b8d092d623d9fcd13acbf85fa5f4048a21d52b43e0428f",
+          "source": "nn"
+        },
+        {
+          "path": "Real-ESRGAN/exported_256_fp32.onnx",
+          "size_bytes": 2522033,
+          "sha256": "0814fce76af315b2ad23583c272b4f06525b6a205af900d779c53429508da493",
+          "source": "nn"
+        }
+      ],
+      "sources": [
+        {
+          "id": "nn",
+          "kind": "zip",
+          "filename": "ezvtuber_data.zip",
+          "url": "https://drive.usercontent.google.com/download?id=1pWKIpjWeqfpa3Rub185FVvxDr5H09pOi&export=download&confirm=t"
+        }
+      ],
+      "runtime": "common"
+    }
+  }
+}

@@ -12,6 +12,12 @@ BitBlt-only tools must use WGC instead.
 """
 
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import ctypes
 import os
@@ -830,6 +836,7 @@ class _UlwWindowHost:
         self._facade = facade
         self._cmds: queue.Queue = queue.Queue()
         self._frame_slot: list[Optional[tuple]] = [None]
+        self._frame_lock = threading.Lock()
         self._ready = threading.Event()
         self._init_error: Optional[BaseException] = None
         self._overlay: Optional[_DesktopOverlayWindow] = None
@@ -851,74 +858,94 @@ class _UlwWindowHost:
             return
         self._cmds.put((op, kwargs))
 
-    def post_frame(
-            self,
-            rgba: numpy.ndarray,
-            *,
-            frame_signature: Optional[tuple],
-            premultiplied_bgra: Optional[numpy.ndarray]) -> None:
+    def post_frame(self, rgba: numpy.ndarray, *, frame_signature: Optional[tuple],
+                   premultiplied_bgra: Optional[numpy.ndarray]) -> None:
         if self._stop:
             return
-        payload = (rgba, frame_signature, premultiplied_bgra)
-        try:
-            self._frame_slot[0] = payload
-        except Exception:
-            pass
-        self.post("frame")
+        with self._frame_lock:
+            wake = self._frame_slot[0] is None
+            self._frame_slot[0] = (rgba, frame_signature, premultiplied_bgra)
+        if wake:
+            self.post("frame")
 
     def overlay_hwnd(self) -> int:
         return int(self._overlay_hwnd or 0)
 
+    # EVS-DESIGN-AUDIT EVS-A087 BEGIN
+    # 设计[UI-A×05] [静态关联 / 退出待测]
+    # 宿主线程关闭入口存在；开关输出和主窗退出后应核查 native HWND、队列、计时器及线程实际终止。此模块不是另起 Python 子进程，勿把线程当残留子进程。
+    # 历史 bug 热点 #2,#4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A087 END
+    # EVS-DESIGN-AUDIT EVS-A140 BEGIN
+    # 设计[UI-A×05, f-068] [明确缺口（显式清理顺序）]
+    # 这里先 self._stop=True 再 post("destroy")，而 post 检查 _stop 后直接返回；worker 又按 not _stop 退出，未在 finally 调用 _host_destroy_overlay_windows。显式 native/DIB 释放可能被绕过，需实测；线程退出的 OS 清理与独立残留进程不是同一结论。
+    # 历史 bug 热点 #2,#4：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-CLOSE-07：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A140 END
     def shutdown(self) -> None:
         if self._stop:
             return
         self._stop = True
-        self.post("destroy")
-        if self._thread.is_alive():
+        self._cmds.put(("destroy", {}))  # Bypass post() stop guard to wake host.
+        if self._thread.is_alive() and self._thread is not threading.current_thread():
             self._thread.join(timeout=3.0)
 
     def _thread_main(self) -> None:
+        facade = self._facade
         try:
             _init_win32_prototypes()
             _ensure_dpi_awareness()
-            facade = self._facade
             facade._host_init_overlay_windows()
             self._overlay = facade._overlay
             self._border = facade._border
             self._overlay_hwnd = int((self._overlay._hwnd if self._overlay else 0) or 0)
         except BaseException as exc:
             self._init_error = exc
+            try:
+                facade._host_destroy_overlay_windows()
+            except Exception:
+                pass
             self._ready.set()
             return
         self._ready.set()
-        while not self._stop:
-            _pump_win32_messages()
-            frame_payload = self._frame_slot[0]
-            if frame_payload is not None:
-                self._frame_slot[0] = None
-                rgba, frame_signature, premul = frame_payload
+        try:
+            while not self._stop:
+                _pump_win32_messages()
+                with self._frame_lock:
+                    frame_payload = self._frame_slot[0]
+                    self._frame_slot[0] = None
+                if frame_payload is not None:
+                    rgba, frame_signature, premul = frame_payload
+                    try:
+                        facade._host_apply_frame_rgba(rgba, frame_signature=frame_signature,
+                                                      premultiplied_bgra=premul)
+                    except Exception:
+                        pass
                 try:
-                    facade._host_apply_frame_rgba(
-                        rgba,
-                        frame_signature=frame_signature,
-                        premultiplied_bgra=premul)
-                except Exception:
-                    pass
-            try:
-                op, kwargs = self._cmds.get(timeout=0.005)
-            except queue.Empty:
-                continue
-            try:
+                    op, kwargs = self._cmds.get(timeout=.005)
+                except queue.Empty:
+                    continue
                 if op == "destroy":
-                    facade._host_destroy_overlay_windows()
                     break
                 if op == "frame":
                     continue
-                getattr(facade, f"_host_{op}")(**kwargs)
-            except Exception:
-                pass
+                try:
+                    getattr(facade, "_host_" + op)(**kwargs)
+                except Exception:
+                    pass
+        finally:
+            self._stop = True
+            with self._frame_lock:
+                self._frame_slot[0] = None
+            facade._host_destroy_overlay_windows()
+            self._overlay_hwnd = 0
 
 
+# EVS-DESIGN-AUDIT EVS-A086 BEGIN
+# 设计[UI-A×05, UI-A×01] [部分符合 / 第三方采集待测]
+# 独立 Win32 ULW 输出与边框，wx 控件不参与该像素渲染；alpha、任务栏身份、HWND 选择和边框排除必须由实际直播采集验收。
+# 历史 bug 热点 #1,#4：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A086 END
 class TransparentCaptureWindow:
     """Single topmost true-transparent (per-pixel alpha) overlay window (ULW).
 
@@ -936,6 +963,7 @@ class TransparentCaptureWindow:
             height: int,
             *,
             on_geometry_changed: Optional[GeometryCallback] = None,
+            on_frame_presented: Optional[Callable[[], None]] = None,
             on_edit_begin: Optional[EditBeginCallback] = None,
             on_edit_motion: Optional[EditMotionCallback] = None,
             on_edit_end: Optional[EditEndCallback] = None,
@@ -945,6 +973,7 @@ class TransparentCaptureWindow:
             run_on_main_sync: Optional[_MainThreadSync] = None) -> None:
         self._destroyed = False
         self._on_geometry_changed = on_geometry_changed
+        self._on_frame_presented = on_frame_presented
         self._schedule_on_main = schedule_on_main
         self._run_on_main_sync = run_on_main_sync
         self._geometry_sync_suppress = False
@@ -1089,11 +1118,13 @@ class TransparentCaptureWindow:
             self._width = width
             self._height = height
             self._sync_visible_geometry(force=True)
-        transparent = rgba[:, :, 3] == 0
-        if numpy.any(transparent):
-            rgba = rgba.copy()
-            rgba[transparent, 0:3] = 0
+        if premultiplied_bgra is None:
+            from output_enhancement.rgba_ops import sanitize_transparent_rgb
+            rgba = sanitize_transparent_rgb(rgba)
         self._overlay.update_rgba(rgba, premultiplied_bgra=premultiplied_bgra)
+        self._last_presented_signature = frame_signature
+        if self._on_frame_presented is not None:
+            self._on_frame_presented()
 
     def _on_overlay_position_changed(self, x: int, y: int) -> None:
         if self._destroyed or self._geometry_sync_suppress:
@@ -1227,11 +1258,11 @@ class TransparentCaptureWindow:
                 if frame_hash == self._last_frame_hash:
                     return
                 self._last_frame_hash = frame_hash
-            rgba_copy = numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
+            rgba_copy = numpy.array(rgba, dtype=numpy.uint8, order="C", copy=True)
             premul_copy = None
             if premultiplied_bgra is not None:
-                premul_copy = numpy.ascontiguousarray(
-                    premultiplied_bgra, dtype=numpy.uint8)
+                premul_copy = numpy.array(
+                    premultiplied_bgra, dtype=numpy.uint8, order="C", copy=True)
             self._host.post_frame(
                 rgba_copy,
                 frame_signature=frame_signature,

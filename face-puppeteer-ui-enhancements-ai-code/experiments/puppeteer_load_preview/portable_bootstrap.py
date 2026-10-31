@@ -1,5 +1,11 @@
 """Portable readiness check for EasyVtuberStudio.exe (install via DEPLOY.bat)."""
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import os
 import sys
@@ -26,6 +32,11 @@ def _deploy_bat_path(portable_root: Path) -> Path:
     return portable_root / "DEPLOY.bat"
 
 
+# EVS-DESIGN-AUDIT EVS-A056 BEGIN
+# 设计[dep-012, f-023] [静态符合（引导入口）；错误频率待测]
+# 缺环境指向本仓 DEPLOY；此处启动器提示与 wx 的对话框限频不是同一机制，需确认失败不被循环调用形成连弹。
+# 历史 bug 热点 #2,#6：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A056 END
 def guide_user_to_deploy(portable_root: Path, *, missing: list[str]) -> None:
     deploy_bat = _deploy_bat_path(portable_root)
     summary = ", ".join(missing) if missing else "runtime"

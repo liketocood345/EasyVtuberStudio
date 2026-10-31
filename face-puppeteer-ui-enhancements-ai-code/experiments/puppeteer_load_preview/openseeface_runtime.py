@@ -1,6 +1,14 @@
 """OpenSeeFace subprocess, UDP receiver, and preview window capture."""
 from __future__ import annotations
+from portable_process_env import debug_log_path
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
+import atexit
 import ctypes
 import locale
 import os
@@ -36,10 +44,13 @@ from openseeface_mocap_driver import (
 from openseeface_packet import OSF_PREVIEW_WINDOW_TITLE, parse_openseeface_udp_packet
 from portable_paths import (
     get_portable_root,
+    get_workspace_dir,
     openseeface_capture_ready,
     resolve_facetracker_exe,
     resolve_openseeface_models_dir,
 )
+
+_FACETRACKER_LOG_MAX_BYTES = 1_000_000
 
 _FACETRACKER_CAMERA_IN_USE = threading.Event()
 _FACETRACKER_LIST_LOCK = threading.Lock()
@@ -71,25 +82,296 @@ def subprocess_hide_window_kwargs() -> dict:
     return kwargs
 
 
+kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+kernel32.CloseHandle.restype = wintypes.BOOL
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+kernel32.TerminateProcess.restype = wintypes.BOOL
+kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+kernel32.SetInformationJobObject.argtypes = [
+    wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+kernel32.SetInformationJobObject.restype = wintypes.BOOL
+kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+kernel32.QueryFullProcessImageNameW.argtypes = [
+    wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+kernel32.Process32FirstW.restype = wintypes.BOOL
+kernel32.Process32NextW.restype = wintypes.BOOL
+
+PROCESS_TERMINATE = 0x0001
+PROCESS_SET_QUOTA = 0x0100
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+TH32CS_SNAPPROCESS = 0x00000002
+JobObjectExtendedLimitInformation = 9
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
+
+_FACETRACKER_JOB = None
+_LIVE_OSF_RUNTIMES: List["OpenSeeFaceRuntime"] = []
+
+
+class _PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", wintypes.DWORD),
+        ("cntUsage", wintypes.DWORD),
+        ("th32ProcessID", wintypes.DWORD),
+        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+        ("th32ModuleID", wintypes.DWORD),
+        ("cntThreads", wintypes.DWORD),
+        ("th32ParentProcessID", wintypes.DWORD),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", wintypes.DWORD),
+        ("szExeFile", wintypes.WCHAR * 260),
+    ]
+
+
+kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PROCESSENTRY32W)]
+kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PROCESSENTRY32W)]
+
+
+class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_int64),
+        ("PerJobUserTimeLimit", ctypes.c_int64),
+        ("LimitFlags", wintypes.DWORD),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", wintypes.DWORD),
+        ("Affinity", ctypes.c_size_t),
+        ("PriorityClass", wintypes.DWORD),
+        ("SchedulingClass", wintypes.DWORD),
+    ]
+
+
+class _IO_COUNTERS(ctypes.Structure):
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_uint64),
+        ("WriteOperationCount", ctypes.c_uint64),
+        ("OtherOperationCount", ctypes.c_uint64),
+        ("ReadTransferCount", ctypes.c_uint64),
+        ("WriteTransferCount", ctypes.c_uint64),
+        ("OtherTransferCount", ctypes.c_uint64),
+    ]
+
+
+class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+        ("IoInfo", _IO_COUNTERS),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _query_process_image(pid: int) -> Optional[str]:
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+    try:
+        size = wintypes.DWORD(32768)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return buf.value
+        return None
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _terminate_pid(pid: int) -> bool:
+    handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+    if not handle:
+        return False
+    try:
+        return bool(kernel32.TerminateProcess(handle, 1))
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _iter_process_ids_and_parents():
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not snapshot or snapshot == INVALID_HANDLE_VALUE:
+        return
+    try:
+        entry = _PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(_PROCESSENTRY32W)
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            yield int(entry.th32ProcessID), int(entry.th32ParentProcessID)
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+
+# bh-2 26.10.29 22:27 s
+def _kill_orphaned_facetrackers(exe: Path, keep_pid: Optional[int] = None) -> List[int]:
+    """Kill facetracker.exe copies of this add-on whose parent is already dead."""
+    if os.name != "nt" or exe is None:
+        return []
+    try:
+        target = str(exe.resolve()).lower()
+    except OSError:
+        target = str(exe).lower()
+    killed: List[int] = []
+    our_pid = os.getpid()
+    for pid, ppid in _iter_process_ids_and_parents():
+        if pid <= 0 or pid == keep_pid:
+            continue
+        image = _query_process_image(pid)
+        if not image or image.lower() != target:
+            continue
+        parent_dead = not _pid_alive(ppid)
+        parent_is_us = ppid == our_pid
+        if not parent_dead and not parent_is_us:
+            continue
+        if _terminate_pid(pid):
+            killed.append(pid)
+    # #region agent log
+    try:
+        import json as _json
+        open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+            "sessionId": "86a17c",
+            "runId": "post-fix-osf-orphan",
+            "hypothesisId": "V",
+            "location": "openseeface_runtime.py:_kill_orphaned_facetrackers",
+            "message": "osf orphan facetracker sweep",
+            "data": {"exe": target[-80:], "keep_pid": keep_pid, "killed": killed, "our_pid": our_pid},
+            "timestamp": int(time.time() * 1000),
+        }) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    return killed
+
+
+def _ensure_kill_on_close_job():
+    global _FACETRACKER_JOB
+    if os.name != "nt":
+        return None
+    if _FACETRACKER_JOB:
+        return _FACETRACKER_JOB
+    handle = kernel32.CreateJobObjectW(None, None)
+    if not handle:
+        return None
+    info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if not kernel32.SetInformationJobObject(
+            handle, JobObjectExtendedLimitInformation, ctypes.byref(info), ctypes.sizeof(info)):
+        kernel32.CloseHandle(handle)
+        return None
+    _FACETRACKER_JOB = handle
+    return handle
+
+
+def _assign_pid_to_kill_on_close_job(pid: int) -> bool:
+    job = _ensure_kill_on_close_job()
+    if not job or pid <= 0:
+        return False
+    handle = kernel32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid)
+    if not handle:
+        return False
+    try:
+        ok = bool(kernel32.AssignProcessToJobObject(job, handle))
+        winerr = int(ctypes.get_last_error())
+        # #region agent log
+        try:
+            import json as _json
+            open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                "sessionId": "86a17c",
+                "runId": "post-fix-osf-orphan",
+                "hypothesisId": "W",
+                "location": "openseeface_runtime.py:_assign_pid_to_kill_on_close_job",
+                "message": "osf facetracker job assign",
+                "data": {"pid": int(pid), "ok": bool(ok), "winerr": winerr},
+                "timestamp": int(time.time() * 1000),
+            }) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        return ok
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _close_kill_on_close_job() -> None:
+    global _FACETRACKER_JOB
+    handle = _FACETRACKER_JOB
+    _FACETRACKER_JOB = None
+    if handle:
+        kernel32.CloseHandle(handle)
+
+
+def _atexit_stop_facetrackers() -> None:
+    # #region agent log
+    try:
+        import json as _json
+        open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+            "sessionId": "86a17c",
+            "runId": "post-fix-osf-orphan",
+            "hypothesisId": "X",
+            "location": "openseeface_runtime.py:_atexit_stop_facetrackers",
+            "message": "osf atexit stop",
+            "data": {"live": len(_LIVE_OSF_RUNTIMES)},
+            "timestamp": int(time.time() * 1000),
+        }) + "\n")
+    except Exception:
+        pass
+    # #endregion
+    for runtime in list(_LIVE_OSF_RUNTIMES):
+        try:
+            runtime.stop()
+        except Exception:
+            pass
+    _close_kill_on_close_job()
+
+
+atexit.register(_atexit_stop_facetrackers)
+# bh-2 26.10.29 22:27 e
+
+
 user32 = ctypes.windll.user32
 
 _win32_preview_prototypes_initialized = False
 _get_window_long = user32.GetWindowLongW
+_set_window_long = user32.SetWindowLongW
 
 
 def _init_win32_preview_prototypes() -> None:
-    global _win32_preview_prototypes_initialized, _get_window_long
+    global _win32_preview_prototypes_initialized, _get_window_long, _set_window_long
     if _win32_preview_prototypes_initialized:
         return
     _win32_preview_prototypes_initialized = True
     if ctypes.sizeof(ctypes.c_void_p) == 8:
         user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
         user32.GetWindowLongPtrW.restype = ctypes.c_longlong
+        user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_longlong]
+        user32.SetWindowLongPtrW.restype = ctypes.c_longlong
         _get_window_long = user32.GetWindowLongPtrW
+        _set_window_long = user32.SetWindowLongPtrW
     else:
         user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
         user32.GetWindowLongW.restype = ctypes.c_long
+        user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+        user32.SetWindowLongW.restype = ctypes.c_long
         _get_window_long = user32.GetWindowLongW
+        _set_window_long = user32.SetWindowLongW
     user32.AdjustWindowRectEx.argtypes = [
         ctypes.POINTER(wintypes.RECT), wintypes.DWORD, wintypes.BOOL, wintypes.DWORD,
     ]
@@ -107,6 +389,10 @@ def _init_win32_preview_prototypes() -> None:
     user32.ShowWindow.restype = wintypes.BOOL
     user32.IsWindow.argtypes = [wintypes.HWND]
     user32.IsWindow.restype = wintypes.BOOL
+    user32.GetParent.argtypes = [wintypes.HWND]
+    user32.GetParent.restype = wintypes.HWND
+    user32.SetParent.argtypes = [wintypes.HWND, wintypes.HWND]
+    user32.SetParent.restype = wintypes.HWND
 
 
 _init_win32_preview_prototypes()
@@ -114,11 +400,25 @@ _init_win32_preview_prototypes()
 GWL_STYLE = -16
 GWL_EXSTYLE = -20
 HWND_TOP = 0
+HWND_BOTTOM = 1
 SW_HIDE = 0
 SW_SHOW = 5
+SW_SHOWNA = 8
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
 SWP_NOZORDER = 0x0004
+SWP_NOMOVE = 0x0002
+SWP_NOSIZE = 0x0001
+SWP_FRAMECHANGED = 0x0020
+WS_CHILD = 0x40000000
+WS_POPUP = 0x80000000
+WS_CAPTION = 0x00C00000
+WS_THICKFRAME = 0x00040000
+WS_SYSMENU = 0x00080000
+WS_VISIBLE = 0x10000000
+WS_EX_APPWINDOW = 0x00040000
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_NOACTIVATE = 0x08000000
 
 
 def fit_aspect_rect_in_box(
@@ -297,6 +597,7 @@ class OpenSeeFaceRuntime:
         self._preview_content_height = 720
         self._preview_placement_key: Optional[Tuple[int, ...]] = None
         self._preview_visible = False
+        self._preview_embed_parent = 0
         self._target_fps = OSF_DEFAULT_FPS
         self._state = OpenSeeFaceMocapState()
         self._status = OpenSeeFaceRuntimeStatus()
@@ -304,6 +605,16 @@ class OpenSeeFaceRuntime:
         self._camera_index = 0
         self._udp_port = OSF_DEFAULT_UDP_PORT
         self._visualize_level = OSF_VISUALIZE_DEFAULT
+        self._facetracker_log_handle = None
+        self._facetracker_log_path: Optional[Path] = None
+        # bh-2 26.10.29 22:27 s
+        if self not in _LIVE_OSF_RUNTIMES:
+            _LIVE_OSF_RUNTIMES.append(self)
+        _ensure_kill_on_close_job()
+        exe = resolve_facetracker_exe(self._portable_root)
+        if exe is not None:
+            _kill_orphaned_facetrackers(exe)
+        # bh-2 26.10.29 22:27 e
 
     @property
     def state(self) -> OpenSeeFaceMocapState:
@@ -327,14 +638,44 @@ class OpenSeeFaceRuntime:
     def hide_preview_window(self) -> None:
         with self._preview_ops_lock:
             hwnd = self.get_preview_hwnd()
-            if hwnd and self._preview_visible:
+            if hwnd:
                 try:
                     if user32.IsWindow(wintypes.HWND(int(hwnd))):
                         user32.ShowWindow(wintypes.HWND(int(hwnd)), SW_HIDE)
                 except OSError:
                     pass
-                self._preview_visible = False
+            self._preview_visible = False
             self._preview_placement_key = None
+
+    def _ensure_preview_embedded(self, hwnd: int, parent_hwnd: int) -> bool:
+        # bh-5 26.10.29 20:56 s
+        if parent_hwnd <= 0 or hwnd <= 0:
+            return False
+        window = wintypes.HWND(int(hwnd))
+        parent = wintypes.HWND(int(parent_hwnd))
+        try:
+            current = int(user32.GetParent(window) or 0)
+            if current != int(parent_hwnd):
+                user32.SetParent(window, parent)
+            style = int(_get_window_long(window, GWL_STYLE))
+            style = (
+                (style | WS_CHILD | WS_VISIBLE)
+                & ~WS_POPUP & ~WS_CAPTION & ~WS_THICKFRAME & ~WS_SYSMENU
+            )
+            _set_window_long(window, GWL_STYLE, style)
+            ex_style = int(_get_window_long(window, GWL_EXSTYLE))
+            ex_style = (ex_style | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE) & ~WS_EX_APPWINDOW
+            _set_window_long(window, GWL_EXSTYLE, ex_style)
+            user32.SetWindowPos(
+                window,
+                wintypes.HWND(HWND_TOP),
+                0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED)
+            self._preview_embed_parent = int(user32.GetParent(window) or 0)
+            return self._preview_embed_parent == int(parent_hwnd)
+        except (OSError, OverflowError, ValueError, TypeError):
+            return False
+        # bh-5 26.10.29 20:56 e
 
     def sync_preview_window_placement(
             self,
@@ -344,7 +685,8 @@ class OpenSeeFaceRuntime:
             box_width: int,
             box_height: int,
             content_width: Optional[int] = None,
-            content_height: Optional[int] = None) -> bool:
+            content_height: Optional[int] = None,
+            parent_hwnd: Optional[int] = None) -> bool:
         with self._preview_ops_lock:
             hwnd = self.get_preview_hwnd()
             if hwnd is None or not user32.IsWindow(wintypes.HWND(int(hwnd))):
@@ -358,8 +700,13 @@ class OpenSeeFaceRuntime:
                 content_width, content_height, box_width, box_height)
             target_x = int(screen_x) + fit_offset_x
             target_y = int(screen_y) + fit_offset_y
-            outer_w, outer_h = window_outer_size_for_client(hwnd, client_w, client_h)
-            placement_key = (target_x, target_y, outer_w, outer_h)
+            embed_parent = int(parent_hwnd or 0)
+            if embed_parent > 0:
+                self._ensure_preview_embedded(int(hwnd), embed_parent)
+                outer_w, outer_h = client_w, client_h
+            else:
+                outer_w, outer_h = window_outer_size_for_client(hwnd, client_w, client_h)
+            placement_key = (target_x, target_y, outer_w, outer_h, embed_parent)
             if placement_key == self._preview_placement_key and self._preview_visible:
                 return True
 
@@ -373,6 +720,18 @@ class OpenSeeFaceRuntime:
                     outer_h,
                     SWP_NOACTIVATE | SWP_SHOWWINDOW,
                 ))
+                actual_parent = 0
+                try:
+                    actual_parent = int(user32.GetParent(wintypes.HWND(int(hwnd))) or 0)
+                except (OSError, OverflowError, ValueError, TypeError):
+                    actual_parent = 0
+                # #region agent log
+                try:
+                    import json as _json, time as _time
+                    open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix", "hypothesisId": "D", "location": "openseeface_runtime.py:sync_preview_window_placement", "message": "osf preview dock attempt", "data": {"ok": bool(ok), "hwnd": int(hwnd), "parent": int(actual_parent), "want_parent": int(embed_parent), "pos": [int(target_x), int(target_y), int(outer_w), int(outer_h)]}, "timestamp": int(_time.time() * 1000)}) + "\n")
+                except Exception:
+                    pass
+                # #endregion
                 if ok:
                     user32.ShowWindow(wintypes.HWND(int(hwnd)), SW_SHOW)
                     self._preview_visible = True
@@ -387,6 +746,83 @@ class OpenSeeFaceRuntime:
                 self._preview_placement_key = None
                 return False
 
+    def _close_facetracker_log(self) -> None:
+        handle = self._facetracker_log_handle
+        self._facetracker_log_handle = None
+        if handle is None:
+            return
+        try:
+            handle.close()
+        except OSError:
+            pass
+
+    def _open_facetracker_log(self):
+        # bh-5 26.10.29 19:40 s
+        workspace = get_workspace_dir(self._portable_root)
+        log_dir = workspace / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = log_dir / "facetracker.err.log"
+        try:
+            if path.is_file() and path.stat().st_size > _FACETRACKER_LOG_MAX_BYTES:
+                bak = log_dir / "facetracker.err.log.1"
+                if bak.exists():
+                    bak.unlink()
+                path.replace(bak)
+        except OSError:
+            pass
+        self._facetracker_log_path = path
+        # bh-5 26.10.30 11:20 s
+        handle = path.open("wb")
+        # bh-5 26.10.30 11:20 e
+        self._facetracker_log_handle = handle
+        # bh-5 26.10.29 19:40 e
+        return handle
+
+    def _facetracker_log_tail(self, n: int = 8) -> str:
+        path = self._facetracker_log_path
+        if path is None or not path.is_file():
+            return ""
+        # bh-2 26.10.29 20:24 s
+        try:
+            size = path.stat().st_size
+            with path.open("rb") as handle:
+                if size > 8192:
+                    handle.seek(size - 8192)
+                data = handle.read()
+            text = data.decode("utf-8", errors="replace")
+        except OSError:
+            return ""
+        # bh-2 26.10.29 20:24 e
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        return " | ".join(lines[-max(1, n):])
+
+    def refresh_process_status(self) -> None:
+        process = self._process
+        if process is None:
+            self._status.process_running = False
+            return
+        if process.poll() is not None:
+            self._note_facetracker_process_exited(reason="facetracker exited")
+
+    def facetracker_capture_open_failed(self) -> bool:
+        # bh-5 26.10.30 11:20 s
+        handle = self._facetracker_log_handle
+        if handle is not None:
+            try:
+                handle.flush()
+            except OSError:
+                pass
+        tail = self._facetracker_log_tail(20)
+        if not tail:
+            return False
+        return "There was no valid input" in tail or "Failed to start capture" in tail
+        # bh-5 26.10.30 11:20 e
+
+    # EVS-DESIGN-AUDIT EVS-A069 BEGIN
+    # 设计[f-052, f-057] [符合（stderr 落盘）]
+    # 内置 facetracker 进程 stdout/stderr 写入 workspace/logs/facetracker.err.log；早退时把末行并入 last_error。
+    # 历史 bug 热点 #2,#5：不再把 facetracker 输出丢到 DEVNULL。
+    # EVS-DESIGN-AUDIT EVS-A069 END
     def start(
             self,
             *,
@@ -408,12 +844,15 @@ class OpenSeeFaceRuntime:
 
             self._camera_index = int(camera_index)
             self._udp_port = int(udp_port)
-            self._visualize_level = clamp_osf_visualize_level(visualize_level)
+            # bh-5 26.10.30 12:52 s
+            self._visualize_level = 0
+            # bh-5 26.10.30 12:52 e
             self._target_fps = clamp_osf_fps(target_fps)
             self._preview_content_width = clamp_osf_capture_width(capture_width)
             self._preview_content_height = clamp_osf_capture_height(capture_height)
             self._preview_placement_key = None
             self._preview_visible = False
+            self._preview_embed_parent = 0
             self._state = OpenSeeFaceMocapState()
             self._status = OpenSeeFaceRuntimeStatus()
             self._stopped = False
@@ -435,41 +874,70 @@ class OpenSeeFaceRuntime:
             models_dir = resolve_openseeface_models_dir(self._portable_root)
             if models_dir is not None:
                 cmd.extend(["--model-dir", str(models_dir)])
+            # bh-2 26.10.29 22:27 s
+            _kill_orphaned_facetrackers(exe)
+            # bh-2 26.10.29 22:27 e
             try:
+                log_handle = self._open_facetracker_log()
                 self._process = subprocess.Popen(
                     cmd,
                     cwd=str(exe.parent),
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=log_handle,
+                    stderr=subprocess.STDOUT,
                     **subprocess_hide_window_kwargs(),
                 )
             except OSError as exc:
                 self._status.last_error = str(exc)
                 self._process = None
+                self._close_facetracker_log()
                 return False
 
             mark_facetracker_camera_in_use(True)
             self._status.process_running = True
+            # bh-2 26.10.29 22:27 s
+            child_pid = int(getattr(self._process, "pid", 0) or 0)
+            _assign_pid_to_kill_on_close_job(child_pid)
+            # bh-2 26.10.29 22:27 e
             self._udp_thread = threading.Thread(
                 target=self._udp_worker,
                 daemon=True,
                 name="osf-udp")
             self._udp_thread.start()
-            self._preview_thread = threading.Thread(
-                target=self._preview_worker,
-                daemon=True,
-                name="osf-preview")
-            self._preview_thread.start()
+            # bh-5 26.10.30 12:52 s
+            if int(self._visualize_level) > 0:
+                self._preview_thread = threading.Thread(
+                    target=self._preview_worker,
+                    daemon=True,
+                    name="osf-preview")
+                self._preview_thread.start()
+            # bh-5 26.10.30 12:52 e
+            # #region agent log
+            try:
+                import json as _json, time as _time
+                open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix", "hypothesisId": "A", "location": "openseeface_runtime.py:start", "message": "osf facetracker started", "data": {"pid": int(getattr(self._process, "pid", 0) or 0), "visualize": int(self._visualize_level), "camera": int(self._camera_index), "size": [int(self._preview_content_width), int(self._preview_content_height)]}, "timestamp": int(_time.time() * 1000)}) + "\n")
+            except Exception:
+                pass
+            # #endregion
             return True
 
     def stop(self) -> None:
         with self._stop_lock:
             self._stop_unlocked()
 
+    # EVS-DESIGN-AUDIT EVS-A067 BEGIN
+    # 设计[f-052, f-068] [符合（join/kill-wait）]
+    # 关闭 socket 并 terminate、wait(3s)，超时 kill 后再 wait，并 join UDP/预览 worker。facetracker 进 JobObject（KILL_ON_JOB_CLOSE），父进程被杀时子进程一并退出。
+    # 历史 bug 热点 #2,#5：stop 路径补 join 与二次 wait。
+    # EVS-DESIGN-AUDIT EVS-A067 END
     def _stop_unlocked(self) -> None:
         self._stopped = True
-        self.hide_preview_window()
+        # bh-2 26.10.29 20:24 s
+        # Do not ShowWindow a possibly hung facetracker HWND; just drop the handle.
+        self._preview_visible = False
+        self._preview_placement_key = None
+        self._preview_embed_parent = 0
         self._set_preview_hwnd(None)
+        # bh-2 26.10.29 20:24 e
         if self._udp_socket is not None:
             try:
                 self._udp_socket.close()
@@ -478,20 +946,45 @@ class OpenSeeFaceRuntime:
             self._udp_socket = None
         process = self._process
         self._process = None
+        udp_thread = self._udp_thread
+        preview_thread = self._preview_thread
+        self._udp_thread = None
+        self._preview_thread = None
+        # bh-2 26.10.29 19:40 s
         if process is not None:
             try:
                 process.terminate()
                 process.wait(timeout=3.0)
             except subprocess.TimeoutExpired:
-                process.kill()
+                try:
+                    process.kill()
+                    process.wait(timeout=1.0)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
             except OSError:
                 pass
+        if udp_thread is not None:
+            udp_thread.join(timeout=1.0)
+        if preview_thread is not None:
+            preview_thread.join(timeout=1.0)
+        self._close_facetracker_log()
+        # bh-2 26.10.29 19:40 e
+        # bh-2 26.10.29 22:27 s
+        exe = resolve_facetracker_exe(self._portable_root)
+        if exe is not None:
+            _kill_orphaned_facetrackers(exe)
+        # bh-2 26.10.29 22:27 e
         self._status.process_running = False
         self._status.udp_connected = False
         self._status.preview_available = False
         self._preview_placement_key = None
         mark_facetracker_camera_in_use(False)
 
+    # EVS-DESIGN-AUDIT EVS-A068 BEGIN
+    # 设计[f-052, f-064] [符合（上层消费包龄）]
+    # 五秒断流会置 udp_connected=False；上层健康检查与 pacer 按 last_packet_mono 过期，不再把旧 motion 当 LIVE。
+    # 历史 bug 热点 #2,#3,#5：断流状态已贯通到 pacer/健康检查。
+    # EVS-DESIGN-AUDIT EVS-A068 END
     def _udp_worker(self) -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -543,8 +1036,20 @@ class OpenSeeFaceRuntime:
         facetracker_camera_in_use set blocks camera re-enumeration forever.
         """
         self._status.process_running = False
+        handle = self._facetracker_log_handle
+        if handle is not None:
+            try:
+                handle.flush()
+            except OSError:
+                pass
+        tail = self._facetracker_log_tail()
         if reason:
-            self._status.last_error = reason
+            if tail:
+                self._status.last_error = f"{reason}: {tail}"
+            else:
+                self._status.last_error = reason
+        elif tail:
+            self._status.last_error = tail
         mark_facetracker_camera_in_use(False)
 
     def _preview_worker(self) -> None:
@@ -571,6 +1076,19 @@ class OpenSeeFaceRuntime:
         self._set_preview_hwnd(hwnd)
         self._status.preview_status = "Preview ready"
         self._state.preview_status = self._status.preview_status
+        if hwnd is not None:
+            try:
+                user32.ShowWindow(wintypes.HWND(int(hwnd)), SW_HIDE)
+            except OSError:
+                pass
+            self._preview_visible = False
+            # #region agent log
+            try:
+                import json as _json, time as _time
+                open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix-source-preview", "hypothesisId": "H", "location": "openseeface_runtime.py:_preview_worker", "message": "osf preview hwnd hidden", "data": {"hwnd": int(hwnd), "visualize": int(self._visualize_level)}, "timestamp": int(_time.time() * 1000)}) + "\n")
+            except Exception:
+                pass
+            # #endregion
 
         while not self._stopped:
             if process.poll() is not None:
@@ -582,11 +1100,21 @@ class OpenSeeFaceRuntime:
                 break
             cached = self.get_preview_hwnd()
             if cached is not None and user32.IsWindow(wintypes.HWND(int(cached))):
+                try:
+                    user32.ShowWindow(wintypes.HWND(int(cached)), SW_HIDE)
+                except OSError:
+                    pass
+                self._preview_visible = False
                 time.sleep(max(0.5, self._capture_interval_sec))
                 continue
             rediscovered = resolve_openseeface_preview_hwnd(process.pid)
             if rediscovered is not None:
                 self._set_preview_hwnd(rediscovered)
+                try:
+                    user32.ShowWindow(wintypes.HWND(int(rediscovered)), SW_HIDE)
+                except OSError:
+                    pass
+                self._preview_visible = False
                 self._status.preview_available = True
                 self._status.preview_status = "Preview mirroring"
                 self._state.preview_lost = False

@@ -1,5 +1,11 @@
 """Independent layer-system editor window (WeChat-style list with add/remove layers)."""
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import os
 from typing import Callable, Optional, TYPE_CHECKING
@@ -710,6 +716,12 @@ class LayerDetailPlaceholderPanel(wx.Panel):
         sizer.AddStretchSpacer(1)
 
 
+# EVS-DESIGN-AUDIT EVS-A131 BEGIN
+# 设计[UI-D105] [明确缺口（当前源树未见）]
+# 当前详情窗提供缩放/旋转/归位/绑定等，未见九点一次性对齐入口和多选非透明包围框对齐算法；全 experiment 检索对齐文案也未定位该功能。归位到中心不等于九点对齐，不据旧规划标已实现。
+# 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+# 诊断标记 R-DESIGN-04：参照文件头诊断报告；本次不修复实际行为。
+# EVS-DESIGN-AUDIT EVS-A131 END
 class LayerDetailDock(wx.Panel):
     """Detail area below the layer list; placeholder when idle, editor when a layer is selected."""
 
@@ -1276,6 +1288,11 @@ class BasicLayerWindow(wx.Frame):
         self.restore_geometry()
         self.Layout()
 
+    # EVS-DESIGN-AUDIT EVS-A139 BEGIN
+    # 设计[UI-D04, f-068] [静态符合（工具窗隐藏）；主退出另验]
+    # 关图层窗会隐藏自身和晃动窗，保留应用运行；主窗退出另有 Destroy/Close 路径。判断残留要区分关闭工具窗和关闭整个应用。
+    # 历史 bug 热点 #2,#4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A139 END
     def on_close(self, event: wx.Event):
         event.Veto()
         wobble = getattr(self, "region_wobble_frame", None)
@@ -1657,6 +1674,11 @@ class BasicLayerWindow(wx.Frame):
         self.select_character_row()
         event.Skip()
 
+    # EVS-DESIGN-AUDIT EVS-A099 BEGIN
+    # 设计[UI-A×05.4] [静态符合（选择逻辑）；交互待测]
+    # Shift 连续、Ctrl 任意多选；输出编辑只在单选层有效，多选不可缩放。选集视觉与删/移按钮状态需一并验收。
+    # 历史 bug 热点 #2,#4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A099 END
     def _on_layer_row_click(self, slot_id: int, event: wx.Event) -> None:
         state = self.main_frame.basic_layers_state
         visible = visible_layer_slot_ids_top_to_bottom(state)
@@ -1924,6 +1946,11 @@ class BasicLayerWindow(wx.Frame):
         dock.orbit_satellite_count_label.SetForegroundColour(gray)
         dock.orbit_satellite_index_label.SetForegroundColour(gray)
 
+    # EVS-DESIGN-AUDIT EVS-A104 BEGIN
+    # 设计[UI-D05～D09, UI-D105, UI-A×05.4] [部分符合 / 对齐验收待核]
+    # 详情绑定跟随、运动、变换和多选状态；九点一次性对齐、多选非透明包围框与取消自动竖轴吸附须沿实际处理入口核查，不能据控件文案推定算法通过。
+    # 历史 bug 热点 #3,#4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A104 END
     def _refresh_detail_dock(self) -> None:
         state = self.main_frame.basic_layers_state
         dock = self.detail_dock
@@ -2173,6 +2200,11 @@ class BasicLayerWindow(wx.Frame):
         self.refresh_all()
         self.main_frame.on_layer_state_changed()
 
+    # EVS-DESIGN-AUDIT EVS-A100 BEGIN
+    # 设计[UI-D104] [静态符合（操作区分）]
+    # 清除素材保留图层槽位；删除图层走另一个入口，未选中时 detail placeholder 保持可用。
+    # 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A100 END
     def _on_clear_asset(self, event: wx.Event) -> None:
         slot_id = self._current_detail_slot()
         if slot_id is None:
@@ -2185,6 +2217,11 @@ class BasicLayerWindow(wx.Frame):
         self.main_frame.on_layer_state_changed()
         event.Skip()
 
+    # EVS-DESIGN-AUDIT EVS-A101 BEGIN
+    # 设计[UI-D04, UI-A×05.3] [静态符合（增删入口）]
+    # 统一图层窗直接增加槽位，配合删除入口；不保留固定五层和“无限层”占位产品语义。
+    # 历史 bug 热点 #2,#4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A101 END
     def _on_add_layer(self, event: wx.Event) -> None:
         state = self.main_frame.basic_layers_state
         layer = state.add_layer()
@@ -2243,6 +2280,11 @@ class BasicLayerWindow(wx.Frame):
         self.main_frame.on_layer_state_changed()
         event.Skip()
 
+    # EVS-DESIGN-AUDIT EVS-A102 BEGIN
+    # 设计[UI-D102, UI-A×05.4] [静态符合（调用/提示）；交互待测]
+    # 连续多选批移、非连续拒绝并提示，栈顺序含角色上下位置；按钮顶底状态另在详情刷新中验证。
+    # 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A102 END
     def _move_layer(self, slot_id: int, delta: int) -> None:
         state = self.main_frame.basic_layers_state
         selected = set(self._selected_slot_ids)
@@ -2542,6 +2584,11 @@ class BasicLayerWindow(wx.Frame):
             time_s: float = 0.0) -> None:
         sync_orbit_follow_kinematics_from_host(layer, host, time_s)
 
+    # EVS-DESIGN-AUDIT EVS-A103 BEGIN
+    # 设计[UI-A×05.3] [静态关联 / 环绕待测]
+    # 跟随环绕主层时同步运动参数，辅助层分配仍须逐层检查；原话以各自指定辅助层、同角速度为准，不是复制同一素材当辅助层。
+    # 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A103 END
     def _on_orbit_with_host_changed(self, event: wx.Event) -> None:
         slot_id = self._current_detail_slot()
         if slot_id is None:

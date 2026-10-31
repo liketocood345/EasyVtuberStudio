@@ -1,38 +1,7 @@
 @echo off
-
-rem Resolve portable Python for %REPO_ROOT% (addons -> runtime junction -> student_venv).
-
-rem Sets PYTHON_EXE when found.
-
 set "PYTHON_EXE="
-
 if not defined REPO_ROOT exit /b 1
-
-
-
-if exist "%REPO_ROOT%\addons\face_puppeteer\venv\Scripts\python.exe" (
-
-  set "PYTHON_EXE=%REPO_ROOT%\addons\face_puppeteer\venv\Scripts\python.exe"
-
-  exit /b 0
-
-)
-
-if exist "%REPO_ROOT%\runtime\venv\Scripts\python.exe" (
-
-  set "PYTHON_EXE=%REPO_ROOT%\runtime\venv\Scripts\python.exe"
-
-  exit /b 0
-
-)
-
-if exist "%REPO_ROOT%\workspace\student_venv\Scripts\python.exe" (
-
-  set "PYTHON_EXE=%REPO_ROOT%\workspace\student_venv\Scripts\python.exe"
-
-  exit /b 0
-
-)
-
-exit /b 1
-
+rem Outer quotes survive cmd.exe /c parsing when the portable folder has spaces.
+for /f "delims=" %%P in ('""%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%REPO_ROOT%\packaging\resolve_portable_python.ps1" -PortableRoot "%REPO_ROOT%""') do set "PYTHON_EXE=%%P"
+if not defined PYTHON_EXE exit /b 1
+exit /b 0

@@ -1,4 +1,4 @@
-# Shared add-on path helpers (single source: packaging/addons_manifest.json)
+﻿# Shared add-on path helpers (single source: packaging/addons_manifest.json)
 $ErrorActionPreference = "Stop"
 
 function Resolve-PortableRoot {
@@ -69,29 +69,10 @@ function Resolve-PyLauncherExecutable {
 }
 
 function Get-SuitablePythonCandidateSpec {
-    param([Parameter(Mandatory = $true)][string]$PortableRoot)
-    $markerFile = Join-Path $PortableRoot "workspace\.python310_cmd.json"
-    if (Test-Path $markerFile) {
-        try {
-            $marked = Get-Content $markerFile -Raw | ConvertFrom-Json
-            $cmd = [string]$marked.command
-            if ($cmd -and (Test-Path -LiteralPath $cmd)) {
-                $prevEap = $ErrorActionPreference
-                $ErrorActionPreference = "SilentlyContinue"
-                $ver = & $cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
-                $ErrorActionPreference = $prevEap
-                if ($LASTEXITCODE -eq 0 -and [string]$ver.Trim() -match '^3\.(10|11)$') {
-                    return @{ Command = $cmd; Args = @(); Version = [string]$ver.Trim() }
-                }
-            }
-        } catch { }
-    }
-    foreach ($pair in @(@("3.11", @("-3.11")), @("3.10", @("-3.10")))) {
-        $ver = Get-PyLauncherPythonVersion $pair[0]
-        if ($ver) {
-            return @{ Command = "py"; Args = $pair[1]; Version = $ver }
-        }
-    }
+    param([Parameter(Mandatory=$true)][string]$PortableRoot)
+    . (Join-Path $PSScriptRoot 'portable_environment.ps1')
+    $python=Join-Path $PortableRoot 'runtime/python310/python.exe'
+    if(Test-LocalPython $PortableRoot $python) { return @{Command=$python;Args=@();Version='3.10'} }
     return $null
 }
 
@@ -159,6 +140,18 @@ function Test-AddonInstalled {
         [Parameter(Mandatory = $true)]
         $AddonRecord
     )
+    . (Join-Path $PSScriptRoot 'portable_environment.ps1')
+    if($AddonRecord.id -eq 'tha4_training') {
+        $teacher=Join-Path $PortableRoot 'addons/tha4_training'
+        foreach($relative in @('THA4Train.exe','data/tha4/face_morpher.pt','data/tha4/body_morpher.pt','data/tha4/eyebrow_decomposer.pt','data/tha4/eyebrow_morphing_combiner.pt','data/tha4/upscaler.pt','data/pose_dataset.pt')) {
+            if(-not(Test-Path -LiteralPath (Join-Path $teacher $relative))) { return $false }
+        }
+        $bindings=Get-Content -LiteralPath (Join-Path $PortableRoot 'runtime/bindings/components.json') -Raw | ConvertFrom-Json
+        $teacherPython=Join-Path $PortableRoot $bindings.components.tha4_training.python
+        return (Test-LocalPython $PortableRoot $teacherPython)
+    }
+    if($AddonRecord.id -eq 'face_puppeteer' -and -not(Test-LocalPython $PortableRoot (Get-ComponentPythonExecutable $PortableRoot 'face_puppeteer' 'runtime/venvs/common/Scripts/python.exe'))) { return $false }
+    if($AddonRecord.id -eq 'tha3_models' -and -not(Test-LocalPython $PortableRoot (Get-ComponentPythonExecutable $PortableRoot 'tha3_models' 'runtime/venvs/common/Scripts/python.exe'))) { return $false }
     foreach ($rel in @($AddonRecord.verify)) {
         $path = Resolve-PortableRootPath $PortableRoot ([string]$rel)
         if (-not (Test-Path $path)) {
@@ -169,7 +162,7 @@ function Test-AddonInstalled {
 }
 
 function Get-FacePuppeteerVenvRelative {
-    return "addons/face_puppeteer/venv"
+    return "runtime/venvs/common"
 }
 
 function Get-FacePuppeteerMediapipeRelative {
@@ -178,21 +171,21 @@ function Get-FacePuppeteerMediapipeRelative {
 
 function Test-FacePuppeteerVenv {
     param([Parameter(Mandatory = $true)][string]$PortableRoot)
-    $primary = Resolve-PortableRootPath $PortableRoot (Get-FacePuppeteerVenvRelative)
-    if (Test-Path (Join-Path $primary "Scripts\python.exe")) {
-        return $true
-    }
-    $legacy = Join-Path $PortableRoot "runtime\venv\Scripts\python.exe"
-    return Test-Path $legacy
+    . (Join-Path $PSScriptRoot 'portable_environment.ps1')
+    # bh-6 26.10.31 03:08 s
+    $python = Get-ComponentPythonExecutable $PortableRoot 'face_puppeteer' 'runtime/venvs/common/Scripts/python.exe'
+    return (Test-LocalPython $PortableRoot $python)
+    # bh-6 26.10.31 03:08 e
 }
 
 function Get-MouseStudentVenvRelative {
-    return "workspace/student_venv"
+    return "runtime/venvs/common"
 }
 
 function Get-MouseStudentVenvAbsolute {
     param([Parameter(Mandatory = $true)][string]$PortableRoot)
-    return Resolve-PortableRootPath $PortableRoot (Get-MouseStudentVenvRelative)
+    . (Join-Path $PSScriptRoot 'portable_environment.ps1')
+    return Split-Path (Split-Path (Get-ComponentPythonExecutable $PortableRoot 'basic_run' 'runtime/venvs/common/Scripts/python.exe') -Parent) -Parent
 }
 
 function Test-PythonImports {
@@ -210,19 +203,16 @@ function Test-PythonImports {
 }
 
 function Get-MouseStudentPythonExe {
-    param([Parameter(Mandatory = $true)][string]$PortableRoot)
-    $candidates = @(
-        (Join-Path (Get-MouseStudentVenvAbsolute $PortableRoot) "Scripts\python.exe"),
-        (Join-Path (Get-FacePuppeteerVenvAbsolute -PortableRoot $PortableRoot) "Scripts\python.exe")
-    )
-    foreach ($python in $candidates) {
-        if ((Test-Path $python) -and (Test-PythonImports $python)) {
-            return $python
-        }
+    param([Parameter(Mandatory=$true)][string]$PortableRoot)
+    . (Join-Path $PSScriptRoot 'portable_environment.ps1')
+    if(Get-ComponentRuntimeBinding $PortableRoot 'basic_run') {
+        $python=Get-ComponentPythonExecutable $PortableRoot 'basic_run' 'runtime/venvs/common/Scripts/python.exe'
+        if((Test-LocalPython $PortableRoot $python) -and (Test-PythonImports $python)) { return $python }
+        return $null
     }
-    $systemPython = Resolve-PyLauncherExecutable
-    if ($systemPython -and (Test-PythonImports $systemPython)) {
-        return $systemPython
+    foreach($relative in @('runtime/venvs/common','workspace/student_venv','addons/face_puppeteer/venv','addons/tha3_models/venv')) {
+        $python=Join-Path $PortableRoot ($relative+'/Scripts/python.exe')
+        if((Test-LocalPython $PortableRoot $python) -and (Test-PythonImports $python)) { return $python }
     }
     return $null
 }
@@ -253,6 +243,17 @@ function Test-OutputEnhancementPipImports {
     return $ok
 }
 
+function Test-OrtHasDirectML {
+    param([Parameter(Mandatory = $true)][string]$PythonExe)
+    if (-not (Test-Path -LiteralPath $PythonExe)) { return $false }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    & $PythonExe -c "import onnxruntime as o, sys; sys.exit(0 if 'DmlExecutionProvider' in o.get_available_providers() else 1)" 2>$null | Out-Null
+    $ok = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $prevEap
+    return $ok
+}
+
 function Test-FacePuppeteerRuntimeReady {
     param(
         [Parameter(Mandatory = $true)][string]$PortableRoot,
@@ -262,6 +263,8 @@ function Test-FacePuppeteerRuntimeReady {
         return $false
     }
     $python = Join-Path (Get-FacePuppeteerVenvAbsolute -PortableRoot $PortableRoot) "Scripts\python.exe"
+    . (Join-Path $PSScriptRoot 'portable_environment.ps1')
+    if (-not (Test-LocalPython $PortableRoot $python)) { return $false }
     if (-not (Test-PythonImports -PythonExe $python -RequireMediapipe)) {
         return $false
     }
@@ -272,6 +275,10 @@ function Test-FacePuppeteerRuntimeReady {
 
 function Get-FacePuppeteerVenvAbsolute {
     param([Parameter(Mandatory = $true)][string]$PortableRoot)
+    . (Join-Path $PSScriptRoot 'portable_environment.ps1')
+    if(Get-ComponentRuntimeBinding $PortableRoot 'face_puppeteer') {
+        return Split-Path (Split-Path (Get-ComponentPythonExecutable $PortableRoot 'face_puppeteer' 'runtime/venvs/common/Scripts/python.exe') -Parent) -Parent
+    }
     $primary = Resolve-PortableRootPath $PortableRoot (Get-FacePuppeteerVenvRelative)
     if (Test-Path (Join-Path $primary "Scripts\python.exe")) {
         return $primary
@@ -331,10 +338,13 @@ function Test-JunctionLinkPointsTo {
 
 function Remove-PathForLayout {
     param([Parameter(Mandatory = $true)][string]$Path)
+    # Layout operations must stay beneath the explicitly selected portable root.
+    # Never route PowerShell-enumerated paths into a second shell for deletion.
+    . (Join-Path $PSScriptRoot 'portable_environment.ps1')
+    $Path=Assert-LocalChild $PortableRoot $Path
     if (-not (Test-Path $Path)) { return }
     if (Test-IsReparsePoint $Path) {
-        cmd /c rmdir "$Path" 2>$null | Out-Null
-        if (Test-Path $Path) { Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue }
+        [IO.Directory]::Delete($Path)
         return
     }
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue

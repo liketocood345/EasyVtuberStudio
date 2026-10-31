@@ -1,3 +1,14 @@
+﻿# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
+# EVS-DESIGN-AUDIT EVS-A123 BEGIN
+# 设计[dep-001, dep-024, dep-025, f-058] [部分符合 / 部署未执行]
+# 基础、OSF、MP、THA3、训练、NN 分支与完成标记存在，训练是独立可选项；HF 首源/GitHub fallback 还取决于下载配置，不由分支存在证明网络可用与幂等。
+# 历史 bug 热点 #6：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A123 END
 param(
     [Parameter(Mandatory = $true)]
     [string]$PortableRoot,
@@ -60,7 +71,7 @@ function Resolve-DeployPackageIds {
             return @(& $menuScript -PortableRoot $PortableRoot)
         }
     }
-    $ids = @("face_puppeteer", "tha3_models")
+    $ids = @("mouse_student")
     if ($IncludeTha4Training) {
         $ids += "tha4_training"
     }
@@ -75,6 +86,8 @@ try {
     Write-Host "============================================================"
 
     $selected = @(Resolve-DeployPackageIds | Select-Object -Unique)
+    $allowed=@('basic_run','mouse_student','openseeface','face_puppeteer','tha3_models','tha4_training','output_enhancement')
+    foreach($id in $selected) { if($allowed -notcontains $id) { throw "Unknown deploy package: $id" } }
     if ($selected.Count -eq 0) {
         Write-Host "No packages selected."
         exit 1
@@ -109,16 +122,20 @@ try {
 
     $installFace = $selected -contains "face_puppeteer"
     $installOsf = $selected -contains "openseeface"
-    $installMouseStudent = ($selected -contains "mouse_student") -or $MouseStudentOnly.IsPresent
     $installTha3 = $selected -contains "tha3_models"
     $installTha4 = $selected -contains "tha4_training"
     $installEnhancement = $selected -contains "output_enhancement"
+    $installMouseStudent = ($selected -contains 'mouse_student') -or ($selected -contains 'basic_run') -or $MouseStudentOnly.IsPresent -or $installOsf -or $installTha3 -or $installEnhancement
+    if ($installMouseStudent -and -not $SkipRuntime) {
+        $studentPython=Get-ComponentPythonExecutable $PortableRoot 'basic_run' 'runtime/venvs/common/Scripts/python.exe'
+    }
 
-    if ($installMouseStudent) {
-        if (Test-MouseStudentRuntime -PortableRoot $PortableRoot) {
+
+    if ($installMouseStudent -and -not $SkipRuntime) {
+        if (-not $ForceRebuildRuntime -and (Test-LocalPython $PortableRoot $studentPython) -and (Test-PythonImports $studentPython)) {
             Write-Step "mouse student: already installed; skipping runtime bootstrap"
         } else {
-            Write-Step "mouse student: minimal Python runtime (workspace\student_venv; torch + wx, no MediaPipe)"
+            Write-Step "mouse student: minimal Python runtime (runtime/venvs/common; base profile, no teacher extras)"
             if (-not (Test-Path $bootstrapScript)) {
                 throw "Missing packaging\bootstrap_portable.ps1"
             }
@@ -144,7 +161,7 @@ try {
             if (-not $ForceRebuildRuntime -and (Test-FacePuppeteerRuntimeReady -PortableRoot $PortableRoot -ScriptRoot $PSScriptRoot)) {
                 Write-Step "face_puppeteer: already installed; skipping runtime bootstrap"
             } else {
-                Write-Step "face_puppeteer: Python runtime (addons\face_puppeteer\venv)"
+                Write-Step "face_puppeteer: Python runtime (runtime/venvs/common)"
                 if (-not (Test-Path $bootstrapScript)) {
                     throw "Missing packaging\bootstrap_portable.ps1"
                 }
@@ -156,7 +173,17 @@ try {
         }
     }
 
+    if ($installTha3 -and -not $SkipRuntime) {
+        Write-Step 'tha3_models: shared local THA3 Python environment'
+        & $bootstrapScript -PortableRoot $PortableRoot -Tha3Only -ForceRebuildRuntime:$ForceRebuildRuntime
+        Assert-ScriptSucceeded 'THA3 runtime bootstrap'
+    }
     if ($installTha3 -and -not $SkipUpstream) {
+        if(-not $installFace) {
+            Write-Step 'tha3_models: camera face landmark asset for its own runtime'
+            & $fetchScript -PortableRoot $PortableRoot -PackageIds @('mediapipe_task')
+            Assert-ScriptSucceeded 'THA3 face landmark asset'
+        }
         Write-Step "tha3_models: THA3 portrait weights"
         & $fetchScript -PortableRoot $PortableRoot -PackageIds @("tha3_models")
         Assert-ScriptSucceeded "THA3 models install"
@@ -166,7 +193,7 @@ try {
 
     if ($installTha4 -and -not $SkipUpstream) {
         Write-Step "tha4_training: teacher weights + pose dataset"
-        & $fetchScript -PortableRoot $PortableRoot -PackageIds @("tha4_teacher_training")
+        & (Join-Path $PSScriptRoot 'bootstrap_tha4_teacher.ps1') -PortableRoot $PortableRoot
         Assert-ScriptSucceeded "THA4 training pack install"
     } elseif ($installTha4) {
         Write-Step "tha4_training: Skipped (-SkipUpstream)"
@@ -231,7 +258,7 @@ try {
     Write-Host "  Face capture: install [2] openseeface OR [3] face_puppeteer (MediaPipe)"
     Write-Host "  THA3 portrait:  switch mode in app (needs tha3_models tier [4])"
     if ($installTha4) {
-        Write-Host "  THA4 training:  scripts\launch\THA4Train.exe"
+        Write-Host "  THA4 training:  addons\tha4_training\THA4Train.exe"
     } else {
         Write-Host "  THA4 training:  run DEPLOY.bat and choose tier [5]"
     }

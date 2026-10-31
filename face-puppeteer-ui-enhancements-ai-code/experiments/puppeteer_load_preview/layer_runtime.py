@@ -6,6 +6,12 @@ pinned in the middle). Layer assets are static PNG/WebP and animated GIF (GIF
 composited with transparent disposal); preview thumbnails use the first frame.
 """
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import json
 import math
@@ -240,6 +246,11 @@ def normalize_bind_ray_percent(value: float) -> float:
     return pct
 
 
+# EVS-DESIGN-AUDIT EVS-A106 BEGIN
+# 设计[UI-C02, UI-C04] [静态符合（语义入口）；联动待测]
+# 反转作用于身体相对头部倾斜，绑定层应跟随动态增强后的身体；不是任意图层的同/反向按钮，需完整倾斜链画面对比。
+# 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A106 END
 def apply_body_head_tilt_opposite_to_pose(
         pose: list[float],
         *,
@@ -346,6 +357,11 @@ def format_layer_row_title(slot_id: int, layer: BasicLayerSlot) -> str:
     return f"{base} · （空）"
 
 
+# EVS-DESIGN-AUDIT EVS-A097 BEGIN
+# 设计[UI-D101] [静态符合（当前范围）]
+# 图像/GIF 类型路径与透明 GIF 解码存在；视频素材已被明确暂时移除，不能依据早期播放设想登记为漏实现。
+# 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A097 END
 def classify_layer_asset_kind(path: Optional[str]) -> str:
     """Return empty | image | gif | unknown for a layer asset path."""
     if not path:
@@ -713,6 +729,11 @@ class LayerTransform:
         )
 
 
+# EVS-DESIGN-AUDIT EVS-A094 BEGIN
+# 设计[UI-D103] [静态符合（图层归位）]
+# 图层归位为图片中心对齐预览/输出中心的坐标原点；不是主角色底部中心锚定，勿合并两者语义。
+# 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A094 END
 def center_layer_transform(transform: LayerTransform) -> None:
     """Align layer image center to output window center (512-space origin)."""
     transform.offset_x = 0.0
@@ -732,6 +753,11 @@ def normalize_gif_playback_mode(value: object) -> str:
     return GIF_PLAYBACK_LOOP
 
 
+# EVS-DESIGN-AUDIT EVS-A095 BEGIN
+# 设计[f-062] [静态符合（移除长按）]
+# 旧 hold action 迁移为保留动作，当前 action 集不再提供长按/按住播放一次；保留 GIF 单次/循环/停止、切换显隐和外部动作入口。
+# 历史 bug 热点 #2,#4：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A095 END
 def normalize_layer_hotkey_action(value: object) -> str:
     if value in LAYER_HOTKEY_ACTIONS:
         return str(value)
@@ -788,8 +814,11 @@ def layer_hotkey_bindings_from_list(data: object) -> list[LayerHotkeyBinding]:
 
 
 def ensure_gif_playback_epoch(layer: "BasicLayerSlot", now: float) -> None:
-    if layer.gif_playback_epoch <= 0.0:
+    # bh-1 26.10.30 12:25 s
+    epoch = float(layer.gif_playback_epoch or 0.0)
+    if epoch <= 0.0 or epoch >= 1.0e8:
         layer.gif_playback_epoch = now
+    # bh-1 26.10.30 12:25 e
 
 
 def set_gif_playback_mode(
@@ -798,7 +827,7 @@ def set_gif_playback_mode(
         *,
         now: Optional[float] = None) -> None:
     layer.gif_playback_mode = normalize_gif_playback_mode(mode)
-    layer.gif_playback_epoch = time.time() if now is None else now
+    layer.gif_playback_epoch = time.perf_counter() if now is None else now
 
 
 def resolve_gif_frame_index(
@@ -915,6 +944,11 @@ def apply_hotkey_action_idle_layer_state(
         set_gif_playback_mode(layer, GIF_PLAYBACK_STOPPED, now=time_now)
 
 
+# EVS-DESIGN-AUDIT EVS-A098 BEGIN
+# 设计[f-062, UI-D104] [静态关联]
+# 重载素材与清除素材、删除槽位是不同操作；热键动作仅作用允许的当前素材，不能恢复已移除的 hold 行为。
+# 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A098 END
 def reload_layer_from_asset_material(
         layer: BasicLayerSlot,
         *,
@@ -1149,6 +1183,11 @@ class BasicLayerSlot:
         )
 
 
+# EVS-DESIGN-AUDIT EVS-A092 BEGIN
+# 设计[UI-A×05.3, UI-D04] [静态符合（槽位结构）]
+# 变长图层槽位与角色栈位置，支持增删；暂不做组是后续明确范围，不把早期组规划当本期缺陷。
+# 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A092 END
 @dataclass
 class BasicLayersState:
     layer_mode: str = LAYER_MODE_BASIC
@@ -1334,6 +1373,11 @@ def selection_contiguous_in_ui_list(
     return indices == list(range(indices[0], indices[-1] + 1))
 
 
+# EVS-DESIGN-AUDIT EVS-A093 BEGIN
+# 设计[UI-A×05.4, UI-D102] [静态符合（连续性约束）；交互待测]
+# 批移先判断 UI 栈中连续，任意多选删除另走 remove_layers_batch；须核对到顶/底禁用和非连续提示的 UI 绑定。
+# 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A093 END
 def move_layers_z_order_block(
         state: BasicLayersState,
         slot_ids: set[int],
@@ -1481,6 +1525,11 @@ def resolve_orbit_host_layer(
     return host
 
 
+# EVS-DESIGN-AUDIT EVS-A096 BEGIN
+# 设计[UI-A×05.3] [静态关联 / 遮挡待测]
+# 环绕轨道/辅助栈位置参与上下遮挡；后续明确环绕跟随每层可指定自己的辅助层、角速度同步，不能沿用早期共享辅助层规则验收。
+# 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A096 END
 def resolve_orbit_track_layer(
         state: BasicLayersState,
         layer: BasicLayerSlot) -> BasicLayerSlot:
@@ -3416,7 +3465,7 @@ class LayerAssetCache:
             return self._load_static_rgba(resolved, cache_key)
         if kind == "gif":
             source = self._get_gif_numpy_source(resolved, cache_key)
-            time_now = time.time() if now is None else now
+            time_now = time.perf_counter() if now is None else now
             frame_idx = source.frame_index(time_now, layer)
             return source.frames[frame_idx]
         return None

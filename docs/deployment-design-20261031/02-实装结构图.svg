@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2660" height="1380"><rect width="100%" height="100%" fill="#f0f4f9"/><g font-family="Microsoft YaHei, sans-serif" fill="#14233c">
+<text x="35" y="61" font-size="34">EVS 完整安装结构｜共享依赖与各分叉私有内容｜2026-10-31</text>
+<rect x="30" y="105" width="1510" height="1240" rx="15" fill="white" stroke="#b8c9df"/>
+<text x="52" y="154" font-size="26" fill="#135e99">完整目录树</text>
+<text xml:space="preserve" x="52" y="197" font-size="22">&lt;安装根&gt;/</text>
+<text xml:space="preserve" x="52" y="233" font-size="22">├─ EasyVtuberStudio.exe / DEPLOY.bat / RESET_ADDON.bat</text>
+<text xml:space="preserve" x="52" y="269" font-size="22">├─ src/ + face-puppeteer-…/ + deps/tha3/        [共用/分叉代码]</text>
+<text xml:space="preserve" x="52" y="305" font-size="22">├─ data/character_models/…/bai_450k/            [CORE 示例与配件]</text>
+<text xml:space="preserve" x="52" y="341" font-size="22">├─ packaging/ + deps/pip/                      [版本/哈希/安装配方]</text>
+<text xml:space="preserve" x="52" y="377" font-size="22">├─ tools/tha4_teacher_portable/                 [教师来源套件，无 runtime]</text>
+<text xml:space="preserve" x="52" y="413" font-size="22">├─ runtime/                                    [项目内共享]</text>
+<text xml:space="preserve" x="52" y="449" font-size="22">│  ├─ python310/                               [公共基础解释器]</text>
+<text xml:space="preserve" x="52" y="485" font-size="22">│  ├─ venvs/common/                            [所有兼容分叉共用]</text>
+<text xml:space="preserve" x="52" y="521" font-size="22">│  ├─ bindings/components.json                 [解释器绑定]</text>
+<text xml:space="preserve" x="52" y="557" font-size="22">│  └─ download_venv/                           [按需 HF 下载工具]</text>
+<text xml:space="preserve" x="52" y="593" font-size="22">├─ addons/                                     [各模块专属内容]</text>
+<text xml:space="preserve" x="52" y="629" font-size="22">│  ├─ openseeface/{Binary,models,Licenses}/      [私有 Binary ABI]</text>
+<text xml:space="preserve" x="52" y="665" font-size="22">│  ├─ face_puppeteer/mediapipe/*.task            [MP 模型]</text>
+<text xml:space="preserve" x="52" y="701" font-size="22">│  ├─ tha3_models/&lt;四变体&gt;/*.pt                  [THA3 权重]</text>
+<text xml:space="preserve" x="52" y="737" font-size="22">│  ├─ tha4_training/                            [独立教师]</text>
+<text xml:space="preserve" x="52" y="773" font-size="22">│  │  ├─ THA4Train.exe / app/ / src/tha4/</text>
+<text xml:space="preserve" x="52" y="809" font-size="22">│  │  └─ data/{tha4/*.pt × 5,pose_dataset.pt}   [无自带 venv]</text>
+<text xml:space="preserve" x="52" y="845" font-size="22">│  └─ output_enhancement/ezvtb_data/             [NN 模型]</text>
+<text xml:space="preserve" x="52" y="881" font-size="22">└─ workspace/                                  [根内运行数据]</text>
+<text xml:space="preserve" x="52" y="917" font-size="22">   ├─ load_preview_ui_state.json / basic_layers/ [发布种子→用户记忆]</text>
+<text xml:space="preserve" x="52" y="953" font-size="22">   ├─ region_wobble_mask*.png</text>
+<text xml:space="preserve" x="52" y="989" font-size="22">   ├─ cache/ / logs/ / diagnostics/              [缓存与日志]</text>
+<text xml:space="preserve" x="52" y="1025" font-size="22">   ├─ asset_downloads/ / modules/                [下载与可复用压缩模块]</text>
+<text xml:space="preserve" x="52" y="1061" font-size="22">   ├─ imports/ / module-staging/ / module-backups/</text>
+<text xml:space="preserve" x="52" y="1097" font-size="22">   └─ tools/tha4_training/{queue,jobs,…}          [教师输入/进度/断点]</text>
+<rect x="1570" y="105" width="1060" height="640" rx="15" fill="white" stroke="#b8c9df"/>
+<text x="1592" y="154" font-size="26" fill="#135e99">按需追加到同一 common</text>
+<text xml:space="preserve" x="1592" y="197" font-size="22">runtime/venvs/common/</text>
+<text xml:space="preserve" x="1592" y="233" font-size="22">├─ base：torch / torchvision / wx / NumPy / SciPy</text>
+<text xml:space="preserve" x="1592" y="269" font-size="22">│        contrib OpenCV / Pillow / matplotlib / OmegaConf / einops</text>
+<text xml:space="preserve" x="1592" y="305" font-size="22">├─ face：MediaPipe / protobuf / sounddevice 等</text>
+<text xml:space="preserve" x="1592" y="341" font-size="22">├─ output：ORT DirectML / PyAnime4K 等</text>
+<text xml:space="preserve" x="1592" y="377" font-size="22">└─ teacher：TensorBoard / grpc / quaternion 等（选择 [5] 后）</text>
+<text xml:space="preserve" x="1592" y="413" font-size="22"></text>
+<text xml:space="preserve" x="1592" y="449" font-size="22">分叉只共享公共库；教师仍从自己的组件目录读源码和权重。</text>
+<text xml:space="preserve" x="1592" y="485" font-size="22">未经验证的兼容问题可以绑定根内私有环境。</text>
+<text xml:space="preserve" x="1592" y="521" font-size="22">OSF Binary 是已验证 ABI 例外，不借用 common 的 Python DLL。</text>
+<rect x="1570" y="780" width="1060" height="565" rx="15" fill="white" stroke="#b8c9df"/>
+<text x="1592" y="829" font-size="26" fill="#135e99">目录边界与验收状态</text>
+<text xml:space="preserve" x="1592" y="872" font-size="22">本机</text>
+<text xml:space="preserve" x="1592" y="908" font-size="22">├─ 桌面快捷方式 → 安装根内 EXE</text>
+<text xml:space="preserve" x="1592" y="944" font-size="22">└─ 所有受 EVS 控制的文件 → 安装根内</text>
+<text xml:space="preserve" x="1592" y="980" font-size="22"></text>
+<text xml:space="preserve" x="1592" y="1016" font-size="22">本图展示正常安装结构，不把实验回滚包当发行内容。</text>
+<text xml:space="preserve" x="1592" y="1052" font-size="22">部署不修改系统 Python、全局 PATH 或用户 site-packages。</text>
+<text xml:space="preserve" x="1592" y="1088" font-size="22">缓存 / 临时文件 / 导入副本 / 训练产物均使用根内路径。</text>
+<text xml:space="preserve" x="1592" y="1124" font-size="22">删除安装根即带走这些项目文件。</text>
+<text xml:space="preserve" x="1592" y="1160" font-size="22"></text>
+<text xml:space="preserve" x="1592" y="1196" font-size="22">资源地图和结构图均为同一修订的结果；不是改造前后对比。</text>
+<text xml:space="preserve" x="1592" y="1232" font-size="22">发布流程：本地验收 → HF / GitHub 回读 → SSH 安装。</text>
+</g></svg>

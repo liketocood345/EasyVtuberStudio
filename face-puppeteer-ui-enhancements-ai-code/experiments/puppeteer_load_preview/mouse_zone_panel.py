@@ -1,5 +1,11 @@
 """Screen / center-zone diagram for Mouse + Audio mocap (drag move + edge resize)."""
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import math
 from typing import Callable, Optional, Set, Tuple
@@ -239,6 +245,11 @@ class MouseZonePanel(wx.Panel):
                 screen_rect.x - tick_len - text_width - 2,
                 py - text_height // 2)
 
+    # EVS-DESIGN-AUDIT EVS-A062 BEGIN
+    # 设计[ix-021, UI-B06] [静态符合（命中分工）；交互待测]
+    # 边缘/角用于缩放、内部用于移动，悬浮高亮另由反馈函数绘制；多 DPI 和跨屏精度需实际拖动验证。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A062 END
     def _hit_test(self, pos: wx.Point) -> Optional[str]:
         inner = self._inner_rect()
         edge = HIT_EDGE_PX
@@ -318,6 +329,11 @@ class MouseZonePanel(wx.Panel):
             bottom = ny
         self._zone = MouseCenterZone.from_norm_edges(left, right, bottom, top)
 
+    # EVS-DESIGN-AUDIT EVS-A061 BEGIN
+    # 设计[ix-021, UI-B06] [部分符合 / 视觉待测]
+    # 有屏幕比例框、中心框、鼠标及像素标尺绘制；当前虚拟桌面矩形不是“多屏轮廓多边形”的同义实现，不能将这一技术取舍冒充原话。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A061 END
     def on_paint(self, event: wx.Event):
         dc = wx.AutoBufferedPaintDC(self)
         width, height = self.GetClientSize()

@@ -1,96 +1,24 @@
-param(
-    [Parameter(Mandatory = $true)]
-    [string]$PortableRoot
-)
-
-$ErrorActionPreference = "Stop"
-. (Join-Path $PSScriptRoot "addon_paths.ps1")
-$PortableRoot = Resolve-PortableRoot $PortableRoot
-
-$manifest = Get-AddonsManifest -ScriptRoot $PSScriptRoot
-$failures = @()
-
-function Assert-Missing {
-    param([string]$RelativePath, [string]$Message)
-    $full = Resolve-PortableRootPath $PortableRoot $RelativePath
-    if (Test-Path $full) {
-        $failures += "$Message (found: $RelativePath)"
-    }
+﻿param([Parameter(Mandatory=$true)][string]$PortableRoot,[switch]$Strict,[switch]$RequireRuntime)
+$ErrorActionPreference='Stop'
+if($RequireRuntime) { throw 'This verifier accepts CORE only; use verify_full_install.ps1 for installed trees.' }
+$PortableRoot=[IO.Path]::GetFullPath($PortableRoot).TrimEnd('\')
+$inventory=Get-Content -LiteralPath (Join-Path $PortableRoot 'core-files.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+$expected=@{}
+foreach($item in $inventory.files) {
+    $full=[IO.Path]::GetFullPath((Join-Path $PortableRoot $item.path))
+    if(-not $full.StartsWith($PortableRoot+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'CORE inventory escaped root' }
+    if(-not(Test-Path -LiteralPath $full -PathType Leaf)) { throw ('Missing CORE file: '+$item.path) }
+    if((Get-Item -LiteralPath $full).Length -ne $item.size_bytes -or (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant() -ne $item.sha256) { throw ('CORE hash mismatch: '+$item.path) }
+    if($item.path -match '(^|/)\.git($|/)|^(runtime|plans|record)/|^addons/(?!README.md$|.gitkeep$)|(^|/)(_internal|site-packages|__pycache__|his)/|\.(whl|nupkg|onnx|pyc|pem|jsonl)$') { throw ('Forbidden CORE item: '+$item.path) }
+    $expected[$full]=$true
 }
-
-function Assert-Present {
-    param([string]$RelativePath, [string]$Message)
-    $full = Resolve-PortableRootPath $PortableRoot $RelativePath
-    if (-not (Test-Path $full)) {
-        $failures += "$Message (missing: $RelativePath)"
-    }
+$actual=@(Get-ChildItem -LiteralPath $PortableRoot -Recurse -File -Force)
+if($actual.Count -ne $expected.Count+1) { throw 'Unexpected or missing CORE files' }
+foreach($file in $actual) { if(-not $expected.ContainsKey($file.FullName) -and $file.FullName -ne (Join-Path $PortableRoot 'core-files.json')) { throw ('Unexpected file: '+$file.FullName) } }
+foreach($rel in @('EasyVtuberStudio.exe','DEPLOY.bat','workspace/load_preview_ui_state.json','workspace/basic_layers/manifest.json','data/character_models/baiten_from_project_forlon9/bai_450k/parts/beitou.gif')) {
+    if(-not(Test-Path -LiteralPath (Join-Path $PortableRoot $rel))) { throw ('CORE material missing: '+$rel) }
 }
-
-Write-Host ""
-Write-Host "Verifying fresh CORE extract: $PortableRoot"
-Write-Host ""
-
-# CORE must include student model
-Assert-Present "data/character_models/baiten_from_project_forlon9/bai_450k/character_model/face_morpher.pt" "CORE should include THA4 student (bai_450k)"
-
-# Bundled NN ONNX: not in slim CORE; README placeholder only. Fetched on DEPLOY [5] from HF Bucket.
-Assert-Present "data/ezvtb_nn/README.md" "CORE should document ezvtb_nn (HF Bucket on DEPLOY [5])"
-Assert-Missing "data/ezvtb_nn/rife/rife_x2_fp32.onnx" "Slim CORE should not bundle RIFE ONNX"
-Assert-Missing "data/ezvtb_nn/waifu2x/noise0_scale2x_fp32.onnx" "Slim CORE should not bundle waifu2x ONNX"
-Assert-Missing "data/ezvtb_nn/Real-ESRGAN/exported_256_fp32.onnx" "Slim CORE should not bundle Real-ESRGAN ONNX"
-
-# Upstream author lambda students must not ship
-foreach ($legacy in @("lambda_00", "lambda_01")) {
-    Assert-Missing "data/character_models/$legacy" "Upstream lambda student removed ($legacy)"
-    Assert-Missing "data/distill_examples/$legacy" "Upstream lambda distill example removed ($legacy)"
-}
-foreach ($legacyImage in @("lambda_00.png", "lambda_01.png", "lambda_00_face_mask.png", "lambda_01_face_mask.png")) {
-    Assert-Missing "data/images/$legacyImage" "Upstream lambda image removed ($legacyImage)"
-    Assert-Missing "deps/tha3/images/$legacyImage" "Upstream lambda THA3 sample removed ($legacyImage)"
-}
-
-# Optional add-ons must NOT be present in fresh extract
-foreach ($addon in @($manifest.addons)) {
-    $folderRel = Get-AddonFolderRelative -AddonRecord $addon
-    foreach ($verifyRel in @($addon.verify)) {
-        $verifyRel = [string]$verifyRel
-        if ($verifyRel.StartsWith("addons/")) {
-            Assert-Missing $verifyRel "Fresh extract should not include $($addon.id)"
-        }
-    }
-    $addonRoot = Resolve-PortableRootPath $PortableRoot $folderRel
-    if ((Test-Path $addonRoot) -and $addon.id -ne "face_puppeteer") {
-        $hasContent = Get-ChildItem $addonRoot -Force -ErrorAction SilentlyContinue
-        if ($hasContent) {
-            $failures += "Fresh extract should not populate $folderRel ($($addon.id))"
-        }
-    }
-}
-
-# Legacy runtime paths should not exist until add-on installed
-Assert-Missing "runtime/venv/Scripts/python.exe" "Fresh extract should not include runtime venv"
-Assert-Missing "venv/Scripts/python.exe" "Fresh extract should not include legacy repo-root venv"
-Assert-Missing "workspace/student_venv/Scripts/python.exe" "Fresh extract should not include student_venv until first launch"
-Assert-Missing "face-puppeteer-ui-enhancements-ai-code/talking-head-anime-4-demo/venv/Scripts/python.exe" "Fresh extract should not include legacy demo venv"
-Assert-Missing "deps/tha3/models/separable_half/face_morpher.pt" "Fresh extract should not include THA3 weights"
-
-$demoTha4 = Join-Path $PortableRoot "face-puppeteer-ui-enhancements-ai-code\talking-head-anime-4-demo\data\tha4\teacher"
-if (Test-Path $demoTha4) {
-    $failures += "Fresh extract should not include THA4 teacher weights (demo/data/tha4/teacher)"
-}
-
-# Reconcile should succeed on CORE-only tree
-& (Join-Path $PSScriptRoot "reconcile_portable_layout.ps1") -PortableRoot $PortableRoot | Out-Null
-
-Write-Host ""
-if ($failures.Count -gt 0) {
-    Write-Host "VERIFY FAILED ($($failures.Count) issue(s)):" -ForegroundColor Red
-    foreach ($f in $failures) {
-        Write-Host "  - $f" -ForegroundColor Red
-    }
-    exit 1
-}
-
-Write-Host "VERIFY OK: layout matches slim CORE extract expectations." -ForegroundColor Green
-Write-Host ""
+$state=Get-Content -LiteralPath (Join-Path $PortableRoot 'workspace/load_preview_ui_state.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+if($state.mouth_settings.mouth_input_mode -ne 'mouse' -or $state.image_source_mode -ne 'tha4_student' -or $state.PSObject.Properties['window_capture_hwnd'] -or $state.PSObject.Properties['controls_frame_y']) { throw 'Unsanitized seed memory' }
+Write-Host ('CORE verification passed without Python: '+$expected.Count+' files')
 exit 0

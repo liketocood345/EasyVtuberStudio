@@ -1,5 +1,11 @@
 """f-064: periodic UI vs runtime alignment checks with non-modal toast."""
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import time
 from dataclasses import dataclass, field
@@ -35,6 +41,11 @@ class _ToastState:
     last_mono: float = 0.0
 
 
+# EVS-DESIGN-AUDIT EVS-A076 BEGIN
+# 设计[f-064] [静态符合（提示机制）；交互待测]
+# 非模态提示、五秒自关和确定按钮路径存在；这不同于慢任务模态进度框，不应混用两者是否阻塞的结论。
+# 历史 bug 热点 #2：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A076 END
 class NonModalAlignmentToast(wx.Frame if wx else object):
     """Non-modal reminder; auto-closes after 5s; OK dismisses early."""
 
@@ -109,6 +120,11 @@ class UiAlignmentMonitor:
                 pass
             self._active_toast = None
 
+    # EVS-DESIGN-AUDIT EVS-A074 BEGIN
+    # 设计[f-064] [静态符合（调度公式）]
+    # 启用/切换后按 load_budget_sec×1.5 安排一次核查；周期核查为三分钟。预算参数不是实测加载完成的证明。
+    # 历史 bug 热点 #2：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A074 END
     def notify_switch(self, probe_ids: List[str]) -> None:
         if wx is None:
             return
@@ -135,6 +151,11 @@ class UiAlignmentMonitor:
     def _on_periodic(self, _event):
         self.run_check()
 
+    # EVS-DESIGN-AUDIT EVS-A075 BEGIN
+    # 设计[f-063, f-064] [部分符合 / 其它异常仍跳过]
+    # OutputEnhancementRuntime 已提供 get_config_snapshot/nn_runtime_ready；probe.check 其它异常仍 continue。
+    # 历史 bug 热点 #2：NN 缺方法缺口已修。
+    # EVS-DESIGN-AUDIT EVS-A075 END
     def run_check(self, probe_ids: Optional[List[str]] = None) -> List[str]:
         mismatches: List[str] = []
         ids = probe_ids if probe_ids is not None else list(self._probes.keys())

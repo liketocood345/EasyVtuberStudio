@@ -32,6 +32,7 @@ $verifyArgs = @{
     RequireFacePuppeteer = $true
     RequireTha3Models    = $true
     IncludeTha4Training  = $true
+    RequireOutputEnhancement = $true
 }
 & (Join-Path $PSScriptRoot "verify_deploy.ps1") @verifyArgs
 if ($LASTEXITCODE -ne 0) { $failed++ }

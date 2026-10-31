@@ -2,7 +2,7 @@
 
 **便携版（推荐最终用户）：** [GitHub Download ZIP](https://github.com/liketocood345/EasyVtuberStudio)（瘦包）或 [HF Bucket 完整目录](https://huggingface.co/buckets/liketocode789/EasyVtuberStudio) → **`DEPLOY.bat`**（**六档**数字选择，Enter = 仅 [1]）→ **`EasyVtuberStudio.exe`**。详见 [docs/DEPLOY.md](docs/DEPLOY.md)。
 
-**本仓库 = GitHub 发布总库（CORE 刚解压态）**；本地全装研发在 `E:\easyvtuberstudio-develop`（三模块 `addons/*` 实体文件，不入本 ZIP）。见 [docs/HANDOVER.md](docs/HANDOVER.md) §0.1 · [docs/ADDONS_LAYOUT.md](docs/ADDONS_LAYOUT.md) · 推送前 [docs/PREP_PUSH.md](docs/PREP_PUSH.md)。
+**本仓库 = GitHub 发布总库（CORE 刚解压态）**；本地全装研发在 `E:\easyvtuberstudio-develop`（三模块 `addons/*` 实体文件，不入本 ZIP）。见 [docs/RELEASE_BOUNDARIES.md](docs/RELEASE_BOUNDARIES.md) §0.1 · [docs/ADDONS_LAYOUT.md](docs/ADDONS_LAYOUT.md) · 推送前 [docs/PREP_PUSH.md](docs/PREP_PUSH.md)。
 
 [English Guide for EasyVtuberStudio](docs/README-EN.md)
 
@@ -10,7 +10,7 @@
 
 **EasyVtuberStudio** — 基于 THA3、THA4 的可面捕虚拟皮套演播软件，可添加附件（主入口 **`EasyVtuberStudio.exe`**）。
 
-**新 Agent 请先读 [docs/HANDOVER.md](docs/HANDOVER.md)。**
+**新 Agent 请先读 [docs/RELEASE_BOUNDARIES.md](docs/RELEASE_BOUNDARIES.md)。**
 
 
 > ### 【重要声明】
@@ -32,6 +32,18 @@ https://github.com/user-attachments/assets/f282fbef-212c-4839-8cf5-1793cd1926d5
 示例白腾，包含 student 模型与立绘（白腾设定是白猫，这里穿着白短袖，不是这个项目只能放白模）
 
 
+
+## 便携部署更新（2026-10-31）
+
+下载 [最新 CORE 发布包](https://github.com/liketocood345/EasyVtuberStudio/releases/latest) 并解压，运行 `DEPLOY.bat` 安装所选档位。示例白腾 Student、原始立绘、GIF/刀片配件与消毒后的记忆种子已随 CORE 提供。
+
+Python、torch、共享依赖、缓存与训练产物全部使用安装目录内路径。基础档不装训练 extras；[5] 安装独立 THA4 教师外壳、源码、五个教师权重与 pose，追加兼容的共用依赖。THA3 四变体和 NN 后处理按需安装。
+
+HF 是[后备方舟](https://huggingface.co/buckets/liketocode789/EasyVtuberStudio)，使用版本化单文件分包；本机资源/上游优先，下载失败或文件哈希不符才回退 HF。Python/torch 不进桶，DEPLOY 不下载或覆盖记忆种子。
+
+当前共享环境已通过实际入口、五种模型初始化、六档重复安装与 THA4 首个非零完整自动存档验证。完整训练和最终角色质量不在首次存档验收范围内。部署说明见 [DEPLOY](docs/DEPLOY.md)、[发布边界](docs/RELEASE_BOUNDARIES.md) 和[资源/实装结构图](docs/deployment-design-20261031/部署设计与Cursor分工.md)。
+
+
 ## 仓库与路径
 
 | 项 | 说明 |
@@ -43,7 +55,7 @@ https://github.com/user-attachments/assets/f282fbef-212c-4839-8cf5-1793cd1926d5
 | 曾用 GitHub 仓库名 | ~~EasyVtuber-with-THA3-THA4~~（2026-05 更名为 **EasyVtuberStudio**） |
 | 曾用本地目录 | `E:\tha4fork` / `E:\tha4fork-develop` |
 | 定制代码包 | `face-puppeteer-ui-enhancements-ai-code/` |
-| **新 Agent 入口** | **[docs/HANDOVER.md](docs/HANDOVER.md)** |
+| **新 Agent 入口** | **[docs/RELEASE_BOUNDARIES.md](docs/RELEASE_BOUNDARIES.md)** |
 | **首次部署** | **[docs/DEPLOY.md](docs/DEPLOY.md)** · HF Bucket 见上表 |
 | 计划与对接 | [plans/](plans/) |
 
@@ -52,12 +64,12 @@ https://github.com/user-attachments/assets/f282fbef-212c-4839-8cf5-1793cd1926d5
 | # | 项目 | GitHub | 在本项目中的用途 |
 |---|------|--------|------------------|
 | 1 | **THA4**（Talking Head Anime 4） | [pkhungurn/talking-head-anime-4-demo](https://github.com/pkhungurn/talking-head-anime-4-demo) | 核心 Student 面捕引擎、MediaPipe puppeteer、蒸馏与训练 demo；Git `upstream` 默认指向此仓库 |
-| 2 | **THA3**（Talking Head Anime 3） | [pkhungurn/talking-head-anime-3-demo](https://github.com/pkhungurn/talking-head-anime-3-demo) | 立绘 portrait 模式、`deps/tha3/` 运行时与 DEPLOY 档位 **[3] tha3_models** 权重来源 |
+| 2 | **THA3**（Talking Head Anime 3） | [pkhungurn/talking-head-anime-3-demo](https://github.com/pkhungurn/talking-head-anime-3-demo) | 立绘 portrait 模式、`deps/tha3/` 运行时与 DEPLOY 档位 **[4] tha3_models** 权重来源 |
 | 3 | **EasyVtuber** | [yuyuyzl/EasyVtuber](https://github.com/yuyuyzl/EasyVtuber) | **Mouse + Audio** 无摄像头面捕交互思路参考（全屏鼠标 + 麦克风口型） |
 
 Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_ROOT.md](docs/FORK_ROOT.md)。
 
-> ~~`E:\THA4_bundle_bai_custom`~~ 已废弃，内容已迁入本仓（见 HANDOVER 附录）。
+> ~~旧训练目录~~ 已废弃，内容已迁入本仓（见 部署布局说明）。
 
 ---
 
@@ -129,7 +141,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 ### 10. 附带内容与文档
 
 - `data/character_models/baiten_from_project_forlon9/bai_450k/`：示例白腾，包含 student 模型与立绘（白腾设定是白猫，这里穿着白短袖，不是这个项目只能放白模）
-- 文档：`docs/HANDOVER.md`、`docs/TROUBLESHOOTING_QA.md`、`docs/DOC_INDEX.md`、`docs/CHANGELOG.md` 等
+- 文档：`docs/RELEASE_BOUNDARIES.md`、`docs/TROUBLESHOOTING_QA.md`、`docs/DOC_INDEX.md`、`docs/CHANGELOG.md` 等
 - `his/`：按时间归档的历史快照
 
 **发布版说明（2026-07-25）：** 长时诊断默认关闭（可选 `EVS_LONGRUN_DIAG` / `EVS_DIAG_*`）；OSF 近远缩放与眨眼/wink 分类已修正；种子 UI 记忆随 GitHub/HF 发布。更早的 2026-06-24 已去除旧版 `longrun_freeze_debug` NDJSON 脚手架。详见 [docs/CHANGELOG.md](docs/CHANGELOG.md) §2026-07-25。
@@ -144,7 +156,7 @@ Git 远程：`origin` = 本 fork；`upstream` = THA4 官方。详见 [docs/FORK_
 ```
 <REPO_ROOT>\
 ├── README.md                 ← 本文件（GitHub 首页）
-├── LICENSE                   ← Apache-2.0
+├── LICENSE                   ← GitHub 与 HF 共用：原创 BSD-3，其余上游全文附于同文件
 ├── DEPLOY.bat                ← 六档安装（basic / OSF / MediaPipe / THA3 / THA4 训练 / NN 后处理）
 ├── RESET_ADDON.bat           ← 卸载单个可选包
 ├── EasyVtuberStudio.exe      ← 主入口（双击启动）

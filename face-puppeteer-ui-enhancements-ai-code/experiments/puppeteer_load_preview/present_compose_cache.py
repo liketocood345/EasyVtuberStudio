@@ -5,6 +5,12 @@ skip full stack recomposition and affine-only changes can reproject the last
 finished frame instead of re-warping every layer.
 """
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import math
 from typing import Any, Optional
@@ -84,6 +90,12 @@ def _compose_affine_2x3(left: numpy.ndarray, right: numpy.ndarray) -> numpy.ndar
     return numpy.ascontiguousarray(out[:2, :], dtype=numpy.float64)
 
 
+# EVS-DESIGN-AUDIT EVS-A090 BEGIN
+# 设计[f-068, UI-D×] [保留旧工具 / 非当前调用证据]
+# 函数仍有重投影/重采样实现，但当前主呈现未见调用此函数；不能据函数存在说默认正在模糊。最新明确取消以重投影换性能，不应无新授权接回活动路径。
+# 历史 bug 热点 #1,#4：仅为回归关联，非声称本次故障已复现。
+# 诊断标记 R-QUALITY-03：参照文件头诊断报告；本次不修复实际行为。
+# EVS-DESIGN-AUDIT EVS-A090 END
 def reproject_rgba_by_display_affine(
         rgba: numpy.ndarray,
         canvas_width: int,
@@ -162,6 +174,12 @@ class LayerWarpResultCache:
                 pass
         self._entries[key] = rgba
 
+    # EVS-DESIGN-AUDIT EVS-A091 BEGIN
+    # 设计[f-068, UI-D×] [部分符合 / 无损性待差分]
+    # 缓存可减少重复 warp，但 key 量化可能合并本不相等的几何状态；是否造成可见变化须全分辨率对照，不能一概称“仅无损缓存”。
+    # 历史 bug 热点 #1：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-QUALITY-01：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A091 END
     @staticmethod
     def make_key(
             *,

@@ -110,6 +110,7 @@ class KeyframeRenderCache:
         self.rgba: Optional[np.ndarray] = None
         self.bitmap: Any = None
         self.image_id: Optional[int] = None
+        self.source_image: Any = None
         self.antialias_factor: float = DEFAULT_ANTIALIAS_STRENGTH
         self.size: Tuple[int, int] = (1, 1)
 
@@ -117,11 +118,13 @@ class KeyframeRenderCache:
         self.rgba = None
         self.bitmap = None
         self.image_id = None
+        self.source_image = None
         self.antialias_factor = DEFAULT_ANTIALIAS_STRENGTH
         self.size = (1, 1)
 
     def invalidate_image(self) -> None:
         self.image_id = None
+        self.source_image = None
 
     def is_valid(self, wx_image: Any, antialias_factor: float) -> bool:
         factor = normalize_antialias_strength(antialias_factor)
@@ -131,6 +134,7 @@ class KeyframeRenderCache:
         return (
             self.rgba is not None
             and bitmap_ok
+            and self.source_image is wx_image
             and self.image_id == id(wx_image)
             and abs(self.antialias_factor - factor) < 1e-4)
 
@@ -151,4 +155,5 @@ class KeyframeRenderCache:
         self.bitmap = create_bitmap(keyframe_width, keyframe_height, keyframe_rgba)
         self.size = (keyframe_width, keyframe_height)
         self.image_id = id(wx_image)
+        self.source_image = wx_image
         self.antialias_factor = factor

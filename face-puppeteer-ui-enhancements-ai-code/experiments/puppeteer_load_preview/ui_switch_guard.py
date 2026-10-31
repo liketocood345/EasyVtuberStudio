@@ -1,5 +1,11 @@
 """f-063: revert UI controls when a user switch fails to apply."""
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -53,6 +59,11 @@ def restore_choice(control, snap: Optional[ChoiceSnapshot]) -> None:
         control.SetSelection(snap.selection)
 
 
+# EVS-DESIGN-AUDIT EVS-A073 BEGIN
+# 设计[f-063] [静态符合（封装路径）；全局部分符合]
+# 封装负责失败时恢复快照并阻止递归事件，但只有使用此封装的开关受保护；不能由工具函数存在推出每个功能切换都覆盖。
+# 历史 bug 热点 #2：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A073 END
 def run_guarded_switch(
         frame,
         *,

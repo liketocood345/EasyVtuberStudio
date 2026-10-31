@@ -17,23 +17,33 @@ if (-not $ShortcutPath) {
 }
 
 if (-not $ActiveDevRoot) {
-    $ActiveDevRoot = Join-Path $RepoParent "tha4fork-develop"
+    $ActiveDevRoot = $RepoRoot
+    $legacyDev = Join-Path $RepoParent "tha4fork-develop"
+    $currentDev = Join-Path $RepoParent "easyvtuberstudio-develop"
+    if (Test-Path (Join-Path $currentDev "scripts\launch\run_load_preview_puppeteer.bat")) {
+        $ActiveDevRoot = $currentDev
+    } elseif (Test-Path (Join-Path $legacyDev "scripts\launch\run_load_preview_puppeteer.bat")) {
+        $ActiveDevRoot = $legacyDev
+    }
 }
 
 if ($PublishFork) { $Fork = $true }
 
 if ($Fork) {
-    $batPath = Join-Path $RepoRoot "scripts\launch\run_load_preview_puppeteer.bat"
-    $workDir = $RepoRoot
-    $description = "THA4 Load Preview (fork)"
+    $root = $RepoRoot
+    $description = "EasyVtuberStudio (fork)"
 } else {
-    $batPath = Join-Path $ActiveDevRoot "scripts\launch\run_load_preview_puppeteer.bat"
-    $workDir = $ActiveDevRoot
-    $description = "THA4 Load Preview (active dev)"
+    $root = $ActiveDevRoot
+    $description = "EasyVtuberStudio (active dev)"
 }
 
-if (-not (Test-Path $batPath)) {
-    throw "Cannot find launcher bat: $batPath. Use -Fork or set -ActiveDevRoot."
+$vbsPath = Join-Path $root "scripts\launch\start_easyvtuberstudio.vbs"
+$batPath = Join-Path $root "scripts\launch\run_load_preview_puppeteer.bat"
+$workDir = $root
+$iconPath = Join-Path $root "assets\branding\app-icon-source.ico"
+
+if (-not (Test-Path $vbsPath) -and -not (Test-Path $batPath)) {
+    throw "Cannot find launcher: $vbsPath or $batPath. Use -Fork or set -ActiveDevRoot."
 }
 if (-not (Test-Path $workDir)) {
     throw "Cannot find working directory: $workDir. Use -Fork or set -ActiveDevRoot."
@@ -41,10 +51,19 @@ if (-not (Test-Path $workDir)) {
 
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($ShortcutPath)
-$shortcut.TargetPath = $batPath
-$shortcut.WorkingDirectory = $workDir
-$shortcut.Arguments = ""
+if (Test-Path $vbsPath) {
+    $shortcut.TargetPath = (Join-Path $env:SystemRoot "System32\wscript.exe")
+    $shortcut.Arguments = "`"$vbsPath`""
+    $shortcut.WorkingDirectory = $workDir
+} else {
+    $shortcut.TargetPath = $batPath
+    $shortcut.WorkingDirectory = $workDir
+    $shortcut.Arguments = ""
+}
 $shortcut.Description = $description
+if (Test-Path $iconPath) {
+    $shortcut.IconLocation = "$iconPath,0"
+}
 $shortcut.Save()
 
 Write-Host "Shortcut updated:"

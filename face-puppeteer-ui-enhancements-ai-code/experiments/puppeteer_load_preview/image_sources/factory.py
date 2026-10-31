@@ -1,4 +1,11 @@
 from __future__ import annotations
+from portable_process_env import debug_log_path
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import os
 from typing import Optional
@@ -30,7 +37,19 @@ def _sync_image_source_mode_choice(main_frame, normalized: str) -> None:
         main_frame._suppress_image_source_mode_event = False
 
 
+# EVS-DESIGN-AUDIT EVS-A063 BEGIN
+# 设计[f-022, f-063] [部分符合]
+# THA3/THA4 并列图像源，先 stop 旧源再 start 新源；f-022 后标无必要是已满足而非删除源。异常时没有覆盖 stop/start/load 全程的事务回落，不能认定任意失败都会恢复旧 UI/源。
+# 历史 bug 热点 #2,#5：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A063 END
 def switch_image_source(main_frame, new_mode: str, *, autoload_asset: bool = True):
+    # #region agent log
+    try:
+        import json as _json, time as _time
+        open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix-tha3", "hypothesisId": "Q", "location": "factory.py:switch_image_source", "message": "switch image source", "data": {"new_mode": str(new_mode), "autoload": bool(autoload_asset), "from": str(getattr(main_frame.active_image_source, "mode_id", ""))}, "timestamp": int(_time.time() * 1000)}) + "\n")
+    except Exception:
+        pass
+    # #endregion
     normalized = normalize_image_source_mode(new_mode)
     if normalized == IMAGE_SOURCE_THA3 and not ensure_tha3_assets_available(main_frame):
         normalized = IMAGE_SOURCE_THA4

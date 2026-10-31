@@ -1,5 +1,11 @@
 """Rate-limited wx modal dialogs (high-risk: never spam from timers)."""
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import time
 from typing import Optional
@@ -19,6 +25,11 @@ def _dialog_key(title: str, message: str, explicit_key: Optional[str]) -> str:
     return f"{title}\0{message[:240]}"
 
 
+# EVS-DESIGN-AUDIT EVS-A072 BEGIN
+# 设计[f-023, UI-A×04] [静态符合（此入口限频）；全局待核]
+# 按 key/时间限制对话框，同类错误一秒超过一次属高危。只保护经过此函数的调用，直接 wx.MessageBox/启动器 MessageBox 不能据此视为全局限频。
+# 历史 bug 热点 #2,#5：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A072 END
 def show_rate_limited_message(
         parent: wx.Window,
         message: str,

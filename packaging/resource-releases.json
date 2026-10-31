@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "bucket_id": "liketocode789/EasyVtuberStudio",
+  "published": true,
+  "modules": {
+    "mediapipe": {
+      "version": "2026.10.31-r1",
+      "artifact": {
+        "path": "packages/windows-x64/mediapipe/2026.10.31-r1/mediapipe.zip",
+        "sha256": "2ae871d49ddd5e664d5d0d59e1db71ab2b0323490167376faaa55134d1ae4e58",
+        "size_bytes": 3350321
+      }
+    },
+    "openseeface": {
+      "version": "2026.10.31-r1",
+      "artifact": {
+        "path": "packages/windows-x64/openseeface/2026.10.31-r1/openseeface.zip",
+        "sha256": "0ad3afb10c9d97bdd69746f1fa2e2a1fde1aaed2a410c13c7e6ab5b8d349c12a",
+        "size_bytes": 127800044
+      }
+    },
+    "tha3_models": {
+      "version": "2026.10.31-r1",
+      "artifact": {
+        "path": "packages/windows-x64/tha3_models/2026.10.31-r1/tha3_models.zip",
+        "sha256": "c1c4abb7bb510695ab7f3517fb8b46a16781451f44f27a509d1ecae30d6beb3b",
+        "size_bytes": 837163714
+      }
+    },
+    "tha4_training": {
+      "version": "2026.10.31-r1",
+      "artifact": {
+        "path": "packages/windows-x64/tha4_training/2026.10.31-r1/tha4_training.zip",
+        "sha256": "f1b8eccb4a921b1d1740be9bd4237b012df3b492eb92f1b2bca8d556b6b4a538",
+        "size_bytes": 650285755
+      }
+    },
+    "output_enhancement": {
+      "version": "2026.10.31-r1",
+      "artifact": {
+        "path": "packages/windows-x64/output_enhancement/2026.10.31-r1/output_enhancement.zip",
+        "sha256": "d8f8c37dc247eb27ab0395d1d83b81b06dfb9d4f360f7aabd9bc5b08b55b89ca",
+        "size_bytes": 112319083
+      }
+    }
+  },
+  "license": {
+    "path": "LICENSE",
+    "sha256": "23573bbcb4319bbdd7ab5d46dfdc75675b1060a4b4542f496311ae154e9092e8",
+    "original_content": "BSD-3-Clause",
+    "third_party_terms": "See full upstream originals in LICENSE"
+  }
+}

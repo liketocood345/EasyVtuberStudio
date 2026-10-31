@@ -1,7 +1,6 @@
 @echo off
 setlocal
-call "%~dp0resolve_venv.bat"
+call "%~dp0find_repo_root.bat"
 if errorlevel 1 exit /b 1
-"%PIP%" uninstall -y onnx 2>nul
-"%PIP%" install "protobuf==3.20.3" "mediapipe==0.10.9"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%REPO_ROOT%\packaging\repair_capture_dependencies.ps1" -PortableRoot "%REPO_ROOT%"
 exit /b %ERRORLEVEL%

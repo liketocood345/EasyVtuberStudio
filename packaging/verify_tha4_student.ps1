@@ -45,7 +45,7 @@ if (Test-FacePuppeteerVenv -PortableRoot $PortableRoot) {
     $python = Join-Path $venvRoot "Scripts\python.exe"
     Write-Host "[OK] Python runtime ($venvRoot)"
 } else {
-    Write-Host "[MISSING] Python runtime -> addons/face_puppeteer/venv"
+    Write-Host "[MISSING] Python runtime -> runtime/venvs/common (bound face_puppeteer)"
     $failed++
 }
 

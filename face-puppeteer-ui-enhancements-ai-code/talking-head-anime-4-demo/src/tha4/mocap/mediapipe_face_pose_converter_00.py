@@ -1,3 +1,9 @@
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 import math
 import threading
 import time
@@ -233,6 +239,11 @@ class FloatSliderControl:
             self._last_hover_mouse_screen_pos = wx.GetMousePosition()
             self._set_wheel_armed(True)
 
+    # EVS-DESIGN-AUDIT EVS-A116 BEGIN
+    # 设计[UI-B×] [静态符合（悬停门控）；交互待测]
+    # 实际使用的 slider 在鼠标悬停驻留后才 arm 滚轮，门槛为一秒；离开/抖动/滚动容器传递仍需 GUI 验证。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A116 END
     def _handle_slider_mousewheel(self, event: wx.MouseEvent):
         if not self._wheel_armed:
             return
@@ -394,6 +405,11 @@ class MediaPipeFacePoseConverter00Args:
     def set_breathing_frequency(self, new_value: float):
         self.breathing_frequency = max(0.0, new_value)
 
+    # EVS-DESIGN-AUDIT EVS-A115 BEGIN
+    # 设计[UI-B03a] [静态关联 / UI 范围待核]
+    # 呼吸幅度增益独立参数，要求一至三倍；需同时检查创建 slider 的范围及持久化，不把频率调节当幅度增益。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A115 END
     def set_breathing_amplitude_gain(self, new_value: float):
         self.breathing_amplitude_gain = clamp(float(new_value), 1.0, 3.0)
 
@@ -1547,6 +1563,12 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
         self.ensure_audio_stream_state()
         self.refresh_mouth_input_ui_state()
 
+    # EVS-DESIGN-AUDIT EVS-A117 BEGIN
+    # 设计[f-067] [部分符合 / 音频关闭风险]
+    # 此处停止音频流；主窗未用覆盖全程 finally 保证一定抵达，原生音频 stop 的阻塞也可能拖住关闭。不能据实现 shutdown 方法就认定每次退出无残留。
+    # 历史 bug 热点 #2,#5：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-CLOSE-04：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A117 END
     def shutdown(self):
         self.stop_audio_stream()
 
@@ -1563,6 +1585,11 @@ class MediaPoseFacePoseConverter00(MediaPipeFacePoseConverter):
         self.refresh_breathing_status_text()
         self.notify_ui_state_changed()
 
+    # EVS-DESIGN-AUDIT EVS-A114 BEGIN
+    # 设计[UI-B03] [静态符合（功能入口）；文案待核]
+    # 呼吸周期重启入口与动作后增强/衰减参数同属此 converter；原话没有逐字指定此按钮文案，勿据功能概括伪造命名来源。
+    # 历史 bug 热点 #3：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A114 END
     def restart_breathing_cycle_clicked(self, event: wx.Event):
         self.breathing_cycle_position = 0.0
         self.last_breathing_update_time = time.time()

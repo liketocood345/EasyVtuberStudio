@@ -18,6 +18,7 @@ from tha4.mocap.mediapipe_face_pose_converter_00 import MediaPoseFacePoseConvert
 from openseeface_mocap_driver import (
     OSF_DEFAULT_FPS,
     OSF_EYE_CLOSE_MIN_DURATION_SEC,
+    OSF_UDP_DISCONNECT_SEC,
     OpenSeeFaceMocapState,
     OpenSeeFaceInputPacer,
     OsfEyeMotionPattern,
@@ -414,6 +415,20 @@ def test_input_pacer_uniform_keyframes() -> None:
     assert lerped_out.blendshape_params == lerped.blendshape_params
 
 
+def test_input_pacer_expires_stale_input():
+    pacer = OpenSeeFaceInputPacer(target_fps=10, max_catchup_frames=1)
+    frame = parse_openseeface_udp_packet(build_test_openseeface_udp_packet())
+    assert frame is not None
+    state = OpenSeeFaceMocapState(calibration_warmup_remaining=0)
+    pose = build_openseeface_mediapipe_face_pose(frame, state)
+    pacer.push_latest(pose)
+    stale_at = pacer._latest_mono + OSF_UDP_DISCONNECT_SEC + 0.1
+    out, key = pacer.update(stale_at)
+    assert out is None
+    assert not key
+    assert pacer._latest is None
+
+
 if __name__ == "__main__":
     test_convert_chain()
     test_eye_motion_pattern_classification()
@@ -428,4 +443,5 @@ if __name__ == "__main__":
     test_face_screen_motion_from_translation()
     test_forward_recenter_gate()
     test_input_pacer_uniform_keyframes()
+    test_input_pacer_expires_stale_input()
     print("smoke_openseeface_mocap_ok")

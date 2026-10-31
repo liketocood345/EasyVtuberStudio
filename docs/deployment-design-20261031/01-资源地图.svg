@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1680"><rect width="100%" height="100%" fill="#f0f4f9"/><g font-family="Microsoft YaHei, sans-serif" fill="#14233c">
+<text x="35" y="61" font-size="34">EVS 资源地图｜本机 / 上游优先 → HF 方舟备用｜2026-10-31</text>
+<rect x="30" y="105" width="760" height="330" rx="15" fill="white" stroke="#b8c9df"/>
+<text x="52" y="154" font-size="26" fill="#135e99">GitHub CORE：部署前已有</text>
+<text xml:space="preserve" x="52" y="197" font-size="22">├─ DEPLOY / 主 EXE / 公共代码 / 脚本</text>
+<text xml:space="preserve" x="52" y="233" font-size="22">├─ bai 示例角色、beitou.GIF 配件</text>
+<text xml:space="preserve" x="52" y="269" font-size="22">├─ 已消毒的种子与图层 / 区域晃动设置</text>
+<text xml:space="preserve" x="52" y="305" font-size="22">├─ 教师源码套件 + 68KB 无运行时薄入口</text>
+<text xml:space="preserve" x="52" y="341" font-size="22">└─ 不含已安装 addons、Python、torch</text>
+<rect x="820" y="105" width="760" height="330" rx="15" fill="white" stroke="#b8c9df"/>
+<text x="842" y="154" font-size="26" fill="#135e99">共用基座：仅安装目录内</text>
+<text xml:space="preserve" x="842" y="197" font-size="22">├─ NuGet Python 3.10.11（固定 SHA256）</text>
+<text xml:space="preserve" x="842" y="233" font-size="22">├─ PyPI / PyTorch 固定版本 + 文件哈希</text>
+<text xml:space="preserve" x="842" y="269" font-size="22">├─ runtime/venvs/common：只创建一次</text>
+<text xml:space="preserve" x="842" y="305" font-size="22">├─ face / output / teacher 按选择追加</text>
+<text xml:space="preserve" x="842" y="341" font-size="22">└─ torch / Python 不进入 HF</text>
+<rect x="1610" y="105" width="760" height="330" rx="15" fill="white" stroke="#b8c9df"/>
+<text x="1632" y="154" font-size="26" fill="#135e99">HF 后备方舟：并非整仓镜像</text>
+<text xml:space="preserve" x="1632" y="197" font-size="22">├─ packages/windows-x64/&lt;module&gt;/&lt;version&gt;/</text>
+<text xml:space="preserve" x="1632" y="233" font-size="22">├─ 每模块一个 ZIP + 固定文件契约</text>
+<text xml:space="preserve" x="1632" y="269" font-size="22">├─ THA3、无运行时教师、OSF、NN、MP</text>
+<text xml:space="preserve" x="1632" y="305" font-size="22">├─ seed/ 与 GitHub 同一份发布种子/示例</text>
+<text xml:space="preserve" x="1632" y="341" font-size="22">└─ 上游下载失败 / 坏哈希后才用；DEPLOY 不取种子</text>
+<rect x="30" y="470" width="1155" height="365" rx="15" fill="white" stroke="#b8c9df"/>
+<text x="52" y="519" font-size="26" fill="#135e99">[1] basic_run：基础运行</text>
+<text xml:space="preserve" x="52" y="562" font-size="22">GitHub → bai / 配件 / 种子 / Student 代码</text>
+<text xml:space="preserve" x="52" y="598" font-size="22">官方源 → base 固定 wheel → 本地 base 模块</text>
+<text xml:space="preserve" x="52" y="634" font-size="22">落盘 → runtime/python310 + venvs/common</text>
+<text xml:space="preserve" x="52" y="670" font-size="22">不装 TensorBoard / grpc / quaternion</text>
+<text xml:space="preserve" x="52" y="706" font-size="22">HF 不需要单独复制 basic_run 包</text>
+<rect x="1215" y="470" width="1155" height="365" rx="15" fill="white" stroke="#b8c9df"/>
+<text x="1237" y="519" font-size="26" fill="#135e99">[2] openseeface：面捕</text>
+<text xml:space="preserve" x="1237" y="562" font-size="22">本机模块 → GitHub v1.20.5 → HF ZIP 备用</text>
+<text xml:space="preserve" x="1237" y="598" font-size="22">落盘 → addons/openseeface/{Binary,models,Licenses}</text>
+<text xml:space="preserve" x="1237" y="634" font-size="22">Binary 内 Python DLL / 依赖是已验证私有 ABI</text>
+<text xml:space="preserve" x="1237" y="670" font-size="22">完整保留，不强拆为 common Python</text>
+<text xml:space="preserve" x="1237" y="706" font-size="22">不捆绑通用 Python / torch 安装分发</text>
+<rect x="30" y="865" width="1155" height="365" rx="15" fill="white" stroke="#b8c9df"/>
+<text x="52" y="914" font-size="26" fill="#135e99">[3] face_puppeteer：MediaPipe</text>
+<text xml:space="preserve" x="52" y="957" font-size="22">Google 模型 → 哈希校验 → mediapipe.zip</text>
+<text xml:space="preserve" x="52" y="993" font-size="22">HF packages/windows-x64/mediapipe/ 备用</text>
+<text xml:space="preserve" x="52" y="1029" font-size="22">落盘 → addons/face_puppeteer/mediapipe/*.task</text>
+<text xml:space="preserve" x="52" y="1065" font-size="22">公共 MP / protobuf → common 的 face overlay</text>
+<text xml:space="preserve" x="52" y="1101" font-size="22">DEPLOY 只补资源，不碰种子</text>
+<rect x="1215" y="865" width="1155" height="365" rx="15" fill="white" stroke="#b8c9df"/>
+<text x="1237" y="914" font-size="26" fill="#135e99">[4] tha3_models：四种变体</text>
+<text xml:space="preserve" x="1237" y="957" font-size="22">上游固定内容 → tha3_models.zip → HF 备用</text>
+<text xml:space="preserve" x="1237" y="993" font-size="22">separable_half / float + standard_half / float</text>
+<text xml:space="preserve" x="1237" y="1029" font-size="22">落盘 → addons/tha3_models/&lt;variant&gt;/*.pt</text>
+<text xml:space="preserve" x="1237" y="1065" font-size="22">THA3 代码在 CORE；torch / ORT 复用 common</text>
+<text xml:space="preserve" x="1237" y="1101" font-size="22">同一套文件哈希验证两条下载路径</text>
+<rect x="30" y="1260" width="1155" height="365" rx="15" fill="white" stroke="#b8c9df"/>
+<text x="52" y="1309" font-size="26" fill="#135e99">[5] tha4_training：独立教师</text>
+<text xml:space="preserve" x="52" y="1352" font-size="22">CORE 源码/薄入口 + 上游 5 权重与 pose</text>
+<text xml:space="preserve" x="52" y="1388" font-size="22">规范化 → tha4_training.zip；HF 同内容备用</text>
+<text xml:space="preserve" x="52" y="1424" font-size="22">落盘 → addons/tha4_training/，无 runtime</text>
+<text xml:space="preserve" x="52" y="1460" font-size="22">选择本档才给 common 追加 teacher extras</text>
+<text xml:space="preserve" x="52" y="1496" font-size="22">训练队列/存档 → workspace/tools/tha4_training</text>
+<rect x="1215" y="1260" width="1155" height="365" rx="15" fill="white" stroke="#b8c9df"/>
+<text x="1237" y="1309" font-size="26" fill="#135e99">[6] output_enhancement：后处理</text>
+<text xml:space="preserve" x="1237" y="1352" font-size="22">上游 NN 数据包 → 单文件 ZIP → HF 备用</text>
+<text xml:space="preserve" x="1237" y="1388" font-size="22">RIFE / waifu2x / Real-ESRGAN 固定 ONNX</text>
+<text xml:space="preserve" x="1237" y="1424" font-size="22">落盘 → addons/output_enhancement/ezvtb_data</text>
+<text xml:space="preserve" x="1237" y="1460" font-size="22">ORT DirectML / PyAnime4K → common overlay</text>
+<text xml:space="preserve" x="1237" y="1496" font-size="22">本机已有资源也必须通过完整哈希验证</text>
+</g></svg>

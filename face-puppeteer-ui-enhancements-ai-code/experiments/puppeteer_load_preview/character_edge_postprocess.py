@@ -5,6 +5,8 @@ import math
 from typing import Optional, Tuple
 
 import numpy
+import cv2
+from PIL import Image as _PILImage
 
 CHARACTER_EDGE_OUTLINE = "outline"
 CHARACTER_EDGE_NONE = "none"
@@ -75,7 +77,7 @@ def _dilate_alpha_fractional(alpha: numpy.ndarray, radius: float) -> numpy.ndarr
         255.0)
 
 
-def _composite_rgba_under(
+def _composite_rgba_under_reference(
         background: numpy.ndarray,
         foreground: numpy.ndarray) -> numpy.ndarray:
     """Source-over composite of two RGBA arrays (same shape).
@@ -108,6 +110,38 @@ def _composite_rgba_under(
     result[y0:y1, x0:x1, 0:3] = numpy.clip(out_rgb, 0.0, 255.0).astype(numpy.uint8)
     result[y0:y1, x0:x1, 3] = numpy.clip(out_a[:, :, 0] * 255.0, 0.0, 255.0).astype(numpy.uint8)
     return result
+
+
+def _composite_rgba_under(background: numpy.ndarray, foreground: numpy.ndarray) -> numpy.ndarray:
+    """Source-over in Pillow's C kernel with correctly rounded uint8 output.
+
+    EVS-PERF-20261029: the float64 reference experiment showed lower numeric
+    error than the old float32 truncation path. This retains full resolution;
+    final channel values can differ by one code value from legacy flooring.
+    Return an owned writable array and never mutate cached input assets.
+    """
+    background = numpy.ascontiguousarray(background, dtype=numpy.uint8)
+    foreground = numpy.ascontiguousarray(foreground, dtype=numpy.uint8)
+    if background.shape != foreground.shape:
+        raise ValueError("RGBA composite shapes must match")
+    # f-065/f-068/f-070: only nonzero foreground alpha can affect source-over.
+    # Keep Pillow's exact integer rounding; avoid blending full 768² for tiny GIFs.
+    positive = cv2.findNonZero(numpy.ascontiguousarray(foreground[:, :, 3]))
+    if positive is None:
+        return background.copy()
+    x, y, width, height = cv2.boundingRect(positive)
+    if width == foreground.shape[1] and height == foreground.shape[0]:
+        result = _PILImage.alpha_composite(
+            _PILImage.fromarray(background, "RGBA"),
+            _PILImage.fromarray(foreground, "RGBA"))
+        return numpy.asarray(result).copy()
+    roi = numpy.s_[y:y + height, x:x + width]
+    result = _PILImage.alpha_composite(
+        _PILImage.fromarray(numpy.ascontiguousarray(background[roi]), "RGBA"),
+        _PILImage.fromarray(numpy.ascontiguousarray(foreground[roi]), "RGBA"))
+    out = background.copy()
+    out[roi] = numpy.asarray(result)
+    return out
 
 
 def composite_rgba_arrays(

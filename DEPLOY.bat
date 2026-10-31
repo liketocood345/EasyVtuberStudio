@@ -1,3 +1,16 @@
+@rem EVS-DESIGN-AUDIT FILE BEGIN
+@rem Manual lookup: E:/record/easyvtuberstudio-index.json
+@rem Prompt evidence: E:/record/easyvtuberstudio-prompt-index.json
+@rem 2026-10-29 comments only. Adopt latest explicit requirement per property.
+@rem Statuses and Chinese details: E:/record/easyvtuberstudio-code-annotations-20261029/annotations.json
+@rem EVS-DESIGN-AUDIT FILE END
+@rem EVS-DESIGN-AUDIT EVS-A128 BEGIN
+@rem Design: dep-003, dep-012, dep-025, f-057; status: partial; runtime untested.
+@rem Numeric menu and Enter default basic match current requirements.
+@rem Existing 10-40min estimate conflicts with design maximum ten minutes.
+@rem This is a text mismatch. DEPLOY not executed.
+@rem Hotspot: #6. Risk: R-DEPLOY-03
+@rem EVS-DESIGN-AUDIT EVS-A128 END
 @echo off
 setlocal EnableDelayedExpansion
 rem Install tiers after GitHub ZIP extract (basic / face / THA3 / THA4 training).
@@ -32,11 +45,12 @@ echo    [1] basic_run           - Mouse + THA4 Student (minimal PyTorch + wx)
 echo    [2] openseeface         - OpenSeeFace face capture
 echo    [3] face_puppeteer      - MediaPipe face capture
 echo    [4] tha3_models         - THA3 portrait weights
-echo    [5] tha4_training       - THA4 teacher + pose dataset
-echo    [6] output_enhancement  - NN super-res / RIFE / ORT (optional TensorRT)
+echo    [5] tha4_training       - Independent THA4 Teacher app (addons/tha4_training)
+echo    [6] output_enhancement  - NN super-res / RIFE / DirectML ORT (optional TensorRT)
 echo.
 echo  Press Enter at tier prompt = install [1] only (recommended first time).
 echo  CORE ZIP already includes THA4 Student (bai).
+echo  Python, dependencies and caches stay in portable folders; no system install.
 echo.
 echo  Requires internet. [1] ~2-4 GB; all tiers ~15 GB. May take 10-40 min.
 echo.

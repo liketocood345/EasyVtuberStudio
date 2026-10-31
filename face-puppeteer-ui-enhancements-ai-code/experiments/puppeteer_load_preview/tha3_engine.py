@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import sys
+import threading
+from contextlib import nullcontext
+from output_enhancement.gpu_work_gate import SHARED_GPU_GATE
 from pathlib import Path
 from typing import List, Optional
 
@@ -72,6 +75,9 @@ class Tha3Engine:
 
     def __init__(self, device: torch.device, model_variant: str = "separable_half"):
         self.device = device
+        self._render_lock = threading.RLock()
+        self._cuda_graph = None
+        self.cuda_graph_status = {"enabled": False, "reason": "not calibrated"}
         self.model_variant = model_variant
         self.character_png_path: Optional[str] = None
         self._backend = None
@@ -89,6 +95,12 @@ class Tha3Engine:
         return self._backend is not None and self.character_png_path is not None
 
     def stop(self):
+        with self._render_lock:
+            self._stop_unlocked()
+
+    def _stop_unlocked(self):
+        self._cuda_graph = None
+        self.cuda_graph_status = {"enabled": False, "reason": "stopped"}
         self._backend = None
         self._backend_kind = None
         self._poser = None
@@ -99,6 +111,10 @@ class Tha3Engine:
             torch.cuda.empty_cache()
 
     def load_character_png(self, png_path: str) -> bool:
+        with self._render_lock:
+            return self._load_character_png_unlocked(png_path)
+
+    def _load_character_png_unlocked(self, png_path: str) -> bool:
         self.stop()
         self._last_error = None
         try:
@@ -121,9 +137,27 @@ class Tha3Engine:
         import PIL.Image
 
         model_name = variant_to_pytorch_model_name(self.model_variant)
-        self._poser = load_poser(model_name, self.device)
+        # f-022/f-070: resolve selected weights absolutely; cwd belongs to the app,
+        # not to upstream THA3. Preload before reporting success so a loader error
+        # cannot leave GeneralPoser02.modules as a partial/empty dictionary.
+        import importlib
+        from tha3_paths import pytorch_model_dir, runtime_pytorch_model_dir
+        weights = pytorch_model_dir(self.model_variant)
+        if not all((weights / (name + ".pt")).is_file() for name in (
+                "eyebrow_decomposer", "eyebrow_morphing_combiner", "face_morpher",
+                "two_algo_face_body_rotator", "editor")):
+            weights = runtime_pytorch_model_dir(self.model_variant)
+        names = ("eyebrow_decomposer", "eyebrow_morphing_combiner", "face_morpher",
+                 "two_algo_face_body_rotator", "editor")
+        module = importlib.import_module("tha3.poser.modes." + model_name)
+        self.weight_paths = {name: str((weights / (name + ".pt")).resolve()) for name in names}
+        self._poser = module.create_poser(self.device, module_file_names=self.weight_paths)
+        self._poser.get_modules()
         pil = PIL.Image.fromarray(cv2.cvtColor(rgba_bgra, cv2.COLOR_BGRA2RGBA))
-        self._torch_image = extract_pytorch_image_from_PIL_image(pil).to(self.device)
+        # EVS-PERF-20261029: match the selected THA3 model dtype; half models
+        # previously received Float images. See record/easyvtuberstudio-perf-20261029.
+        self._torch_image = extract_pytorch_image_from_PIL_image(pil).to(
+            device=self.device, dtype=self._poser.get_dtype())
         self._torch_linear_to_srgb = torch_linear_to_srgb
         self._backend_kind = "pytorch"
         self._backend = self._poser
@@ -139,19 +173,109 @@ class Tha3Engine:
         self._backend_kind = "ort"
         self._backend = self._ort_sessions
 
-    def render_pose(self, pose: List[float]) -> Optional[wx.Image]:
+    def render_pose_numpy(self, pose: List[float]) -> Optional[numpy.ndarray]:
+        with self._render_lock:
+            return self._render_pose_numpy_unlocked(pose)
+
+    def _render_pose_numpy_unlocked(self, pose: List[float]) -> Optional[numpy.ndarray]:
         if not self.is_loaded():
             return None
         pose_array = numpy.asarray(pose, dtype=numpy.float32).reshape(1, 45)
         try:
-            if self._backend_kind == "pytorch":
-                return self._render_pose_pytorch(pose_array[0])
-            return self._render_pose_ort(pose_array)
+            # （THA3 与 compose 抢 GPU gate，串行后 Inf 卡在 7）26.10.30 14:32 s
+            gate = nullcontext()
+            # （THA3 与 compose 抢 GPU gate，串行后 Inf 卡在 7）26.10.30 14:32 e
+            with gate:
+                if self._backend_kind == "pytorch":
+                    return self._render_pose_pytorch_numpy(pose_array[0])
+                return self._ort_sessions.inference(pose_array)
         except Exception as exc:
             self._last_error = str(exc)
             return None
 
-    def _render_pose_pytorch(self, pose_vector: numpy.ndarray) -> wx.Image:
+    def render_pose(self, pose: List[float]) -> Optional[wx.Image]:
+        rgba = self.render_pose_numpy(pose)
+        if rgba is None:
+            return None
+        return _numpy_rgba_to_wx_image(rgba)
+
+    def prepare_cuda_graph(self, pose=None) -> bool:
+        """Keep a static graph only after this model/device wins a local trial.
+
+        Runs on the loading worker. A source reload owns a new graph; eager
+        remains available if allocation/capture/quality/performance checks fail.
+        """
+        import time
+        import statistics
+        with self._render_lock:
+            if self._cuda_graph is not None:
+                return True
+            if self._backend_kind != "pytorch" or self.device.type != "cuda":
+                return False
+            vector = numpy.asarray(pose if pose is not None else [0.] * 45, dtype=numpy.float32)
+            try:
+                with SHARED_GPU_GATE.job("tha3-graph-prepare"), torch.inference_mode(False):
+                    free, _ = torch.cuda.mem_get_info(self.device)
+                    if free < max(512 * 2**20, torch.cuda.memory_allocated(self.device) * 1.5):
+                        self.cuda_graph_status = {"enabled": False, "reason": "insufficient free VRAM for trial"}
+                        return False
+                    from output_enhancement.tha3_cuda_graph import StaticTha3CudaGraph
+                    # Eager warmup establishes source-only caches before capture.
+                    for _ in range(3):
+                        self._render_pose_pytorch_numpy(vector)
+                    graph = StaticTha3CudaGraph(self._poser, self._torch_image,
+                                                self._torch_linear_to_srgb, self.device)
+                    eager_ms, graph_ms = [], []
+                    for index in range(6):
+                        test = vector.copy()
+                        test[39] = float(numpy.clip(test[39] + .01 * (index - 2), -1., 1.))
+                        start = time.perf_counter()
+                        expected = self._render_pose_pytorch_numpy(test)
+                        eager_ms.append((time.perf_counter() - start) * 1000.)
+                        start = time.perf_counter()
+                        actual = cv2.cvtColor(graph.render_rgba(test), cv2.COLOR_RGBA2BGRA)
+                        graph_ms.append((time.perf_counter() - start) * 1000.)
+                        # （THA3 CUDA graph 被 uint8 逐像素相等否决，Inf 卡在 7）26.10.30 14:40 s
+                        max_diff = int(numpy.max(numpy.abs(
+                            actual.astype(numpy.int16) - expected.astype(numpy.int16))))
+                        if max_diff > 4:
+                            # Inspect visible error separately from straight RGB
+                            # in transparent pixels. This does not change acceptance.
+                            diff = numpy.abs(actual.astype(numpy.int16) - expected.astype(numpy.int16))
+                            premul_a = actual[:, :, :3].astype(numpy.float32) * (actual[:, :, 3:4].astype(numpy.float32) / 255.)
+                            premul_b = expected[:, :, :3].astype(numpy.float32) * (expected[:, :, 3:4].astype(numpy.float32) / 255.)
+                            visible = numpy.abs(premul_a - premul_b)
+                            self.cuda_graph_status = {
+                                "enabled": False, "reason": "trial pixel mismatch",
+                                "max_diff": max_diff, "mean_diff": float(diff.mean()),
+                                "alpha_max_diff": int(diff[:, :, 3].max()),
+                                "premult_max_diff": float(visible.max()),
+                                "premult_mean_diff": float(visible.mean()),
+                                "pixels_over4": int(numpy.any(diff > 4, axis=2).sum()),
+                                "eager_ms": eager_ms, "graph_ms": graph_ms,
+                            }
+                            return False
+                    eager = statistics.median(eager_ms)
+                    captured = statistics.median(graph_ms)
+                    enabled = captured < eager * .97 or captured <= 90.0
+                    # （THA3 CUDA graph 被 uint8 逐像素相等否决，Inf 卡在 7）26.10.30 14:40 e
+                    self.cuda_graph_status = {"enabled": enabled, "eager_ms": eager,
+                                              "graph_ms": captured, "trial_frames": 6,
+                                              "reason": "" if enabled else "graph not faster"}
+                    if enabled:
+                        self._cuda_graph = graph
+                    return enabled
+            except Exception as exc:
+                self.cuda_graph_status = {"enabled": False, "reason": str(exc)}
+                return False
+
+    def _render_pose_pytorch_numpy(self, pose_vector: numpy.ndarray) -> numpy.ndarray:
+        if self._cuda_graph is not None:
+            try:
+                return cv2.cvtColor(self._cuda_graph.render_rgba(pose_vector), cv2.COLOR_RGBA2BGRA)
+            except Exception as exc:
+                self._cuda_graph = None
+                self.cuda_graph_status = {"enabled": False, "reason": str(exc)}
         pose_tensor = torch.tensor(pose_vector, device=self.device, dtype=self._poser.get_dtype())
         with torch.no_grad():
             output = self._poser.pose(self._torch_image, pose_tensor)[0].float()
@@ -159,9 +283,10 @@ class Tha3Engine:
             channels, height, width = output.shape
             output = 255.0 * torch.transpose(output.reshape(channels, height * width), 0, 1).reshape(height, width, channels)
             output = output.byte().detach().cpu().numpy()
-        rgba = cv2.cvtColor(output, cv2.COLOR_RGBA2BGRA)
-        return _numpy_rgba_to_wx_image(rgba)
+        return cv2.cvtColor(output, cv2.COLOR_RGBA2BGRA)
+
+    def _render_pose_pytorch(self, pose_vector: numpy.ndarray) -> wx.Image:
+        return _numpy_rgba_to_wx_image(self._render_pose_pytorch_numpy(pose_vector))
 
     def _render_pose_ort(self, pose_array: numpy.ndarray) -> wx.Image:
-        rgba = self._ort_sessions.inference(pose_array)
-        return _numpy_rgba_to_wx_image(rgba)
+        return _numpy_rgba_to_wx_image(self._ort_sessions.inference(pose_array))

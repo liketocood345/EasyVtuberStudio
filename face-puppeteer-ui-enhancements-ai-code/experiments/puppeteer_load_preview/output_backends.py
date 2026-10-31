@@ -22,6 +22,12 @@ backend per capture tool, and resolves a persisted `output_capture_backend`
 override so the choice survives restarts and can drive a future dedicated UI.
 """
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 from typing import Optional
 
@@ -90,6 +96,11 @@ def backend_for_background_mode(background_mode: Optional[str]) -> str:
         str(background_mode), OUTPUT_BACKEND_TRUE_TRANSPARENT)
 
 
+# EVS-DESIGN-AUDIT EVS-A088 BEGIN
+# 设计[UI-A×05, UI-D03] [静态关联 / 兼容待测]
+# 背景与输出后端选择在此；统一 ULW 是当前方案。保留兼容枚举不证明当前必有额外输出窗，需沿主窗实际选择和创建路径判断。
+# 历史 bug 热点 #4：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A088 END
 def resolve_output_backend(
         persisted_value: Optional[str],
         background_mode: Optional[str]) -> str:

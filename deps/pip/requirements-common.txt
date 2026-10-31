@@ -1,0 +1,3 @@
+# Face overlay; teacher extras are selected only by DEPLOY [5].
+-r requirements-shell.txt
+onnxruntime-directml==1.23.0

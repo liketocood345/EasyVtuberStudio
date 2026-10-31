@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "baselines": [
+    {
+      "repository": "pkhungurn/talking-head-anime-4-demo",
+      "reference": "main",
+      "commit": "320640116abd604de22d7b56faec85b4d95770e0",
+      "adoption": "reference baseline only; EVS fork source is separately content-locked, not asserted identical to current upstream",
+      "files": [
+        {
+          "path": "poetry/pyproject.toml",
+          "url": "https://raw.githubusercontent.com/pkhungurn/talking-head-anime-4-demo/320640116abd604de22d7b56faec85b4d95770e0/poetry/pyproject.toml",
+          "sha256": "321931a06d5878052e06498b96d8d8e650b9880beb885bf4527fff7ba8c663d7"
+        },
+        {
+          "path": "poetry/poetry.lock",
+          "url": "https://raw.githubusercontent.com/pkhungurn/talking-head-anime-4-demo/320640116abd604de22d7b56faec85b4d95770e0/poetry/poetry.lock",
+          "sha256": "8ca9d8a57e7de961defdf0c84bed15f5d90f02858c9cf81ba23aaedb07528d5a"
+        }
+      ]
+    },
+    {
+      "repository": "pkhungurn/talking-head-anime-3-demo",
+      "reference": "main",
+      "commit": "8946939ec7b417f443d7b0e3fcd97384313fcdb8",
+      "adoption": "reference baseline only; EVS fork source is separately content-locked, not asserted identical to current upstream",
+      "files": [
+        {
+          "path": "environment.yml",
+          "url": "https://raw.githubusercontent.com/pkhungurn/talking-head-anime-3-demo/8946939ec7b417f443d7b0e3fcd97384313fcdb8/environment.yml",
+          "sha256": "55f8b19a32f7b4441040cc47786a270298bda6f0bb5b30296ca21ae65a76751d"
+        }
+      ]
+    },
+    {
+      "repository": "emilianavt/OpenSeeFace",
+      "reference": "v1.20.5",
+      "commit": "e09301e6e0cd214cdf16334178b4d3c916c0ca69",
+      "adoption": "reference baseline only; EVS fork source is separately content-locked, not asserted identical to current upstream",
+      "files": [
+        {
+          "path": "README.md",
+          "url": "https://raw.githubusercontent.com/emilianavt/OpenSeeFace/e09301e6e0cd214cdf16334178b4d3c916c0ca69/README.md",
+          "sha256": "1a2f5a527f81df2b220dd2e9dcf4d13c46c4965db4c13f7c6e27838ac7eefbf1"
+        },
+        {
+          "path": "requirements.txt",
+          "not_present": "HTTPError"
+        }
+      ]
+    }
+  ],
+  "compatibility": "EVS measured versions in runtime-artifacts.json override upstream baseline; OSF frozen release ABI stays private"
+}

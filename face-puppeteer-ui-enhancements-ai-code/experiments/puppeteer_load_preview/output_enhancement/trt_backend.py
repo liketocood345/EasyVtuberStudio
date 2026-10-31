@@ -1,5 +1,11 @@
 """Optional TensorRT backend for post-compose SR/RIFE."""
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import os
 from typing import List, Optional
@@ -29,6 +35,12 @@ class PostProcessTRTBackend:
         base = os.path.splitext(os.path.basename(onnx_path))[0]
         return os.path.join(self.engine_cache_dir, f"{base}.trt")
 
+    # EVS-DESIGN-AUDIT EVS-A081 BEGIN
+    # 设计[f-058, f-057] [部分符合 / 懒加载风险]
+    # TensorRT engine 缓存/加载在此；实际构建/反序列化由调用链决定。异步预热未走到时可能由呈现触发，需 GPU/版本实测，不能承诺固定加载时长。
+    # 历史 bug 热点 #1：仅为回归关联，非声称本次故障已复现。
+    # 诊断标记 R-START-05：参照文件头诊断报告；本次不修复实际行为。
+    # EVS-DESIGN-AUDIT EVS-A081 END
     def _load_trt_engine(self, onnx_path: str, n_inputs: int):
         if not self._trt_available or not os.path.isfile(onnx_path):
             return None

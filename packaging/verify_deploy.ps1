@@ -10,6 +10,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "addon_paths.ps1")
+. (Join-Path $PSScriptRoot "portable_environment.ps1")
 $PortableRoot = Resolve-PortableRoot $PortableRoot
 
 function Test-RequiredFile([string]$Label, [string]$RelativePath, [ref]$Failed) {
@@ -51,7 +52,7 @@ if ($RequireFacePuppeteer) {
         $python = Join-Path $venvRoot "Scripts\python.exe"
         Write-Host "[OK] Python runtime ($venvRoot)"
     } else {
-        Write-Host "[MISSING] Python runtime -> addons/face_puppeteer/venv"
+        Write-Host "[MISSING] Python runtime -> runtime/venvs/common (bound face_puppeteer)"
         $failed++
     }
     foreach ($rel in @($faceRecord.verify)) {
@@ -62,6 +63,12 @@ if ($RequireFacePuppeteer) {
 }
 
 if ($RequireTha3Models) {
+    foreach($relative in @('addons/tha3_models/venv','workspace/student_venv')) {
+        $component=if($relative -eq 'workspace/student_venv') {'basic_run'} else {'tha3_models'}
+        $localPython=Get-ComponentPythonExecutable $PortableRoot $component ($relative+'/Scripts/python.exe')
+        if(-not(Test-LocalPython $PortableRoot $localPython)) { Write-Host "[MISSING] local environment: $relative"; $failed++ }
+    }
+
     foreach ($rel in @($tha3Record.verify)) {
         Test-RequiredFile "tha3_models: $rel" ([string]$rel) $failedRef | Out-Null
     }
@@ -71,12 +78,14 @@ if ($RequireTha3Models) {
 }
 
 if ($IncludeTha4Training) {
-    foreach ($rel in @($tha4Record.verify)) {
-        Test-RequiredFile "tha4_training: $rel" ([string]$rel) $failedRef | Out-Null
+    $teacher=Join-Path $PortableRoot 'addons/tha4_training'
+    $bindings=Get-Content -LiteralPath (Join-Path $PortableRoot 'runtime/bindings/components.json') -Raw | ConvertFrom-Json
+        $teacherPython=Join-Path $PortableRoot $bindings.components.tha4_training.python
+    foreach($relative in @('THA4Train.exe','app/worker.py','src/tha4/distiller/distiller_config.py','data/tha4/face_morpher.pt','data/tha4/body_morpher.pt','data/tha4/eyebrow_decomposer.pt','data/tha4/eyebrow_morphing_combiner.pt','data/tha4/upscaler.pt','data/pose_dataset.pt')) {
+        if(-not(Test-Path -LiteralPath (Join-Path $teacher $relative))) { Write-Host "[MISSING] standalone teacher: $relative"; $failed++ }
     }
-} else {
-    Write-Host "[SKIP] tha4_training add-on"
-}
+    if(-not(Test-LocalPython $PortableRoot $teacherPython)) { Write-Host '[MISSING] folder-local teacher Python'; $failed++ }
+} else { Write-Host '[SKIP] standalone THA4 teacher' }
 
 if ($RequireOutputEnhancement) {
     $enhRecord = Get-AddonRecord -Manifest $manifest -AddonId "output_enhancement"

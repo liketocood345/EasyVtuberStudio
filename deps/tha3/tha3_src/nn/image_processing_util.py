@@ -1,4 +1,6 @@
 import torch
+import threading
+from collections import OrderedDict
 from torch import Tensor
 from torch.nn.functional import affine_grid, grid_sample
 
@@ -10,15 +12,52 @@ def apply_rgb_change(alpha: Tensor, color_change: Tensor, image: Tensor):
     return torch.cat([output_rgb, image[:, 3:4, :, :]], dim=1)
 
 
+# EVS-PERF-20261030: shape/dtype/device constants are retained, not rebuilt
+# through a host->GPU torch.tensor on every warp. Active CUDA graphs also keep
+# strong references so LRU eviction cannot invalidate captured addresses.
+_BASE_GRID_CACHE = OrderedDict()
+_BASE_GRID_LOCK = threading.RLock()
+
+
+def cached_grid_references():
+    with _BASE_GRID_LOCK:
+        return list(_BASE_GRID_CACHE.values())
+
+
+def _base_grid(n, c, h, w, dtype, device, align_corners):
+    key = (n, c, h, w, dtype, device, bool(align_corners))
+    with _BASE_GRID_LOCK:
+        cached = _BASE_GRID_CACHE.get(key)
+        if cached is None:
+            identity = torch.tensor([[1., 0., 0.], [0., 1., 0.]],
+                                    dtype=dtype, device=device).unsqueeze(0).repeat(n, 1, 1)
+            grid = affine_grid(identity, [n, c, h, w], align_corners=align_corners)
+            event = None
+            if device.type == "cuda":
+                event = torch.cuda.Event()
+                event.record(torch.cuda.current_stream(device))
+            cached = (grid, event)
+            _BASE_GRID_CACHE[key] = cached
+            if len(_BASE_GRID_CACHE) > 32:
+                _BASE_GRID_CACHE.popitem(last=False)
+        else:
+            _BASE_GRID_CACHE.move_to_end(key)
+    grid, event = cached
+    # Capture is preceded by synchronized warmup; the graph owner retains
+    # these constants. Cross-stream eager event bookkeeping must stay outside
+    # capture on PyTorch 1.13.
+    if event is not None and not torch.cuda.is_current_stream_capturing():
+        stream = torch.cuda.current_stream(device)
+        stream.wait_event(event)
+        grid.record_stream(stream)
+    return grid
+
+
 def apply_grid_change(grid_change, image: Tensor) -> Tensor:
     n, c, h, w = image.shape
     device = grid_change.device
     grid_change = torch.transpose(grid_change.view(n, 2, h * w), 1, 2).view(n, h, w, 2)
-    identity = torch.tensor(
-        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        dtype=grid_change.dtype,
-        device=device).unsqueeze(0).repeat(n, 1, 1)
-    base_grid = affine_grid(identity, [n, c, h, w], align_corners=False)
+    base_grid = _base_grid(n, c, h, w, grid_change.dtype, device, False)
     grid = base_grid + grid_change
     resampled_image = grid_sample(image, grid, mode='bilinear', padding_mode='border', align_corners=False)
     return resampled_image
@@ -35,19 +74,7 @@ class GridChangeApplier:
         device = grid_change.device
         grid_change = torch.transpose(grid_change.view(n, 2, h * w), 1, 2).view(n, h, w, 2)
 
-        if n == self.last_n and device == self.last_device:
-            identity = self.last_identity
-        else:
-            identity = torch.tensor(
-                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-                dtype=grid_change.dtype,
-                device=device,
-                requires_grad=False) \
-                .unsqueeze(0).repeat(n, 1, 1)
-            self.last_identity = identity
-            self.last_n = n
-            self.last_device = device
-        base_grid = affine_grid(identity, [n, c, h, w], align_corners=align_corners)
+        base_grid = _base_grid(n, c, h, w, grid_change.dtype, device, align_corners)
 
         grid = base_grid + grid_change
         resampled_image = grid_sample(image, grid, mode='bilinear', padding_mode='border', align_corners=align_corners)

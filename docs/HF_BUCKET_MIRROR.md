@@ -1,157 +1,25 @@
-# Hugging Face Bucket 大文件镜像与完整发行（维护者）
+# HF 后备方舟（2026.10.31-r1）
 
-面向维护者：**liketocode789/EasyVtuberStudio** 桶既是 **完整可下载的 EasyVtuberStudio 项目**（用户 `hf buckets sync` 到本地即可 `DEPLOY.bat`），也是 GitHub CORE 瘦包的 **大文件补充源**（DEPLOY 档位 [2] `addons/openseeface/`、[5] `data/ezvtb_nn/` 等从此拉取）。
+HF Bucket `liketocode789/EasyVtuberStudio` 是可恢复专用资源的后备方舟。下载顺序为：已安装且哈希正确的资源 / 本机 copy-in 模块 → 上游原提供商 → 下载失败或内容哈希不符后使用 HF。正常上游路径不读取 HF 索引、不准备 HF 客户端。
 
-**Bucket 页面：** https://huggingface.co/buckets/liketocode789/EasyVtuberStudio  
-**Bucket ID：** `liketocode789/EasyVtuberStudio`
+GitHub CORE 含主薄入口、DEPLOY、代码、bai 示例角色和 GIF 配件、已消毒的 UI/图层/晃动种子。素材在 DEPLOY 前完整存在；运行仍需安装依赖。DEPLOY 不下载、不覆盖种子。
 
-相关：[DEPLOY.md](DEPLOY.md) · [PREP_PUSH.md](PREP_PUSH.md) · [ADDONS_LAYOUT.md](ADDONS_LAYOUT.md) · `packaging/upstream_assets.json`
-
----
-
-## 1. 双角色：完整发行 + 瘦包补充
-
-| 位置 | 放什么 | 说明 |
-|------|--------|------|
-| **GitHub `main`（CORE ZIP）** | 代码、exe、示例角色、DEPLOY 脚本、**种子 UI 记忆**（`workspace/load_preview_ui_state.json` + `basic_layers/`） | 瘦包；**不含** `data/ezvtb_nn/*.onnx`、`addons/openseeface/` |
-| **HF Bucket** | **完整项目树**（与 CORE 同步 + 已内置 `data/ezvtb_nn/`、`addons/openseeface/`） | 用户可 `hf buckets sync` 整目录下载即用；亦供 GitHub 瘦包 DEPLOY 拉取大文件 |
-| **用户本机 `addons/`** | DEPLOY 安装的可选包 | 不入 Git |
-
-从 CORE 迁出的大文件：
-
-- **`addons/openseeface/`**（档位 **[2] openseeface**，约 210 MB：facetracker + models）
-- **`data/ezvtb_nn/`**（档位 **[5] output_enhancement**，约 270 MB ONNX）
-
-THA3 / THA4 / MediaPipe 仍由 `packaging/fetch_upstream_assets.ps1` 按 `upstream_assets.json` 从既有上游镜像拉取（**非**本 Bucket 主路径）。
-
-**用户下载方式（见 `packaging/hf_bucket_README.md`）：**
-
-- **方式 A**：`hf buckets sync` 整个 Bucket → 本地已有完整目录 + OSF + NN 权重  
-- **方式 B**：GitHub ZIP → `DEPLOY.bat` → 档位 [2]/[5] 从 Bucket 补全 `addons/openseeface/`、`data/ezvtb_nn/`
-
----
-
-## 2. 本地 HF 同步仓 `EasyVtuberStudio-hf`
-
-**不是 Git 仓库**，仅作 `hf buckets sync` 的本地源目录。
+HF 待发目录：
 
 ```text
-E:\EasyVtuberStudio-hf\          # 维护者本机路径（可改）
-├── README.md                    # 本目录说明（勿删）
-├── addons\openseeface\          # 上传后 DEPLOY [2] 从此路径拉取
-├── data\ezvtb_nn\               # 上传后 DEPLOY [5] 从此路径拉取
-├── packaging\                   # 与 main 同步的脚本（便于验收）
-└── …                            # 自 easyvtuberstudio-main 复制的其余 CORE 文件
+index.json / README.md
+seed/data/character_models/…/bai_450k/
+seed/workspace/{load_preview_ui_state.json,basic_layers/,region_wobble_mask*.png}
+packages/windows-x64/<module>/<version>/<module>.zip
+  mediapipe / openseeface / tha3_models / tha4_training / output_enhancement
 ```
 
-### 2.1 首次准备（上传前）
+教师 ZIP 含独立薄 EXE、app、自己的 THA4 源码、五个权重、pose、许可与安装元数据。它借用安装根的 common 依赖，不装入主 EXE，不包含 runtime、venv、torch、训练队列或用户素材。
 
-1. **更新文档**（本节所列 MD 与 `data/ezvtb_nn/README.md` 须与 Bucket 策略一致）。
-2. **从 main 复制到镜像目录**（排除 `.git`）：
+Python / torch / torchvision 分发不进入 HF。OpenSeeFace 的冻结 Binary ABI 保持完整，包括该二进制实际依赖的 Python DLL；它不等同于给全项目再打包一份通用 Python。未经验证不能拆掉这些 DLL。
 
-```powershell
-$src = "E:\easyvtuberstudio-main"
-$dst = "E:\EasyVtuberStudio-hf"
-New-Item -ItemType Directory -Force -Path $dst | Out-Null
-robocopy $src $dst /MIR /XD .git .codegraph /NFL /NDL /NJH /NJS /nc /ns /np
-# Seed UI memory is tracked on main (`workspace/load_preview_ui_state.json`, `basic_layers/`);
-# MIR copy brings it into the HF mirror automatically.
-```
+公共资源按低热度、老版本稀缺性和消失风险优先，再考虑体积；不按容量凑满。当前 MP / OSF / 转换 ONNX 已随各档归档；其他通用 wheel 默认只在本机模块缓存，未宣称都有 HF 备份。
 
-3. **确认权重与种子记忆在镜像内存在**：
+维护者只能用项目内 `workspace/release/hf-stage` 白名单目录。禁止把 develop 或旧 HF 整树镜像作为上传源。`sync_develop_to_hf_bucket.ps1` 默认仅验证/列计划；实际远程操作须显式 `-Publish`。不可变分包与种子先上传，index 最后上传；上传后仍需下载回读与 GitHub 发布验收。
 
-```powershell
-Test-Path E:\EasyVtuberStudio-hf\addons\openseeface\Binary\facetracker.exe
-Test-Path E:\EasyVtuberStudio-hf\data\ezvtb_nn\rife\rife_x2_fp32.onnx
-Test-Path E:\EasyVtuberStudio-hf\workspace\load_preview_ui_state.json
-Test-Path E:\EasyVtuberStudio-hf\workspace\basic_layers\manifest.json
-```
-
-4. **登录 Hugging Face**（不要用 PowerShell 交互粘贴 token，易带入 `\x00` 乱码）：
-
-```powershell
-# 1) 打开 https://huggingface.co/settings/tokens 新建 Write token
-# 2) 用记事本另存为 UTF-8 单行，例如 C:\Users\WXH\hf_token.txt（仅 hf_ 开头字符串）
-powershell -ExecutionPolicy Bypass -File E:\easyvtuberstudio-develop\scripts\maint\hf_login_from_file.ps1 -TokenFile C:\Users\WXH\hf_token.txt
-```
-
-若出现 `Illegal header value b'Bearer \x00...'`：说明 token 损坏，删 `C:\Users\WXH\.cache\huggingface\token`（若存在），用上面「从文件登录」重试。
-
-5. **先 dry-run，再正式上传**：
-
-```powershell
-cd E:\easyvtuberstudio-develop
-powershell -ExecutionPolicy Bypass -File scripts\maint\sync_develop_to_hf_bucket.ps1 -MirrorRoot E:\EasyVtuberStudio-hf -DryRun
-powershell -ExecutionPolicy Bypass -File scripts\maint\sync_develop_to_hf_bucket.ps1 -MirrorRoot E:\EasyVtuberStudio-hf
-```
-
-**Bucket 首页 README**（用户可见）：编辑 `packaging/hf_bucket_README.md`，复制到镜像并单独上传：
-
-```powershell
-Copy-Item E:\easyvtuberstudio-develop\packaging\hf_bucket_README.md E:\EasyVtuberStudio-hf\README.md -Force
-python -m huggingface_hub.cli.hf buckets cp E:\EasyVtuberStudio-hf\README.md hf://buckets/liketocode789/EasyVtuberStudio/README.md
-```
-
-上传后 Bucket 内路径示例：`addons/openseeface/Binary/facetracker.exe`、`data/ezvtb_nn/rife/rife_x2_fp32.onnx`（与仓库相对路径一致）。
-
-### 2.2 日常刷新大文件
-
-**OpenSeeFace（档位 [2]）：**
-
-1. 确认本机 OSF 发布目录（默认 `F:\EasyVtuber\OpenSeeFace-v1.20.4`，须含 `Binary\facetracker.exe` 与 `models\`）。
-2. 导入到 HF 镜像：
-
-```powershell
-cd E:\easyvtuberstudio-develop
-powershell -ExecutionPolicy Bypass -File scripts\maint\import_openseeface_to_hf_mirror.ps1 -MirrorRoot E:\EasyVtuberStudio-hf -SourceRoot F:\EasyVtuber\OpenSeeFace-v1.20.4
-```
-
-3. 重跑 `sync_develop_to_hf_bucket.ps1`（无 `-DryRun`）。
-
-**NN ONNX（档位 [5]）：**
-
-1. 在 **main** 或 develop 用 `scripts\maint\import_ezvtb_nn_weights.ps1` 更新 `data\ezvtb_nn\`。
-2. 再次 `robocopy` 到 `EasyVtuberStudio-hf`（或只复制 `data\ezvtb_nn`）。
-3. 重跑 `sync_develop_to_hf_bucket.ps1`（无 `-DryRun`）。
-
-### 2.3 main 仓库与瘦包验收（已完成）
-
-- **easyvtuberstudio-main** 已移除 `data/ezvtb_nn/**/*.onnx`（保留 `README.md` 占位）。  
-- **`verify_fresh_extract.ps1`** 要求 CORE **不含** ONNX，仅含 `data/ezvtb_nn/README.md`。  
-- **EasyVtuberStudio-hf** 镜像目录保留 ONNX，供 Bucket 全量发行。
-
----
-
-## 3. 用户侧 DEPLOY 行为（摘要）
-
-| 档位 | 首选源 | 备份源 |
-|------|--------|--------|
-| **[2] openseeface** | Bucket `addons/openseeface/` | OpenSeeFace GitHub release zip |
-| **[3] face_puppeteer** | Google MediaPipe 官方 URL | — |
-| **[4] tha3_models** | HF `ksuriuri/talking-head-anime-3-models` | Dropbox zip |
-| **[5] tha4_training** | pkhungurn Dropbox | — |
-| **[6] output_enhancement** | Bucket `data/ezvtb_nn/` | `import_ezvtb_nn_weights.ps1`（Google Drive 数据包） |
-
-实现：`upstream_assets.json` 包 `openseeface`、`ezvtb_nn_weights` + `fetch_hf_bucket.py` + `bootstrap_output_enhancement.ps1`。
-
----
-
-## 4. 额度与可见性
-
-- Bucket 为 **公开**；计入账号 **Public storage**（免费档为 best-effort，见 [Storage limits](https://huggingface.co/docs/hub/storage-limits)）。
-- 当前 Bucket 全量约 **560 MB**（完整 CORE + `addons/openseeface/` + `data/ezvtb_nn/`）；勿 sync 整仓 develop（~12 GB）。
-
----
-
-## 5. 上传前文档检查清单
-
-- [ ] [HF_BUCKET_MIRROR.md](HF_BUCKET_MIRROR.md)（本文）
-- [ ] [data/ezvtb_nn/README.md](../data/ezvtb_nn/README.md)
-- [ ] [DEPLOY.md](DEPLOY.md) § CORE / 档位 [5]
-- [ ] [PREP_PUSH.md](PREP_PUSH.md) § 应入库 / HF 同步
-- [ ] [ADDONS_LAYOUT.md](ADDONS_LAYOUT.md) § output_enhancement
-- [ ] [TROUBLESHOOTING_QA.md](TROUBLESHOOTING_QA.md) § Q5a / Q5g
-
----
-
-*维护者：上传 Bucket 前请完成 §5 勾选；用户文档以 DEPLOY.md 与 TROUBLESHOOTING_QA 为准。*
+发布索引的 `published` 字段记录当前状态：分包、样例、许可上传并完整回读后，索引最后发布为 true。后续 SSH/新机安装仍须单独验收。安装器使用 CORE 内固定文件契约和不可变包哈希，不接受未验证的远程 latest。

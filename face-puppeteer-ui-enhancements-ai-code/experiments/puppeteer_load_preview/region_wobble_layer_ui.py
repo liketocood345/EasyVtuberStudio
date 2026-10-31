@@ -2,6 +2,12 @@
 # 权威：f-068 · 独立「简易区域晃动」窗；图层详情入口；立绘源图涂抹
 """Standalone region-wobble editor window (opened from layer detail dock)."""
 from __future__ import annotations
+# EVS-DESIGN-AUDIT FILE BEGIN
+# 设计手册: E:/record/easyvtuberstudio条目设计手册.md
+# 提示词证据: E:/record/easyvtuberstudio-prompt-index.json -> entries[id].adopt/resolution/gap；按属性采用最近一次明确说明。
+# 2026-10-29 只加注释。静态符合仅指注释限定的局部；待测不等于通过；非运行条目不伪装成功能。
+# 历史热点: 本仓 docs/BUG_HOTSPOT_CHECKLIST.md（实际六项）；诊断: E:/EasyVtuberStudio-analysis-2026-10-29.md
+# EVS-DESIGN-AUDIT FILE END
 
 import math
 from typing import Optional, TYPE_CHECKING
@@ -88,7 +94,14 @@ def still_preview_rgba(main_frame, target: str) -> Optional[numpy.ndarray]:
         return main_frame.layer_asset_cache.load_image_rgba(layer)
     # Character: identify / paint on 立绘源图 (wx_source_image), not THA keyframe.
     src = getattr(main_frame, "wx_source_image", None)
-    rgba = _wx_bitmap_to_rgba(src) if src is not None else None
+    # f-068/f-070: immutable source art changes on load, not on animation ticks.
+    # Retain the actual bitmap object, preventing recycled-id cache hits.
+    if src is not None and getattr(main_frame, "_region_preview_source", None) is src:
+        rgba = getattr(main_frame, "_region_preview_source_rgba", None)
+    else:
+        rgba = _wx_bitmap_to_rgba(src) if src is not None else None
+        main_frame._region_preview_source = src
+        main_frame._region_preview_source_rgba = rgba
     if rgba is not None:
         return rgba
     cache = getattr(getattr(main_frame, "output_enhancement", None), "keyframe_cache", None)
@@ -116,6 +129,105 @@ def still_preview_source_label(main_frame, target: str) -> str:
 
 def normalize_idle_wobble(mode: object) -> bool:
     return str(mode or "").strip().lower() != IDLE_MODE_STILL_FROZEN
+
+
+def _render_editor_preview(rgba, st, *, animate, painting, axis_dragging,
+                           edit_mode, axis_draft_start, axis_draft_end):
+    """Pure-array editor rendering; no wx widgets or live-output state access."""
+    show = rgba
+    if st is not None:
+        h0, w0 = int(rgba.shape[0]), int(rgba.shape[1])
+        st.ensure_mask_shape(h0, w0)
+        active_idx = st._clamp_active()
+        active_mask = st.mask
+        auto_axis = None
+        if (
+                active_mask is not None
+                and numpy.any(active_mask > W_EPS)
+                and animate
+                and not painting
+                and not axis_dragging):
+            warped = rgba
+            preview_buf = None
+            auto_axis = None
+            part = st.active_part()
+            part.ensure_island_bank()
+            comps = part.get_components()
+            for isl_i, comp in enumerate(comps):
+                params = part.islands[isl_i]
+                ang = preview_angle_deg(
+                    st, strength=params.strength, speed=params.speed,
+                    island_index=isl_i, island_count=len(comps))
+                axis_for_warp = pick_axis_for_island(st.axes, comp)
+                if axis_for_warp is None:
+                    continue
+                if auto_axis is None and not any(
+                        axis_passes_through_island(a, comp) for a in st.axes):
+                    auto_axis = axis_for_warp
+                local_pins = pins_for_island(st.pins, comp)
+                if preview_buf is None:
+                    preview_buf = numpy.array(warped, copy=True, dtype=numpy.uint8)
+                warped, _blend = warp_hinge_island(
+                    warped,
+                    comp,
+                    pins=local_pins,
+                    axis=axis_for_warp,
+                    angle_deg=ang,
+                    pin_radius=DEFAULT_PIN_RADIUS,
+                    out=preview_buf)
+            show = warped
+        show = composite_on_checkerboard(show)
+        for i, reg in enumerate(st.regions):
+            m = reg.mask
+            if m is None or not numpy.any(m > W_EPS):
+                continue
+            is_active = i == active_idx
+            show = overlay_mask_preview_rgba(
+                show, m, alpha=0.62 if is_active else 0.34)
+        # Island numbers on the active涂选区域.
+        active_comps = (
+            st.active_part().get_components()
+            if st.active_part().mask is not None else [])
+        if active_comps:
+            show = overlay_island_labels_rgba(
+                show,
+                active_comps,
+                active_index=st._clamp_active_island(),
+                alpha=0.62)
+        if edit_mode == MODE_AXIS:
+            mask = active_mask
+            scoped_pins = (
+                pins_for_mask(st.pins, mask)
+                if mask is not None and numpy.any(mask > W_EPS)
+                else [])
+            scoped_axes = (
+                axes_for_mask(st.axes, mask)
+                if mask is not None and numpy.any(mask > W_EPS)
+                else [])
+            picked = (
+                pick_axis_for_mask(st.axes, mask)
+                if mask is not None and numpy.any(mask > W_EPS)
+                else None)
+            guide_auto = None
+            if picked is None and mask is not None and numpy.any(mask > W_EPS):
+                guide_auto = _auto_axis_from_mask(mask)
+            draft = None
+            if axis_draft_start is not None and axis_draft_end is not None:
+                x0, y0 = axis_draft_start
+                x1, y1 = axis_draft_end
+                draft = (x0, y0, x1, y1)
+            show = overlay_guides_rgba(
+                show,
+                scoped_pins,
+                axis=picked,
+                axes=scoped_axes or None,
+                draft_axis=draft,
+                pin_radius=DEFAULT_PIN_RADIUS,
+                show_pin_influence=True,
+                auto_axis=guide_auto)
+    else:
+        show = composite_on_checkerboard(show)
+    return show
 
 
 class RegionWobbleLayerPanel(wx.Panel):
@@ -320,6 +432,11 @@ class RegionWobbleLayerPanel(wx.Panel):
         self.refresh_preview(relayout=True)
         self._sync_anim_timer()
 
+    # EVS-DESIGN-AUDIT EVS-A113 BEGIN
+    # 设计[f-068] [静态符合（选择目标）]
+    # 工具根据当前主角色/图层选择确定编辑目标；切目标、工具窗隐藏/重开和独立参数持久化需 GUI 回归。
+    # 历史 bug 热点 #3,#4：仅为回归关联，非声称本次故障已复现。
+    # EVS-DESIGN-AUDIT EVS-A113 END
     def _target(self) -> str:
         lw = self.layer_window
         if getattr(lw, "_character_selected", False):
@@ -587,7 +704,7 @@ class RegionWobbleLayerPanel(wx.Panel):
             return
         if not self.preview_anim_cb.GetValue():
             return
-        self.refresh_preview(relayout=False)
+        self.refresh_preview(relayout=False, animation_tick=True)
 
     def _update_guide_status(self, st) -> None:
         if st is None:
@@ -660,7 +777,7 @@ class RegionWobbleLayerPanel(wx.Panel):
         st.pins.pop(best_i)
         return True
 
-    def refresh_preview(self, relayout: bool = True) -> None:
+    def refresh_preview(self, relayout: bool = True, *, animation_tick: bool = False) -> None:
         target = self._target()
         rgba = still_preview_rgba(self.main_frame, target)
         self._base_rgba = rgba
@@ -679,99 +796,32 @@ class RegionWobbleLayerPanel(wx.Panel):
                 self.preview_scroll.FitInside()
             self._sync_anim_timer()
             return
-        show = rgba
-        if st is not None:
-            h0, w0 = int(rgba.shape[0]), int(rgba.shape[1])
-            st.ensure_mask_shape(h0, w0)
-            active_idx = st._clamp_active()
-            active_mask = st.mask
-            auto_axis = None
-            if (
-                    active_mask is not None
-                    and numpy.any(active_mask > W_EPS)
-                    and self.preview_anim_cb.GetValue()
-                    and not self._painting
-                    and not self._axis_dragging):
-                warped = rgba
-                preview_buf = None
-                auto_axis = None
-                part = st.active_part()
-                part.ensure_island_bank()
-                comps = part.get_components()
-                for isl_i, comp in enumerate(comps):
-                    params = part.islands[isl_i]
-                    ang = preview_angle_deg(
-                        st, strength=params.strength, speed=params.speed,
-                        island_index=isl_i, island_count=len(comps))
-                    axis_for_warp = pick_axis_for_island(st.axes, comp)
-                    if axis_for_warp is None:
-                        continue
-                    if auto_axis is None and not any(
-                            axis_passes_through_island(a, comp) for a in st.axes):
-                        auto_axis = axis_for_warp
-                    local_pins = pins_for_island(st.pins, comp)
-                    if preview_buf is None:
-                        preview_buf = numpy.array(warped, copy=True, dtype=numpy.uint8)
-                    warped, _blend = warp_hinge_island(
-                        warped,
-                        comp,
-                        pins=local_pins,
-                        axis=axis_for_warp,
-                        angle_deg=ang,
-                        pin_radius=DEFAULT_PIN_RADIUS,
-                        out=preview_buf)
-                show = warped
-            show = composite_on_checkerboard(show)
-            for i, reg in enumerate(st.regions):
-                m = reg.mask
-                if m is None or not numpy.any(m > W_EPS):
-                    continue
-                is_active = i == active_idx
-                show = overlay_mask_preview_rgba(
-                    show, m, alpha=0.62 if is_active else 0.34)
-            # Island numbers on the active涂选区域.
-            active_comps = (
-                st.active_part().get_components()
-                if st.active_part().mask is not None else [])
-            if active_comps:
-                show = overlay_island_labels_rgba(
-                    show,
-                    active_comps,
-                    active_index=st._clamp_active_island(),
-                    alpha=0.62)
-            if self._edit_mode == MODE_AXIS:
-                mask = active_mask
-                scoped_pins = (
-                    pins_for_mask(st.pins, mask)
-                    if mask is not None and numpy.any(mask > W_EPS)
-                    else [])
-                scoped_axes = (
-                    axes_for_mask(st.axes, mask)
-                    if mask is not None and numpy.any(mask > W_EPS)
-                    else [])
-                picked = (
-                    pick_axis_for_mask(st.axes, mask)
-                    if mask is not None and numpy.any(mask > W_EPS)
-                    else None)
-                guide_auto = None
-                if picked is None and mask is not None and numpy.any(mask > W_EPS):
-                    guide_auto = _auto_axis_from_mask(mask)
-                draft = None
-                if self._axis_draft_start is not None and self._axis_draft_end is not None:
-                    x0, y0 = self._axis_draft_start
-                    x1, y1 = self._axis_draft_end
-                    draft = (x0, y0, x1, y1)
-                show = overlay_guides_rgba(
-                    show,
-                    scoped_pins,
-                    axis=picked,
-                    axes=scoped_axes or None,
-                    draft_axis=draft,
-                    pin_radius=DEFAULT_PIN_RADIUS,
-                    show_pin_influence=True,
-                    auto_axis=guide_auto)
-        else:
-            show = composite_on_checkerboard(show)
+        # f-068/f-070: animation pixels belong to a bounded CPU worker. Keeping
+        # the editor open must not monopolize the wx capture/infer/present timers.
+        if not animation_tick or not hasattr(self, "_preview_state_snapshot"):
+            import copy
+            self._preview_generation = int(getattr(self, "_preview_generation", 0)) + 1
+            self._preview_state_snapshot = copy.deepcopy(st)
+        spec = dict(animate=bool(self.preview_anim_cb.GetValue()), painting=self._painting,
+                    axis_dragging=self._axis_dragging, edit_mode=self._edit_mode,
+                    axis_draft_start=self._axis_draft_start, axis_draft_end=self._axis_draft_end)
+        if animation_tick:
+            if getattr(self, "_preview_worker_active", False):
+                return
+            self._preview_worker_active = True
+            generation = self._preview_generation
+            snapshot = self._preview_state_snapshot
+            def render():
+                try:
+                    show = _render_editor_preview(rgba, snapshot, **spec)
+                except Exception:
+                    show = None
+                if not getattr(self.main_frame, "_is_closing", False):
+                    wx.CallAfter(self._finish_preview_animation, generation, show)
+            import threading
+            threading.Thread(target=render, daemon=True, name="region-editor-preview").start()
+            return
+        show = _render_editor_preview(rgba, st, **spec)
         h, w = int(show.shape[0]), int(show.shape[1])
         self._zoom = DEFAULT_ZOOM
         bmp = _rgba_to_bitmap(show)
@@ -787,6 +837,14 @@ class RegionWobbleLayerPanel(wx.Panel):
             self.preview_scroll.Layout()
             self.Layout()
         self._sync_anim_timer()
+
+    def _finish_preview_animation(self, generation, show) -> None:
+        self._preview_worker_active = False
+        if (not self or getattr(self.main_frame, "_is_closing", False)
+                or generation != getattr(self, "_preview_generation", -1)
+                or show is None or not self.IsShownOnScreen()):
+            return
+        self.preview_bitmap.SetBitmap(_rgba_to_bitmap(show))
 
     def _paint_at(self, client_x: float, client_y: float) -> None:
         if self._base_rgba is None or self._edit_mode != MODE_PAINT:
@@ -908,6 +966,11 @@ class RegionWobbleLayerPanel(wx.Panel):
         self.refresh_preview(relayout=True)
 
 
+# EVS-DESIGN-AUDIT EVS-A112 BEGIN
+# 设计[f-068] [静态符合（独立窗）；退出待测]
+# 晃动工具为独立窗，主窗关闭链显式尝试关闭它；拿笔自动放大已取消，画笔编辑不能擅自再加自动放大。
+# 历史 bug 热点 #2,#4：仅为回归关联，非声称本次故障已复现。
+# EVS-DESIGN-AUDIT EVS-A112 END
 class RegionWobbleFrame(wx.Frame):
     """Independent tool window opened from layer detail「简易区域晃动」."""
 
