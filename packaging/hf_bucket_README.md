@@ -4,6 +4,8 @@ HF Bucket `liketocode789/EasyVtuberStudio` 是可恢复专用资源的后备方�
 
 GitHub CORE 含主薄入口、DEPLOY、代码、bai 示例角色和 GIF 配件、已消毒的 UI/图层/晃动种子。素材在 DEPLOY 前完整存在；运行仍需安装依赖。DEPLOY 不下载、不覆盖种子。
 
+许可证：与 GitHub CORE 共用仓库根 `LICENSE`（hf-stage 内为同一文件拷贝）。原创 BSD-3，上游全文在同一文件。
+
 HF 待发目录：
 
 ```text

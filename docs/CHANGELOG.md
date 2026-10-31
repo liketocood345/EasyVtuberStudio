@@ -12,12 +12,13 @@
 
 ## 2026-10-31
 
-### 发布 · DEPLOY 下载修复入 main
+### 发布 · 角色输出帧跟推理 + 张嘴记忆
 
 | # | 改动 |
 |---|------|
-| G1 | **GitHub 更新改走 `main`**：用户用 Code → Download ZIP；不再以新增 Release 作为日常更新 |
-| G2 | **DEPLOY**：大 wheel 分段下载 + 官方/r2/Aliyun 同哈希镜像；`ProcessStartInfo` 调用 python，避免隐藏安装误报失败 |
+| R1 | **角色像素**在 infer finish 推 `LiveScenePresenter`，不再被慢 `display_timer` 采样拖到目测 ~10fps |
+| R2 | **面捕张嘴 / 声音张嘴**写入 seed，切回非鼠标模式时恢复；OSF 不再强制 face |
+| R3 | 不可见遗留记入热点 **#1/#4 待修**：display_timer 2–6Hz、捕获面板 UI 占用、mailbox coalesce、Out 标签含重复帧 |
 
 ---
 

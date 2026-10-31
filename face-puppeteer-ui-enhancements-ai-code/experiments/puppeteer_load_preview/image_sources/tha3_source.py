@@ -31,7 +31,6 @@ class Tha3Source:
         self._pending_pose: Optional[List[float]] = None
         self._infer_active = False
         self._infer_generation = 0
-        self._dbg_tick_log_mono = 0.0
         self._completed_result = None
         self._result_apply_scheduled = False
         self._last_inferred_pose = None
@@ -370,35 +369,6 @@ class Tha3Source:
             last_render_start = t0
             rgba = engine.render_pose_numpy(pose)
             render_ms = (time.perf_counter() - t0) * 1000.0
-            # #region agent log
-            try:
-                now = time.perf_counter()
-                if now - float(self._dbg_tick_log_mono or 0.0) >= 1.0:
-                    self._dbg_tick_log_mono = now
-                    import json as _json
-                    open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
-                        "sessionId": "86a17c",
-                        "runId": "post-fix-tha3-cap10",
-                        "hypothesisId": "T3",
-                        "location": "tha3_source.py:_infer_worker",
-                        "message": "tha3 background infer",
-                        "data": {
-                            "ms": round(float(render_ms), 1),
-                            "ok": rgba is not None,
-                            "ui_thread": False,
-                            "inf_fps": round(float(getattr(main_frame, "_inference_fps", 0.0) or 0.0), 2),
-                            "mouth_cap": int(main_frame.get_mouth_infer_cap_hz()),
-                            "source": "tha3",
-                            "cuda_graph": bool((getattr(engine, "cuda_graph_status", None) or {}).get("enabled")),
-                            "cuda_reason": str((getattr(engine, "cuda_graph_status", None) or {}).get("reason") or ""),
-                            "backend": str(getattr(engine, "_backend_kind", "") or ""),
-                            "variant": str(getattr(engine, "model_variant", "") or ""),
-                        },
-                        "timestamp": int(time.time() * 1000),
-                    }) + "\n")
-            except Exception:
-                pass
-            # #endregion
             schedule_apply = False
             with self._infer_lock:
                 if generation != int(self._infer_generation):
@@ -412,6 +382,12 @@ class Tha3Source:
             # Completion statistics belong to the real model worker, not UI draws.
             if rgba is not None and not getattr(main_frame, "_is_closing", False):
                 main_frame._note_inference_fps_tick()
+                # #region agent log
+                main_frame._dbg_e5_infer_n = int(getattr(main_frame, "_dbg_e5_infer_n", 0)) + 1
+                main_frame._dbg_e5_last_infer_mono = time.monotonic()
+                if not schedule_apply:
+                    main_frame._dbg_e5_coalesce = int(getattr(main_frame, "_dbg_e5_coalesce", 0)) + 1
+                # #endregion
             if schedule_apply:
                 wx.CallAfter(self._flush_infer_result, main_frame)
 
@@ -438,8 +414,16 @@ class Tha3Source:
         self.last_pose = list(pose)
         main_frame.last_pose = list(pose)
         main_frame.last_output_wx_image = wx_image
+        # #region agent log
+        main_frame._dbg_e5_finish_n = int(getattr(main_frame, "_dbg_e5_finish_n", 0)) + 1
+        # #endregion
         import cv2
         main_frame._last_tha3_rgba = cv2.cvtColor(rgba, cv2.COLOR_BGRA2RGBA)
+        # bh-1 26.10.31 22:00 s
+        publish = getattr(main_frame, "_publish_live_scene_character", None)
+        if callable(publish):
+            publish(wx_image, rgba=main_frame._last_tha3_rgba)
+        # bh-1 26.10.31 22:00 e
         main_frame._last_real_model_sample_time = float(sample_time)
         main_frame.last_background_choice = main_frame.get_output_background_signature()
         self._latest_model_result=(wx_image,main_frame._last_tha3_rgba,tuple(pose))
