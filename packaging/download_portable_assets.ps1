@@ -118,7 +118,16 @@ foreach ($asset in $releaseAssets) {
     }
     $targetFile = Join-Path $downloadDir $asset.filename
     Write-Host "Downloading $($asset.filename) ..."
-    Invoke-WebRequest -Uri $url -OutFile $targetFile -UseBasicParsing
+    # bh-6 26.10.31 16:10 s
+    $ProgressPreference = 'SilentlyContinue'
+    $part = $targetFile + '.part'
+    $client = New-Object System.Net.WebClient
+    try {
+        $client.Headers.Add('User-Agent','EasyVtuberStudio-deploy/1')
+        $client.DownloadFile($url, $part)
+    } finally { $client.Dispose() }
+    Move-Item -LiteralPath $part -Destination $targetFile -Force
+    # bh-6 26.10.31 16:10 e
 
     if (-not [string]::IsNullOrWhiteSpace($asset.sha256)) {
         $hash = (Get-FileHash -Path $targetFile -Algorithm SHA256).Hash.ToLowerInvariant()

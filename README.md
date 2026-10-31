@@ -35,7 +35,7 @@ https://github.com/user-attachments/assets/f282fbef-212c-4839-8cf5-1793cd1926d5
 
 ## 便携部署更新（2026-10-31）
 
-下载 [最新 CORE 发布包](https://github.com/liketocood345/EasyVtuberStudio/releases/latest) 并解压，运行 `DEPLOY.bat` 安装所选档位。示例白腾 Student、原始立绘、GIF/刀片配件与消毒后的记忆种子已随 CORE 提供。
+打开 [仓库页](https://github.com/liketocood345/EasyVtuberStudio) 使用 **Code → Download ZIP** 下载当前 `main` 并解压，运行 `DEPLOY.bat` 安装所选档位。示例白腾 Student、原始立绘、GIF/刀片配件与消毒后的记忆种子已随 CORE 提供。日常更新走 `main`，不再另开 GitHub Release。
 
 Python、torch、共享依赖、缓存与训练产物全部使用安装目录内路径。基础档不装训练 extras；[5] 安装独立 THA4 教师外壳、源码、五个教师权重与 pose，追加兼容的共用依赖。THA3 四变体和 NN 后处理按需安装。
 

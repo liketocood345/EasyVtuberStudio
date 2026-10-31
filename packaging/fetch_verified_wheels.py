@@ -8,6 +8,11 @@ import urllib.request
 from pathlib import Path
 
 
+OFFICIAL_HOSTS = ('download.pytorch.org', 'download-r2.pytorch.org')
+MIRROR_HOSTS = ('mirrors.aliyun.com', 's3.jcloud.sjtu.edu.cn')
+USER_AGENT = 'EasyVtuberStudio-portable-deploy/1'
+
+
 def digest(path):
     value = hashlib.sha256()
     with path.open('rb') as stream:
@@ -16,28 +21,44 @@ def digest(path):
     return value.hexdigest()
 
 
-def fetch(url, directory):
+def candidate_urls(url):
     parts = urllib.parse.urlsplit(url)
-    if parts.scheme != 'https' or parts.hostname not in ('download.pytorch.org', 'download-r2.pytorch.org'):
-        raise ValueError('Only pinned official PyTorch wheels are accepted')
-    expected = urllib.parse.parse_qs(parts.fragment).get('sha256', [''])[0]
-    if not re.fullmatch('[a-f0-9]{64}', expected):
-        raise ValueError('Official wheel SHA256 is required')
+    if parts.scheme != 'https':
+        raise ValueError('Only HTTPS wheel URLs are accepted')
     name = Path(urllib.parse.unquote(parts.path)).name
     if not name.endswith('.whl'):
         raise ValueError('Expected a wheel filename')
-    target = directory / name
-    assert target.resolve().is_relative_to(directory.resolve())
-    if target.exists():
-        if digest(target) != expected:
-            raise ValueError('Existing wheel cache failed SHA256; retained for inspection: ' + name)
-        print('Verified cached wheel: ' + name, flush=True)
-        return target
-    partial = target.with_suffix('.whl.part')
-    assert partial.resolve().is_relative_to(directory.resolve())
-    total = None
+    seen = set()
+    ordered = []
+
+    def add(host, path):
+        rebuilt = urllib.parse.urlunsplit(('https', host, path, '', parts.fragment))
+        if rebuilt in seen:
+            return
+        seen.add(rebuilt)
+        ordered.append(rebuilt)
+
+    add(parts.hostname, parts.path)
+    wheel_path = parts.path
+    if '/pytorch-wheels/' in wheel_path:
+        official_path = wheel_path.replace('/pytorch-wheels/', '/whl/', 1)
+    else:
+        official_path = wheel_path
+    add('download.pytorch.org', official_path)
+    add('download-r2.pytorch.org', official_path)
+    add('mirrors.aliyun.com', official_path.replace('/whl/', '/pytorch-wheels/', 1))
+    return ordered
+
+
+def fetch_range(url, partial, expected, start_total=None):
+    parts = urllib.parse.urlsplit(url)
+    host = parts.hostname
+    if host not in OFFICIAL_HOSTS + MIRROR_HOSTS:
+        raise ValueError('Wheel host is not an allowed official or hash-identical mirror')
+    total = start_total
     failures = 0
     last_notice = 0.
+    name = Path(urllib.parse.unquote(parts.path)).name
     while total is None or partial.stat().st_size < total:
         offset = partial.stat().st_size if partial.exists() else 0
         end = offset + 8 * 2**20 - 1
@@ -45,7 +66,7 @@ def fetch(url, directory):
             end = min(end, total - 1)
         request = urllib.request.Request(urllib.parse.urlunsplit(parts._replace(fragment='')),
             headers={'Range': f'bytes={offset}-{end}', 'Accept-Encoding': 'identity',
-                     'Cache-Control': 'no-cache', 'User-Agent': 'EasyVtuberStudio-portable-deploy/1'})
+                     'Cache-Control': 'no-cache', 'User-Agent': USER_AGENT})
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 match = re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)', response.headers.get('Content-Range', ''))
@@ -64,19 +85,53 @@ def fetch(url, directory):
                         stream.write(data)
             failures = 0
             if time.monotonic() - last_notice > 5:
-                print(f'{name}: {partial.stat().st_size}/{total} bytes', flush=True)
+                print(f'{name}: {partial.stat().st_size}/{total} bytes from {host}', flush=True)
                 last_notice = time.monotonic()
         except (OSError, ValueError) as error:
             failures += 1
-            if failures >= 5:
+            if failures >= 3:
                 raise RuntimeError('Download paused with partial file retained: ' + name) from error
             print(f'Retrying wheel range; partial retained: {name} ({type(error).__name__})', flush=True)
             time.sleep(min(failures * 2, 8))
+    return total
+
+
+def fetch(url, directory):
+    # bh-6 26.10.31 16:10 s
+    parts = urllib.parse.urlsplit(url)
+    expected = urllib.parse.parse_qs(parts.fragment).get('sha256', [''])[0]
+    if not re.fullmatch('[a-f0-9]{64}', expected):
+        raise ValueError('Official wheel SHA256 is required')
+    name = Path(urllib.parse.unquote(parts.path)).name
+    if not name.endswith('.whl'):
+        raise ValueError('Expected a wheel filename')
+    target = directory / name
+    assert target.resolve().is_relative_to(directory.resolve())
+    if target.exists():
+        if digest(target) != expected:
+            raise ValueError('Existing wheel cache failed SHA256; retained for inspection: ' + name)
+        print('Verified cached wheel: ' + name, flush=True)
+        return target
+    partial = target.with_suffix('.whl.part')
+    assert partial.resolve().is_relative_to(directory.resolve())
+    last_error = None
+    for candidate in candidate_urls(url):
+        print('Fetching locked wheel:', name, 'via', urllib.parse.urlsplit(candidate).hostname, flush=True)
+        try:
+            fetch_range(candidate, partial, expected)
+            last_error = None
+            break
+        except (OSError, ValueError, RuntimeError) as error:
+            last_error = error
+            print('Wheel URL failed:', urllib.parse.urlsplit(candidate).hostname, type(error).__name__, error, flush=True)
+    if last_error is not None:
+        raise last_error
     if digest(partial) != expected:
         raise ValueError('Downloaded wheel failed SHA256; partial retained: ' + name)
     partial.replace(target)
     print('Downloaded and verified: ' + name, flush=True)
     return target
+    # bh-6 26.10.31 16:10 e
 
 
 def main():

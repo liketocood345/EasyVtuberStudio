@@ -13,4 +13,4 @@
 
 2026-10-31 已完成一次真实 THA4 教师首个非零完整自动存档验证，随后暂停。样本、优化器、权重与随机状态保留在本地任务；验证产物不进入上述发布树。这验证首次训练与保存路径，不代表完整训练或最终角色质量验收。
 
-发布状态以 HF 的 index.json 与 GitHub Release 为准；SSH/新机安装另行验收。既有 Git 仓库已跟踪的内部文件须在按 CORE 同步发布时显式移除，gitignore 本身不删除已有跟踪记录。
+发布状态以 HF 的 index.json 与 GitHub `main`（Code → Download ZIP）为准；SSH/新机安装另行验收。日常不要新增 GitHub Release。既有 Git 仓库已跟踪的内部文件须在按 CORE 同步发布时显式移除，gitignore 本身不删除已有跟踪记录。

@@ -55,13 +55,33 @@ def acquire(root, item, offline=False):
         return target
     if offline: raise ValueError('Verified offline wheel missing: ' + target.name)
     if not url.startswith('https://'): raise ValueError('Expected HTTPS artifact URL')
+    # bh-6 26.10.31 16:10 s
+    if item.get('origin') == 'official-pytorch' or 'download.pytorch.org' in url or 'download-r2.pytorch.org' in url:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from fetch_verified_wheels import fetch
+        pinned = url if '#sha256=' in url else (url + '#sha256=' + item['sha256'])
+        fetched = fetch(pinned, target.parent)
+        if sha(fetched) != item['sha256']: raise ValueError('Wheel integrity mismatch: ' + target.name)
+        return fetched
     part = target.with_suffix(target.suffix + '.part')
     print('Fetching locked wheel:', target.name, flush=True)
-    with urllib.request.urlopen(url, timeout=45) as src, part.open('wb') as out:
-        while b := src.read(2**20): out.write(b)
+    req = urllib.request.Request(url, headers={'User-Agent': 'EasyVtuberStudio-deploy/1', 'Accept-Encoding': 'identity'})
+    last = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=45) as src, part.open('wb') as out:
+                while b := src.read(2**20): out.write(b)
+            last = None
+            break
+        except Exception as exc:
+            last = exc
+            print('Wheel fetch retry:', target.name, type(exc).__name__, flush=True)
+            if part.exists(): part.unlink()
+    if last is not None: raise last
     if sha(part) != item['sha256']: raise ValueError('Wheel integrity mismatch: ' + target.name)
     part.replace(target)
     return target
+    # bh-6 26.10.31 16:10 e
 
 
 def main():
@@ -95,20 +115,25 @@ def main():
     subprocess.run([str(python), '-I', '-m', 'pip', 'install', '--require-virtualenv',
         '--no-index', '--no-deps', '--require-hashes', '--progress-bar', 'off', '-r', str(req)], check=True, env=env)
     subprocess.run([str(python), '-I', '-m', 'pip', 'check'], check=True, env=env)
-    # A cache module contains wheels, never a venv with embedded absolute scripts.
-    # Store independent additive overlays, with base wheels in one shared module.
-    base=set(recipe['profiles']['base'])
-    for profile in a.profile:
-        selected=set(recipe['profiles'][profile])
-        if profile!='base': selected-=base
-        module = child(root, 'workspace/modules/runtime-' + profile + '.zip')
-        module.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(module, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as z:
-            records=[]
-            for item,path in files:
-                if item['name'] not in selected or item['name'].lower() in ('torch','torchvision'): continue
-                z.write(path,path.name); records.append(item)
-            z.writestr('module.json', json.dumps({'profile':profile,'artifacts':records,'base_required':profile!='base','excluded_large_shared':['torch','torchvision']}, indent=2))
+    # bh-6 26.10.31 16:30 s
+    # Cache zips are optional copy-in material. A zip OSError after pip check
+    # must not fail DEPLOY: the venv is already hash-locked and importable.
+    try:
+        base=set(recipe['profiles']['base'])
+        for profile in a.profile:
+            selected=set(recipe['profiles'][profile])
+            if profile!='base': selected-=base
+            module = child(root, 'workspace/modules/runtime-' + profile + '.zip')
+            module.parent.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(module, 'w', zipfile.ZIP_DEFLATED, compresslevel=1) as z:
+                records=[]
+                for item,path in files:
+                    if item['name'] not in selected or item['name'].lower() in ('torch','torchvision'): continue
+                    z.write(path,path.name); records.append(item)
+                z.writestr('module.json', json.dumps({'profile':profile,'artifacts':records,'base_required':profile!='base','excluded_large_shared':['torch','torchvision']}, indent=2))
+    except Exception as exc:
+        print('Cache module zip skipped:', type(exc).__name__, exc, flush=True)
+    # bh-6 26.10.31 16:30 e
     print('Hash-locked runtime ready:', ','.join(a.profile), flush=True)
     return 0
 

@@ -28,8 +28,8 @@
     },
     {
       "path": "README.md",
-      "size_bytes": 13930,
-      "sha256": "a696d19ba7c12d68e2d3120d05c9a66b5a97c9cc748c479e8f6d8c7ce24bdc3f"
+      "size_bytes": 14010,
+      "sha256": "a60643cf2140a741cce49add44628ba5538c849130f8ba2860d8922d25222845"
     },
     {
       "path": "addons/.gitkeep",
@@ -713,8 +713,8 @@
     },
     {
       "path": "docs/CHANGELOG.md",
-      "size_bytes": 20804,
-      "sha256": "02a8c639a2d9f8799b4fc5d88e991f0cef8aac7e4929138b8f3c4ac6fe9817b7"
+      "size_bytes": 21513,
+      "sha256": "d4e9145797dac4f5b210a543a7eec60321b2ca573326f1a13b91719389aa3d44"
     },
     {
       "path": "docs/CODEBASE_MAP.md",
@@ -783,8 +783,8 @@
     },
     {
       "path": "docs/RELEASE_BOUNDARIES.md",
-      "size_bytes": 1594,
-      "sha256": "5b3ad9f8880cd1534442d0772d87c7d006f12fdee75a73989cb8055514d547b7"
+      "size_bytes": 1655,
+      "sha256": "1f50955a90157f0d9bb2eca8f289d359fc4266a5a0428f43cef74472b0ab84e7"
     },
     {
       "path": "docs/SOFTWARE_REQUIREMENTS_PLAN.md",
@@ -2448,8 +2448,8 @@
     },
     {
       "path": "packaging/download_portable_assets.ps1",
-      "size_bytes": 5388,
-      "sha256": "35bd753c15fe3a823f25f029143fda1ee3aa3bec81d39198f454a8ffaf0f9969"
+      "size_bytes": 5722,
+      "sha256": "ad6eaee3d09da574ac95cb01ddb66089295f7c66a45ac42dbcd2d801256f1c0c"
     },
     {
       "path": "packaging/download_tha3_assets.ps1",
@@ -2473,13 +2473,13 @@
     },
     {
       "path": "packaging/fetch_upstream_assets.ps1",
-      "size_bytes": 1135,
-      "sha256": "5631e3a18eb169e89aeefb89a5a43d6307ea64977132ec5db7fe53edc9da1708"
+      "size_bytes": 1223,
+      "sha256": "a61cafb9dffac5126d20097091182b4e095944b8ecad88139f33b85447cf8b34"
     },
     {
       "path": "packaging/fetch_verified_wheels.py",
-      "size_bytes": 4880,
-      "sha256": "fe308d495937b069b74747266db81b8d8566a94e9a8893bcc9e4a814e0da2d8c"
+      "size_bytes": 6805,
+      "sha256": "4b7c4dbffa14f8aaafe0256239ce45763d445234260652f4f7702bbcf49eae15"
     },
     {
       "path": "packaging/hf_bucket_README.md",
@@ -2523,8 +2523,8 @@
     },
     {
       "path": "packaging/locked_runtime.py",
-      "size_bytes": 5904,
-      "sha256": "10c58eb71678056893e1468e5bc1973443c31c9894df425a1ffd7727d9025dd6"
+      "size_bytes": 7118,
+      "sha256": "5e0d8526b0be86ca8f700cc2d9bc05e45614c194e059c557a8bab17febfa925c"
     },
     {
       "path": "packaging/make_app_icon.py",
@@ -2543,8 +2543,8 @@
     },
     {
       "path": "packaging/portable_environment.ps1",
-      "size_bytes": 8964,
-      "sha256": "fbaf4a50fe20fa2abce3bb57372c88b694b3d1f1b498df5dd2283a965d249b9e"
+      "size_bytes": 11120,
+      "sha256": "f834863896bb044efeb5d7ba04d9f389655004c139cb50228ad43fc6429b416b"
     },
     {
       "path": "packaging/probe_mouse_student_runtime.py",

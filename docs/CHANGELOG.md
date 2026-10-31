@@ -10,6 +10,17 @@
 
 ---
 
+## 2026-10-31
+
+### 发布 · DEPLOY 下载修复入 main
+
+| # | 改动 |
+|---|------|
+| G1 | **GitHub 更新改走 `main`**：用户用 Code → Download ZIP；不再以新增 Release 作为日常更新 |
+| G2 | **DEPLOY**：大 wheel 分段下载 + 官方/r2/Aliyun 同哈希镜像；`ProcessStartInfo` 调用 python，避免隐藏安装误报失败 |
+
+---
+
 ## 2026-07-25
 
 ### 发布 · 长时诊断最小化 + 面捕修正 + 种子记忆入库

@@ -10,8 +10,10 @@ foreach($id in $PackageIds) {
     if(-not $mapping.ContainsKey($id)) { throw ('Unknown resource package: '+$id) }
     $arguments+=@('--module',$mapping[$id])
 }
-& $python -I (Join-Path $PSScriptRoot 'resource_modules.py') @arguments
-if($LASTEXITCODE -ne 0) { throw 'Resource module download/integrity verification failed' }
+# bh-6 26.10.31 16:10 s
+$fetchExit = Invoke-IsolatedPythonFile $python (Join-Path $PSScriptRoot 'resource_modules.py') $arguments
+if(-not ($fetchExit -eq 0)) { throw 'Resource module download/integrity verification failed' }
+# bh-6 26.10.31 16:10 e
 & (Join-Path $PSScriptRoot 'reconcile_portable_layout.ps1') -PortableRoot $PortableRoot | Out-Null
 
 # dep-007 / hotspot #6: do not leak robocopy 1 (successful copy) to callers.
