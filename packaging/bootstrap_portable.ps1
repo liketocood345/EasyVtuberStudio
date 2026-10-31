@@ -1,4 +1,4 @@
-﻿param([string]$PortableRoot='', [switch]$Quiet, [switch]$ForceRebuildRuntime,
+param([string]$PortableRoot='', [switch]$Quiet, [switch]$ForceRebuildRuntime,
       [switch]$MouseStudentOnly, [switch]$Tha3Only)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'addon_paths.ps1')

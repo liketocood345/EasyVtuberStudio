@@ -38,6 +38,25 @@ import PIL.Image
 _AGENT_DEBUG_LOG_PATH = debug_log_path('d095ab')
 
 
+def _e5_debug_log(location: str, message: str, data: dict, hypothesis_id: str = "") -> None:
+    # #region agent log
+    try:
+        payload = {
+            "sessionId": "e5b45c",
+            "runId": "keep-scaffold",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with open(r"e:\.cursor\debug-e5b45c.log", "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+
+
 def _agent_debug_ndjson(
         location: str,
         message: str,
@@ -1202,6 +1221,12 @@ class MainFrame(wx.Frame):
         self._dbg_premul_ms = 0.0
         self._dbg_premul_n = 0
         self._dbg_ulw_push_ms = 0.0
+        self._dbg_e5_infer_n = 0
+        self._dbg_e5_coalesce = 0
+        self._dbg_e5_finish_n = 0
+        self._dbg_e5_last_infer_mono = 0.0
+        self._dbg_e5_live_delivers = 0
+        self._dbg_e5_live_push = 0
         # #endregion
         self._last_transform_status_refresh_time = 0.0
         self._last_chrome_background_signature: Optional[str] = None
@@ -1468,7 +1493,12 @@ class MainFrame(wx.Frame):
         self.output_enhancement.update_config(self.persistent_ui_state)
         self.apply_mouth_persistent_state_to_args()
         if self.is_mouse_audio_mocap_mode():
+            # （面捕/声音张嘴选择写入记忆）26.10.31 22:00 s
+            saved = (self.persistent_ui_state.get("mouth_settings") or {}).get("mouth_input_mode")
+            if saved in ("face", "audio"):
+                self._mouth_input_mode_before_mouse_audio = saved
             self.pose_converter.args.set_mouth_input_mode("audio")
+            # （面捕/声音张嘴选择写入记忆）26.10.31 22:00 e
         self.SetDoubleBuffered(True)
         self.Bind(wx.EVT_ACTIVATE, self._on_main_frame_activate)
         self.Bind(wx.EVT_CHAR_HOOK, self.on_layer_char_hook)
@@ -3908,46 +3938,18 @@ class MainFrame(wx.Frame):
                         if last_wx_image is not None:
                             self._completed_infer_result = (generation, last_pose, last_wx_image)
                             self._note_inference_fps_tick()
+                            # #region agent log
+                            self._dbg_e5_infer_n = int(getattr(self, "_dbg_e5_infer_n", 0)) + 1
+                            self._dbg_e5_last_infer_mono = time.monotonic()
+                            if self._infer_result_apply_scheduled:
+                                self._dbg_e5_coalesce = int(getattr(self, "_dbg_e5_coalesce", 0)) + 1
+                            # #endregion
                             if not self._infer_result_apply_scheduled:
                                 self._infer_result_apply_scheduled = True
                                 schedule_apply = True
                     if schedule_apply:
                         wx.CallAfter(self._flush_async_pose_infer)
-                    # #region agent log
                     self._dbg_last_tha_ms = (time.perf_counter() - _tha_t0) * 1000.0
-                    self._dbg_tha_done_n = int(getattr(self, "_dbg_tha_done_n", 0)) + 1
-                    try:
-                        _now = time.monotonic()
-                        if _now - float(getattr(self, "_dbg_tha_log_mono", 0.0) or 0.0) >= 1.0:
-                            self._dbg_tha_log_mono = _now
-                            import json as _json
-                            open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
-                                "sessionId": "86a17c",
-                                "runId": "post-fix-inf10",
-                                "hypothesisId": "I1",
-                                "location": "load_preview.py:_async_pose_infer_worker",
-                                "message": "tha infer duration",
-                                "data": {
-                                    "tha_ms": round(float(self._dbg_last_tha_ms), 2),
-                                    "pose_ms": round(float(getattr(self, "_dbg_tha_pose_ms", 0.0) or 0.0), 2),
-                                    "cpu_ms": round(float(getattr(self, "_dbg_tha_cpu_ms", 0.0) or 0.0), 2),
-                                    "wx_ms": round(float(getattr(self, "_dbg_tha_wx_ms", 0.0) or 0.0), 2),
-                                    "inf_fps": round(float(getattr(self, "_inference_fps", 0.0) or 0.0), 2),
-                                    "mouth_cap": int(self.get_mouth_infer_cap_hz()),
-                                    "target_fps": bool(self.is_target_frame_rate_enabled()),
-                                    "tha_n": int(self._dbg_tha_done_n),
-                                    "finish_n": int(getattr(self, "_dbg_finish_n", 0)),
-                                    "infer_ticks": int(getattr(self, "_dbg_infer_tick_calls", 0)),
-                                    "source": str(self.get_image_source_mode()),
-                                    "fp16": bool(self.get_tha_infer_fp16_enabled()),
-                                    "self_pull": bool(self_pull),
-                                    "rife_eff": int(self.output_enhancement.pipeline._effective_nn_multiplier()) if getattr(self, "output_enhancement", None) is not None else 0,
-                                },
-                                "timestamp": int(time.time() * 1000),
-                            }) + "\n")
-                    except Exception:
-                        pass
-                    # #endregion
                 except Exception as exc:
                     if not getattr(self, "_last_infer_worker_error", None):
                         self._last_infer_worker_error = repr(exc)
@@ -4073,18 +4075,25 @@ class MainFrame(wx.Frame):
             return
         self._infer_stuck_heal_logged = False
         self._output_stall_heal_logged = False
-        self._note_cached_affine_present_time()
+        # （finish 只投递角色像素，不 stamp 仿射 present）26.10.31 22:10 s
+        # Live scene consumes last_output_wx_image here; affine present time
+        # belongs to an actual present, not mailbox apply.
+        # （finish 只投递角色像素，不 stamp 仿射 present）26.10.31 22:10 e
         self._dbg_finish_n = int(getattr(self, "_dbg_finish_n", 0)) + 1
+        # #region agent log
+        self._dbg_e5_finish_n = int(getattr(self, "_dbg_e5_finish_n", 0)) + 1
+        # #endregion
         self.last_pose = pose_list
         self.last_output_wx_image = wx_image
         self.last_background_choice = self.get_output_background_signature()
         self.output_enhancement.keyframe_cache.invalidate_image()
         self._advance_pose_interpolation_after_infer(pose_list)
-        # Presenting is left to on_display_timer (throttled to the display present
-        # cap + deduped): driving a full synchronous composite here on every
-        # inference floods the UI thread (the composite is the hot cost) and
-        # halves the effective output rate. The display timer picks up
-        # last_output_wx_image on its next tick.
+        # bh-1 26.10.31 22:00 s
+        self._publish_live_scene_character(wx_image)
+        # bh-1 26.10.31 22:00 e
+        # Character pixels go to LiveScenePresenter here. Display timer still
+        # owns geometry / layer snapshot; do not compose the full scene on
+        # every infer (that floods the UI thread).
 
     def should_refresh_transparent_capture(self) -> bool:
         now_ns = time.time_ns()
@@ -4956,6 +4965,9 @@ class MainFrame(wx.Frame):
                 premul = _straight_rgba_to_premultiplied_bgra(rgba)
                 capture.update_frame_rgba(rgba, frame_signature=("live-scene", id(presenter), serial),
                                           premultiplied_bgra=premul)
+                # #region agent log
+                self._dbg_e5_live_delivers = int(getattr(self, "_dbg_e5_live_delivers", 0)) + 1
+                # #endregion
             presenter = LiveScenePresenter(deliver)
             self._live_scene_presenter = presenter
         image = self.last_output_wx_image
@@ -4963,8 +4975,28 @@ class MainFrame(wx.Frame):
             self._live_scene_rgba = self.wx_image_to_rgba_array(image)
             self._live_scene_image = image
         snapshot = self._capture_scene_snapshot(presenter.renderer)
+        self._live_scene_snapshot = snapshot
         presenter.offer(snapshot, self._live_scene_rgba, self.get_display_present_cap_hz())
         return True
+
+    def _publish_live_scene_character(
+            self,
+            wx_image: Optional[wx.Image],
+            rgba: Optional[numpy.ndarray] = None) -> None:
+        presenter = getattr(self, "_live_scene_presenter", None)
+        if presenter is None or wx_image is None:
+            return
+        if rgba is None:
+            rgba = self.wx_image_to_rgba_array(wx_image)
+        self._live_scene_rgba = rgba
+        self._live_scene_image = wx_image
+        snapshot = getattr(self, "_live_scene_snapshot", None)
+        if snapshot is None:
+            return
+        presenter.offer(snapshot, rgba, self.get_display_present_cap_hz())
+        # #region agent log
+        self._dbg_e5_live_push = int(getattr(self, "_dbg_e5_live_push", 0)) + 1
+        # #endregion
 
     def _try_present_buffered_scene(self) -> bool:
         # f-070 / GIF cadence: inference and RIFE see only the character.
@@ -6743,6 +6775,13 @@ class MainFrame(wx.Frame):
         mouth_infer_cap_hz = self._get_manual_mouth_infer_cap_hz()
         smooth_affine_30hz = self.is_smooth_affine_30hz_enabled()
         persistent_mouth_settings = self.pose_converter.get_persistent_mouth_settings()
+        # （面捕/声音张嘴选择写入记忆）26.10.31 22:00 s
+        if self.is_mouse_audio_mocap_mode():
+            remembered = self._mouth_input_mode_before_mouse_audio
+            if remembered in ("face", "audio"):
+                persistent_mouth_settings = dict(persistent_mouth_settings)
+                persistent_mouth_settings["mouth_input_mode"] = remembered
+        # （面捕/声音张嘴选择写入记忆）26.10.31 22:00 e
         persisted_window_hwnd = int(self.persistent_ui_state.get("window_capture_hwnd") or 0)
         persisted_window_title = str(self.persistent_ui_state.get("window_capture_title") or "")
         state = {
@@ -7893,6 +7932,13 @@ class MainFrame(wx.Frame):
     def apply_persistent_mocap_input_mode(self):
         saved_mode = self._resolve_persistent_mocap_input_mode()
         self.set_mocap_input_mode(saved_mode, persist=False, from_user=False)
+        # （面捕/声音张嘴选择写入记忆）26.10.31 22:00 s
+        if not self.is_mouse_audio_mocap_mode():
+            self.apply_mouth_persistent_state_to_args()
+            refresh = getattr(self.pose_converter, "refresh_mouth_input_ui_state", None)
+            if callable(refresh):
+                refresh()
+        # （面捕/声音张嘴选择写入记忆）26.10.31 22:00 e
 
     def is_mouse_audio_mocap_mode(self) -> bool:
         return self.mocap_input_mode == MOCAP_INPUT_MODE_MOUSE_AUDIO
@@ -7962,9 +8008,9 @@ class MainFrame(wx.Frame):
         defer_osf_start = False
         if mode == MOCAP_INPUT_MODE_OPENSEEFACE:
             self._osf_runtime_error = ""
-            self.pose_converter.args.set_mouth_input_mode("face")
-            if hasattr(self.pose_converter, "mouth_input_mode_choice"):
-                self.pose_converter.mouth_input_mode_choice.SetSelection(0)
+            # （面捕/声音张嘴选择写入记忆）26.10.31 22:00 s
+            # OSF 不再强制改回面捕张嘴，沿用已记忆的 mouth_input_mode。
+            # （面捕/声音张嘴选择写入记忆）26.10.31 22:00 e
             self.output_enhancement.pose_interpolation.reset()
             self._osf_input_pacer.reset()
             self._osf_pace_keyframe_committed = False
@@ -7993,6 +8039,9 @@ class MainFrame(wx.Frame):
             if hasattr(self.pose_converter, "mouth_input_mode_choice"):
                 self.pose_converter.mouth_input_mode_choice.SetSelection(
                     0 if restore_mode == "face" else 1)
+            refresh = getattr(self.pose_converter, "refresh_mouth_input_ui_state", None)
+            if callable(refresh):
+                refresh()
 
         self.mocap_input_mode = mode
         self.refresh_mocap_input_mode_ui()
@@ -13693,96 +13742,72 @@ class MainFrame(wx.Frame):
         return fg
 
     def _agent_debug_flush_present_stats(self, *, motion_active: bool) -> None:
-        """Throttled (~1s) NDJSON snapshot for Out-FPS hypotheses A-E."""
+        """1s e5b45c snapshot: Inf vs live-push vs display-timer leftover."""
         # #region agent log
         now = time.monotonic()
         last = float(getattr(self, "_dbg_flush_last_mono", 0.0) or 0.0)
         if now - last < 1.0:
             return
         self._dbg_flush_last_mono = now
-        layer_cache = getattr(self, "_layer_warp_result_cache", None)
-        stages = dict(getattr(self, "_last_present_stages", {}) or {})
-        try:
-            aa = float(self._get_antialias_factor_for_present())
-        except Exception:
-            aa = -1.0
         try:
             self._update_output_fps_estimate_if_due()
         except Exception:
             pass
+        gap_n = int(getattr(self, "_dbg_display_gap_n", 0))
         data = {
             "motion_active": bool(motion_active),
-            "display_ticks": int(getattr(self, "_dbg_display_ticks", 0)),
-            "motion_branch": int(getattr(self, "_dbg_motion_branch", 0)),
-            "smooth_branch": int(getattr(self, "_dbg_smooth_branch", 0)),
-            "compose_calls": int(getattr(self, "_dbg_compose_calls", 0)),
-            "compose_early_out": int(getattr(self, "_dbg_compose_early_out", 0)),
-            "char_cache_hit": int(getattr(self, "_dbg_char_cache_hit", 0)),
-            "char_cache_miss": int(getattr(self, "_dbg_char_cache_miss", 0)),
-            "layer_cache_hit": int(getattr(layer_cache, "hits", 0) or 0),
-            "layer_cache_miss": int(getattr(layer_cache, "misses", 0) or 0),
-            "ulw_deliver": int(getattr(self, "_dbg_ulw_deliver", 0)),
-            "ulw_drop": int(getattr(self, "_dbg_ulw_drop", 0)),
-            "ulw_async_busy": int(getattr(self, "_dbg_ulw_async_busy", 0)),
-            "compose_ms": round(float(getattr(self, "_dbg_last_compose_ms", 0.0)), 2),
-            "display_timer_ms": round(float(getattr(self, "_dbg_display_timer_ms", 0.0)), 2),
-            "capture_panel_ms": round(float(getattr(self, "_dbg_capture_panel_ms", 0.0)), 2),
-            "infer_tick_ms": round(float(getattr(self, "_dbg_infer_tick_ms", 0.0)), 2),
-            "capture_calls": int(getattr(self, "_dbg_capture_calls", 0)),
-            "infer_tick_calls": int(getattr(self, "_dbg_infer_tick_calls", 0)),
-            "display_gap_avg_ms": round(
-                (float(getattr(self, "_dbg_display_gap_sum_ms", 0.0))
-                 / max(1, int(getattr(self, "_dbg_display_gap_n", 0)))),
-                2) if int(getattr(self, "_dbg_display_gap_n", 0)) > 0 else 0.0,
-            "premul_ms": round(float(getattr(self, "_dbg_premul_ms", 0.0)), 2),
-            "premul_n": int(getattr(self, "_dbg_premul_n", 0)),
-            "premul_avg_ms": round(
-                (float(getattr(self, "_dbg_premul_ms", 0.0))
-                 / max(1, int(getattr(self, "_dbg_premul_n", 0)))),
-                2) if int(getattr(self, "_dbg_premul_n", 0)) > 0 else 0.0,
-            "ulw_push_ms": round(float(getattr(self, "_dbg_ulw_push_ms", 0.0)), 2),
-            "stage_char": round(float(stages.get("char", 0.0) or 0.0), 2),
-            "stage_edge": round(float(stages.get("edge", 0.0) or 0.0), 2),
-            "stage_layers": round(float(stages.get("layers", 0.0) or 0.0), 2),
-            "stage_sanitize": round(float(stages.get("sanitize", 0.0) or 0.0), 2),
-            "stage_bg": round(float(stages.get("bg", 0.0) or 0.0), 2),
-            "aa": aa,
-            "in_fps": round(float(getattr(self, "_input_fps", 0.0) or 0.0), 2),
             "inf_fps": round(float(getattr(self, "_inference_fps", 0.0) or 0.0), 2),
             "out_fps": round(float(getattr(self, "_display_out_fps", 0.0) or 0.0), 2),
+            "infer_n": int(getattr(self, "_dbg_e5_infer_n", 0)),
+            "coalesce": int(getattr(self, "_dbg_e5_coalesce", 0)),
+            "finish_n": int(getattr(self, "_dbg_e5_finish_n", 0)),
+            "live_push": int(getattr(self, "_dbg_e5_live_push", 0)),
+            "live_delivers": int(getattr(self, "_dbg_e5_live_delivers", 0)),
+            "display_ticks": int(getattr(self, "_dbg_display_ticks", 0)),
+            "display_gap_ms": round(
+                (float(getattr(self, "_dbg_display_gap_sum_ms", 0.0)) / max(1, gap_n)), 1)
+            if gap_n > 0 else 0.0,
+            "display_timer_ms": round(float(getattr(self, "_dbg_display_timer_ms", 0.0)), 2),
+            "compose_ms": round(float(getattr(self, "_dbg_last_compose_ms", 0.0)), 2),
+            "capture_panel_ms": round(float(getattr(self, "_dbg_capture_panel_ms", 0.0)), 2),
+            "source": str(self.get_image_source_mode()),
             "layer_blend": bool(self.is_layer_blend_enabled()),
-            "wh": stages.get("compose_wh"),
+            "display_interval_ms": int(self.display_timer.GetInterval())
+            if getattr(self, "display_timer", None) is not None else -1,
         }
-        # Reset per-window counters so each line is a 1s delta.
+        _e5_debug_log(
+            "load_preview.py:present_stats",
+            "inf_live_display_1s",
+            data,
+            hypothesis_id="keep")
         self._dbg_display_ticks = 0
-        self._dbg_motion_branch = 0
-        self._dbg_smooth_branch = 0
-        self._dbg_compose_calls = 0
-        self._dbg_compose_early_out = 0
-        self._dbg_char_cache_hit = 0
-        self._dbg_char_cache_miss = 0
-        self._dbg_ulw_deliver = 0
-        self._dbg_ulw_drop = 0
-        self._dbg_ulw_async_busy = 0
         self._dbg_display_timer_ms = 0.0
         self._dbg_capture_panel_ms = 0.0
-        self._dbg_infer_tick_ms = 0.0
         self._dbg_display_gap_sum_ms = 0.0
         self._dbg_display_gap_n = 0
-        self._dbg_capture_calls = 0
-        self._dbg_infer_tick_calls = 0
-        self._dbg_premul_ms = 0.0
-        self._dbg_premul_n = 0
-        self._dbg_ulw_push_ms = 0.0
-        if layer_cache is not None:
-            layer_cache.hits = 0
-            layer_cache.misses = 0
+        self._dbg_e5_infer_n = 0
+        self._dbg_e5_coalesce = 0
+        self._dbg_e5_finish_n = 0
+        self._dbg_e5_live_delivers = 0
+        self._dbg_e5_live_push = 0
         _agent_debug_ndjson(
             "character_model_mediapipe_puppeteer_load_preview.py:present_stats",
             "present_1s_snapshot",
             data,
-            hypothesis_id="H,I,J",
-            run_id="post-fix-cv2premul")
+            hypothesis_id="keep",
+            run_id="keep-scaffold")
+        # #endregion
+
+    def _e5_end_display_tick(self, t0: float, motion_active: bool) -> None:
+        # #region agent log
+        try:
+            self._dbg_display_ticks = int(getattr(self, "_dbg_display_ticks", 0)) + 1
+            self._dbg_display_timer_ms = float(
+                getattr(self, "_dbg_display_timer_ms", 0.0)) + (
+                time.perf_counter() - t0) * 1000.0
+            self._agent_debug_flush_present_stats(motion_active=motion_active)
+        except Exception:
+            pass
         # #endregion
 
     def _maybe_log_present_stages(self, stages: dict) -> None:
@@ -14205,6 +14230,11 @@ class MainFrame(wx.Frame):
                 pass
         self._dbg_last_display_mono = _dbg_now
         # #endregion
+        # bh-1 26.10.31 21:55 s
+        # Live/ULW present reads last_output_wx_image; apply the infer mailbox
+        # on this UI tick instead of waiting for a coalesced CallAfter.
+        self._flush_async_pose_infer()
+        # bh-1 26.10.31 21:55 e
         self.poll_layer_gif_playback_side_effects()
         self._maybe_heal_stuck_infer_worker()
         if self.is_model_loaded():
@@ -14212,12 +14242,22 @@ class MainFrame(wx.Frame):
         pipe = getattr(self, "output_enhancement", None)
         if self.get_image_source_mode()==IMAGE_SOURCE_THA3:
             prepare=getattr(self.active_image_source,"prepare_target_presentation",None)
-            if prepare is not None and prepare(self):return
+            if prepare is not None and prepare(self):
+                # #region agent log
+                self._e5_end_display_tick(_dbg_t0, False)
+                # #endregion
+                return
         if self._try_present_live_scene():
+            # #region agent log
+            self._e5_end_display_tick(_dbg_t0, False)
+            # #endregion
             return
         if pipe is not None and self.is_target_frame_rate_enabled():
             pipe.offer_character_for_calibration(getattr(self, "_last_tha3_rgba", None))
         if self._try_present_buffered_scene():
+            # #region agent log
+            self._e5_end_display_tick(_dbg_t0, False)
+            # #endregion
             return
         pipe = getattr(self, "output_enhancement", None)
         if pipe is not None:
@@ -14228,14 +14268,14 @@ class MainFrame(wx.Frame):
                     buffered_live
                     and (pipe.buffered_rife_requested() or pipe.target_frame_rate_enabled())
                     and not pipe.should_compose_source_frame()):
+                # #region agent log
+                self._e5_end_display_tick(_dbg_t0, False)
+                # #endregion
                 return
             # bh-1 26.10.30 13:08 e
         motion_active = (
             self._layer_motion_output_active()
             and self._output_has_presentable_keyframe())
-        # #region agent log
-        self._dbg_display_ticks = int(getattr(self, "_dbg_display_ticks", 0)) + 1
-        # #endregion
         if motion_active:
             # Single full composite per tick (avoids duplicate draw when affine also changed).
             # #region agent log
@@ -14260,13 +14300,7 @@ class MainFrame(wx.Frame):
             self.draw_cached_result_image(self.last_banner_text)
             self._maybe_schedule_transparent_capture_update(immediate=True)
         # #region agent log
-        try:
-            self._dbg_display_timer_ms = float(
-                getattr(self, "_dbg_display_timer_ms", 0.0)) + (
-                time.perf_counter() - _dbg_t0) * 1000.0
-            self._agent_debug_flush_present_stats(motion_active=motion_active)
-        except Exception:
-            pass
+        self._e5_end_display_tick(_dbg_t0, motion_active)
         # #endregion
 
     def on_ui_anim_timer(self, event: Optional[wx.Event] = None):

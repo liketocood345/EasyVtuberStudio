@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$PortableRoot)
+param([Parameter(Mandatory=$true)][string]$PortableRoot)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'portable_environment.ps1')
 # bh-6 26.10.31 02:56 s

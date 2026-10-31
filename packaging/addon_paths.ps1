@@ -1,4 +1,4 @@
-﻿# Shared add-on path helpers (single source: packaging/addons_manifest.json)
+# Shared add-on path helpers (single source: packaging/addons_manifest.json)
 $ErrorActionPreference = "Stop"
 
 function Resolve-PortableRoot {

@@ -1,4 +1,4 @@
-﻿# dep-024/025, f-055/056: verify the canonical module path, not legacy data/.
+# dep-024/025, f-055/056: verify the canonical module path, not legacy data/.
 param([Parameter(Mandatory=$true)][string]$PortableRoot)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'addon_paths.ps1')
