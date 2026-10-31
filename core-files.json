@@ -23,13 +23,13 @@
     },
     {
       "path": "LICENSE",
-      "size_bytes": 364576,
-      "sha256": "23573bbcb4319bbdd7ab5d46dfdc75675b1060a4b4542f496311ae154e9092e8"
+      "size_bytes": 362434,
+      "sha256": "00d09dc30d62941d938976319a8dc8e3d2ba0d97deb0b9c9d23c793135552730"
     },
     {
       "path": "README.md",
-      "size_bytes": 13851,
-      "sha256": "caeb1a9580df78660180c55aeae5de1e0000ef3c8fa9c6b4fb8dcc07d29d7849"
+      "size_bytes": 13930,
+      "sha256": "a696d19ba7c12d68e2d3120d05c9a66b5a97c9cc748c479e8f6d8c7ce24bdc3f"
     },
     {
       "path": "addons/.gitkeep",
@@ -2584,7 +2584,7 @@
     {
       "path": "packaging/resource-releases.json",
       "size_bytes": 1868,
-      "sha256": "0b92a67c2125d694c58cac6ef34f631bd822df54412cf0aeb5853a44bd754cf6"
+      "sha256": "4e066d587e18fa3b1c99e52bfed27a392facf046884e4661c46242b127688fe6"
     },
     {
       "path": "packaging/resource_modules.py",
