@@ -22,6 +22,58 @@ function Assert-LocalChild([string]$Root,[string]$Path) {
     if(-not $target.StartsWith($rootPath+'\',[StringComparison]::OrdinalIgnoreCase)) { throw "Path escapes portable folder: $target" }
     return $target
 }
+function Invoke-IsolatedPythonFile([string]$Python,[string]$Script,[string[]]$PythonArgs) {
+    # bh-6 26.10.31 16:30 s
+    # PS 5.1 splat can throw "index was outside the bounds of the array".
+    # cmd.exe /c also strips the first/last quote, and $LASTEXITCODE can be $null
+    # under $ErrorActionPreference=Stop when the child writes stderr, so a
+    # finished locked_runtime looks like failure (Hash-locked runtime install failed).
+    $quote = {
+        param($text)
+        $s = [string]$text
+        if ($s -match '[\s"]') { '"' + $s.Replace('"','\"') + '"' } else { $s }
+    }
+    $argLine = '-I ' + (& $quote $Script)
+    foreach($item in @($PythonArgs)) { $argLine += ' ' + (& $quote $item) }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Python
+    $psi.Arguments = $argLine
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+    [void]$proc.Start()
+    $outTask = $proc.StandardOutput.ReadToEndAsync()
+    $errTask = $proc.StandardError.ReadToEndAsync()
+    $proc.WaitForExit()
+    $out = $outTask.GetAwaiter().GetResult()
+    $err = $errTask.GetAwaiter().GetResult()
+    $code = $proc.ExitCode
+    $proc.Dispose()
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        foreach($line in ($out -split "`r?`n")) { if ($line -ne '') { Write-Host $line } }
+        foreach($line in ($err -split "`r?`n")) { if ($line -ne '') { Write-Host $line } }
+    } finally { $ErrorActionPreference = $previousPreference }
+    if ($null -eq $code) { return 1 }
+    return [int]$code
+    # bh-6 26.10.31 16:30 e
+}
+function Save-HttpsFile([string]$Uri,[string]$OutFile) {
+    # bh-6 26.10.31 16:10 s
+    [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+    $part = $OutFile + '.part'
+    $client = New-Object System.Net.WebClient
+    try {
+        $client.Headers.Add('User-Agent','EasyVtuberStudio-deploy/1')
+        $client.DownloadFile($Uri, $part)
+    } finally { $client.Dispose() }
+    Move-Item -LiteralPath $part -Destination $OutFile -Force
+    # bh-6 26.10.31 16:10 e
+}
 function Initialize-LocalProcessEnvironment([string]$Root) {
     $env:PYTHONNOUSERSITE='1'; $env:PIP_CONFIG_FILE='NUL'; $env:PIP_REQUIRE_VIRTUALENV='true'; $env:PIP_DISABLE_PIP_VERSION_CHECK='1'
     foreach($key in @('PYTHONHOME','PYTHONPATH','PIP_TARGET','PIP_PREFIX','PIP_USER')) { Remove-Item ('Env:'+$key) -ErrorAction SilentlyContinue }
@@ -52,9 +104,7 @@ function Get-LocalPythonBase([string]$Root) {
     New-Item -ItemType Directory -Force -Path $cache | Out-Null
     $archive=Join-Path $cache 'python.3.10.11.nupkg'
     if(-not(Test-Path -LiteralPath $archive)) {
-        [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -UseBasicParsing -Uri 'https://api.nuget.org/v3-flatcontainer/python/3.10.11/python.3.10.11.nupkg' -OutFile ($archive+'.part')
-        Move-Item -LiteralPath ($archive+'.part') -Destination $archive -Force
+        Save-HttpsFile -Uri 'https://api.nuget.org/v3-flatcontainer/python/3.10.11/python.3.10.11.nupkg' -OutFile $archive
     }
     $expected='7c6f99b160a36a7e09492dfcff2b0a3a60bb5229ca44cdcc3ecb32871a6144d0'
     if((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Python base archive hash mismatch; invalid cache retained for inspection' }
@@ -121,8 +171,8 @@ function Install-LockedRuntime([string]$Root,[string]$Python,[string[]]$Profiles
     if(-not(Test-LocalPython $Root $Python)) { throw 'External runtime rejected' }
     $arguments=@('--root',$Root,'--python',$Python)
     foreach($profile in $Profiles) { $arguments+=@('--profile',$profile) }
-    & $Python -I (Join-Path $PSScriptRoot 'locked_runtime.py') @arguments
-    if($LASTEXITCODE -ne 0) { throw 'Hash-locked runtime install failed' }
+    $lockedExit = Invoke-IsolatedPythonFile $Python (Join-Path $PSScriptRoot 'locked_runtime.py') $arguments
+    if(-not ($lockedExit -eq 0)) { throw 'Hash-locked runtime install failed' }
 }
 function Set-CommonRuntimeBindings([string]$Root,[string[]]$Roles=@('app','basic_run','face_puppeteer','tha3_models','tha4_training')) {
     $path=Join-Path $Root 'runtime/bindings/components.json'
