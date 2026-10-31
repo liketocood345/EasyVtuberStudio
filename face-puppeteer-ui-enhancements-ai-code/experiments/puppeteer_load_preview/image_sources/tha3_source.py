@@ -17,7 +17,7 @@ import cv2
 from image_sources.base import LoadUiSpec
 from tha3_engine import Tha3Engine
 from tha3_paths import IMAGE_SOURCE_THA3, tha3_inference_assets_available
-from tha3_pose_adapter import mediapipe_pose_to_tha3_vector, neutral_tha3_pose
+from tha3_pose_adapter import neutral_tha3_pose
 
 
 class Tha3Source:
@@ -277,16 +277,35 @@ class Tha3Source:
 
     def publish_live_pose(self, main_frame):
         """UI-only conversion on every new valid face, independent of infer timer."""
-        current_pose = mediapipe_pose_to_tha3_vector(
-            main_frame.mediapipe_face_pose, main_frame.pose_converter)
-        current_pose = main_frame.apply_negative_tilt_limit_to_pose(current_pose)
-        current_pose = main_frame.apply_invert_tilt_mapping_to_pose(current_pose)
+        # （THA3 与 THA4 共用 resolve+姿态插值）26.11.01 03:34 s
+        resolve = getattr(main_frame, "_resolve_mocap_pose_for_render", None)
+        if callable(resolve):
+            current_pose = resolve(main_frame.mediapipe_face_pose)
+        else:
+            current_pose = main_frame.pose_converter.convert(main_frame.mediapipe_face_pose)
+            current_pose = main_frame.apply_negative_tilt_limit_to_pose(current_pose)
+            current_pose = main_frame.apply_invert_tilt_mapping_to_pose(current_pose)
+        scheduled = getattr(main_frame, "resolve_scheduled_infer_pose", None)
+        pre_interp = list(current_pose)
+        if callable(scheduled):
+            current_pose = scheduled(current_pose)
+        note = getattr(main_frame, "_e5_note_interp_apply", None)
+        if callable(note):
+            note(pre_interp, current_pose)
+        # （THA3 与 THA4 共用 resolve+姿态插值）26.11.01 03:34 e
         now = time.perf_counter()
         sample_stamp = now
         # f-070: inference is independent of the postprocess model_hz plan.
         cap = max(1., float(main_frame.get_mouth_infer_cap_hz()))
         enhancement = getattr(main_frame, "output_enhancement", None)
-        if enhancement is not None and enhancement.target_frame_rate_enabled():
+        interp_n = 1
+        try:
+            interp_n = int(main_frame.get_output_frame_interpolation_multiplier())
+        except Exception:
+            interp_n = 1
+        if (interp_n <= 1
+                and enhancement is not None
+                and enhancement.target_frame_rate_enabled()):
             current_pose, sample_stamp = self._pose_sampler.sample(current_pose, now)
         face_meta = (main_frame._latest_face_pose_sequence, main_frame._latest_face_sample_mono)
         self._latest_live_pose_snapshot = (tuple(current_pose), sample_stamp, face_meta)
@@ -294,27 +313,47 @@ class Tha3Source:
         return current_pose, sample_stamp, cap, face_meta
 
     def tick(self, main_frame) -> Optional[str]:
+        # （THA3 tick 复制 THA4 输入调度：OSF pacing + snapshot + should_infer）26.11.01 03:44 s
         if getattr(main_frame, "_tha3_load_in_progress", False):
             return "loading"
         engine = self.engine
         if engine is None or not engine.is_loaded():
             return "no_model"
-        # Display timer owns composition; inference must not add another full draw.
-        main_frame.update_display_transform_state()
+        pipe = getattr(getattr(main_frame, "output_enhancement", None), "pipeline", None)
+        if pipe is not None:
+            pipe._hybrid_role_active = False
+        if main_frame.is_openseeface_mocap_mode():
+            main_frame._update_openseeface_input_pacing()
         if main_frame.mediapipe_face_pose is None or not main_frame.is_mocap_sample_fresh():
             self._latest_live_pose_snapshot = None
+            main_frame._latest_infer_input_pose = None
+            main_frame._latest_infer_input_snapshot = None
             return "no_face"
-        now = time.perf_counter()
-        current_pose, sample_stamp, cap, face_meta = self.publish_live_pose(main_frame)
+        current_pose = main_frame._resolve_mocap_pose_for_render(main_frame.mediapipe_face_pose)
+        infer_pose = main_frame.resolve_scheduled_infer_pose(current_pose)
+        main_frame._e5_note_interp_apply(current_pose, infer_pose)
+        face_meta = (main_frame._latest_face_pose_sequence, main_frame._latest_face_sample_mono)
+        sample_stamp = time.perf_counter()
+        main_frame._latest_infer_input_pose = tuple(infer_pose)
+        main_frame._latest_infer_input_face_meta = face_meta
+        main_frame._latest_infer_input_snapshot = (
+            main_frame._latest_infer_input_pose, face_meta)
+        main_frame._worker_infer_cap_hz = main_frame.get_mouth_infer_cap_hz()
+        self._latest_live_pose_snapshot = (tuple(infer_pose), sample_stamp, face_meta)
+        self._worker_cap_hz = max(1., float(main_frame._worker_infer_cap_hz))
+        background_changed = (
+            main_frame.last_background_choice != main_frame.get_output_background_signature())
+        if main_frame.last_output_wx_image is None or background_changed:
+            need_infer = True
+        elif main_frame.last_pose is None:
+            with self._infer_lock:
+                need_infer = not self._infer_active
+        else:
+            need_infer = main_frame.should_infer_pose(main_frame.last_pose, current_pose)
+        if not need_infer:
+            return "tick"
         with self._infer_lock:
-            due = self._next_submit_due
-            if due <= 0. or now - due > .25:
-                due = now
-            if now < due:
-                return "throttled"
-            self._next_submit_due = due + 1.0 / cap
-            self._last_submit_mono = now
-            self._pending_pose = list(current_pose)
+            self._pending_pose = list(infer_pose)
             self._pending_sample_time = sample_stamp
             self._pending_face_meta = face_meta
             if self._infer_active:
@@ -325,6 +364,7 @@ class Tha3Source:
                          args=(main_frame, generation, engine),
                          daemon=True, name="tha3-pose-infer").start()
         return "queued"
+        # （THA3 tick 复制 THA4 输入调度：OSF pacing + snapshot + should_infer）26.11.01 03:44 e
 
     def _infer_worker(self, main_frame, generation: int, engine) -> None:
         # EVS-PERF-20261029 (f-057/f-068): bounded latest-result mailbox.
@@ -343,24 +383,35 @@ class Tha3Source:
                 sample_time = self._pending_sample_time
                 face_meta = self._pending_face_meta
                 self._pending_pose = None
-            snapshot = self._latest_live_pose_snapshot
-            if snapshot is not None:
-                pose, sample_time, face_meta = list(snapshot[0]), snapshot[1], snapshot[2]
+            latest = getattr(main_frame, "_latest_infer_input_snapshot", None)
+            if latest is not None:
+                pose, face_meta = list(latest[0]), latest[1]
+                sample_time = time.perf_counter()
+            else:
+                snapshot = self._latest_live_pose_snapshot
+                if snapshot is not None:
+                    pose, sample_time, face_meta = list(snapshot[0]), snapshot[1], snapshot[2]
             # （UI infer timer 被 compose 饿死，worker 自抽 pose 保 Inf≥10）26.10.30 14:28 s
             if pose is None:
                 if getattr(main_frame, "_is_closing", False) or engine is None or not engine.is_loaded():
                     with self._infer_lock:
                         self._infer_active = False
                     return
-                cap = self._worker_cap_hz
-                now = time.perf_counter()
-                snapshot = self._latest_live_pose_snapshot
-                if snapshot is None:
-                    time.sleep(0.008)
-                    continue
-                pose, sample_time = list(snapshot[0]), snapshot[1]
-                face_meta = snapshot[2]
+                latest = getattr(main_frame, "_latest_infer_input_snapshot", None)
+                if latest is not None:
+                    pose, face_meta = list(latest[0]), latest[1]
+                    sample_time = time.perf_counter()
+                else:
+                    snapshot = self._latest_live_pose_snapshot
+                    if snapshot is None:
+                        time.sleep(0.008)
+                        continue
+                    pose, sample_time = list(snapshot[0]), snapshot[1]
+                    face_meta = snapshot[2]
             # （UI infer timer 被 compose 饿死，worker 自抽 pose 保 Inf≥10）26.10.30 14:28 e
+            if pose is None:
+                time.sleep(0.008)
+                continue
             if not main_frame.is_mocap_sample_fresh(face_meta):
                 time.sleep(.008)
                 continue
@@ -419,25 +470,31 @@ class Tha3Source:
         # #endregion
         import cv2
         main_frame._last_tha3_rgba = cv2.cvtColor(rgba, cv2.COLOR_BGRA2RGBA)
-        # bh-1 26.10.31 22:00 s
+        main_frame.last_background_choice = main_frame.get_output_background_signature()
+        try:
+            main_frame.output_enhancement.keyframe_cache.invalidate_image()
+        except Exception:
+            pass
+        # （THA3 输出投递复制 THA4 finish：live scene，不用 hybrid timeline）26.11.01 03:44 s
         publish = getattr(main_frame, "_publish_live_scene_character", None)
         if callable(publish):
             publish(wx_image, rgba=main_frame._last_tha3_rgba)
-        # bh-1 26.10.31 22:00 e
-        main_frame._last_real_model_sample_time = float(sample_time)
-        main_frame.last_background_choice = main_frame.get_output_background_signature()
-        self._latest_model_result=(wx_image,main_frame._last_tha3_rgba,tuple(pose))
-        enhancement=main_frame.output_enhancement
-        if getattr(enhancement,"target_frame_rate_enabled",lambda:False)() and main_frame.get_nn_super_resolution_mode()=="off":
-            if self._role_timeline is None:
-                from output_enhancement.hybrid_role_timeline import HybridRoleTimeline
-                self._role_timeline=HybridRoleTimeline(delay=.45)
-            self._role_timeline.offer(main_frame._last_tha3_rgba,float(sample_time or time.perf_counter()),pose)
+        advance = getattr(main_frame, "_advance_pose_interpolation_after_infer", None)
+        if callable(advance):
+            advance(pose)
         else:
-            enhancement.pose_interpolation.seed_after_real_infer(pose)
-        # on_display_timer observes the new image id and performs one composition.
+            main_frame.output_enhancement.pose_interpolation.seed_after_real_infer(pose)
+        # （THA3 输出投递复制 THA4 finish：live scene，不用 hybrid timeline）26.11.01 03:44 e
+        main_frame._last_real_model_sample_time = float(sample_time)
+        self._latest_model_result=(wx_image,main_frame._last_tha3_rgba,tuple(pose))
 
     def prepare_target_presentation(self, main_frame):
+        # （THA3 呈现改走 THA4 live scene，禁用 hybrid timeline）26.11.01 03:44 s
+        pipe = getattr(getattr(main_frame, "output_enhancement", None), "pipeline", None)
+        if pipe is not None:
+            pipe._hybrid_role_active = False
+        return False
+        # （THA3 呈现改走 THA4 live scene，禁用 hybrid timeline）26.11.01 03:44 e
         enhancement=main_frame.output_enhancement;pipe=enhancement.pipeline
         active=enhancement.target_frame_rate_enabled() and main_frame.get_nn_super_resolution_mode()=="off"
         pipe._hybrid_role_active=active

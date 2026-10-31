@@ -10,6 +10,18 @@
 
 ---
 
+## 2026-11-01
+
+### 发布 · THA3 与 THA4 同套 live 链 + 姿态平滑
+
+| # | 改动 |
+|---|------|
+| R1 | 后处理栏 **姿态平滑**（1–10 帧平均，默认 1=关） |
+| R2 | THA3 输入/输出改走 THA4 同套：OSF pacing、infer snapshot、`LiveScenePresenter`；`prepare_target_presentation` 不再截走上屏 |
+| R3 | 长时偶发卡死 **未修**：保留 e5 NDJSON（1Hz 快照 + UI/infer 看门狗栈），待长测 |
+
+---
+
 ## 2026-10-31
 
 ### 发布 · 角色输出帧跟推理 + 张嘴记忆

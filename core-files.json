@@ -708,18 +708,18 @@
     },
     {
       "path": "docs/BUG_HOTSPOT_CHECKLIST.md",
-      "size_bytes": 9670,
-      "sha256": "23900117792b086ba378a29df1f8c779b93f90419f91594e04f4eebf30918741"
+      "size_bytes": 9993,
+      "sha256": "b3c4f31156fb887b1760ac6839a9c388c945ac0a83ff5e98429503f4920c7cfe"
     },
     {
       "path": "docs/CHANGELOG.md",
-      "size_bytes": 21288,
-      "sha256": "80926af9049d571392e379fa2e88f10e6697d386866d9182d07e8d77df07a0e6"
+      "size_bytes": 21733,
+      "sha256": "56c65d5c7b10882f4cba4feafd77a4c50d3203f0930d892d3931a8caddb58137"
     },
     {
       "path": "docs/CODEBASE_MAP.md",
-      "size_bytes": 14772,
-      "sha256": "e786c5cd5ce0415fcbe6386ce287d518541d0303551764ece16e86d2e8b8ef08"
+      "size_bytes": 15003,
+      "sha256": "8e5c3f7b89e677ecfdec9ed1a5df95349a7951509de7c671b26f0a52dade4930"
     },
     {
       "path": "docs/DEPLOY.md",
@@ -1038,8 +1038,8 @@
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/character_model_mediapipe_puppeteer_load_preview.py",
-      "size_bytes": 706552,
-      "sha256": "906c5692f526f0b57718b22d10f706672fe253acd9691d8234dcb7d34a1ee601"
+      "size_bytes": 722851,
+      "sha256": "6a21b901a8700787aacad7fe7f9ff58dc141289f1dac63691faef6bc652e8fde"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/deps/README.md",
@@ -1113,13 +1113,13 @@
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/image_sources/factory.py",
-      "size_bytes": 4604,
-      "sha256": "7dbf622e92258fa4ab6a19416e92f2480c1c854245fa41405479aabde15349a0"
+      "size_bytes": 4645,
+      "sha256": "5c40fbcf5f895b3af4e30646633b775b72b4aecf69c0335d87423daefdb7fb81"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/image_sources/tha3_source.py",
-      "size_bytes": 26282,
-      "sha256": "f843ee00964521583300f3892b51a31d276714b4ad99dfc7b4fc9211487ae581"
+      "size_bytes": 29353,
+      "sha256": "f4cec37d7b3834a111a9834edfdb45f950a01275bf65f69829020696a4d4d80c"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/image_sources/tha4_student_source.py",
@@ -3793,8 +3793,8 @@
     },
     {
       "path": "workspace/load_preview_ui_state.json",
-      "size_bytes": 5175,
-      "sha256": "22a8c9f370ed271dd73feb3802bf38d80f6434c6dbd33854223e34117d3cd8e0"
+      "size_bytes": 5203,
+      "sha256": "3b07b19b8cf0831d16f73c79cc0379413ed7da90527c2d8609c5223d8eb35db9"
     },
     {
       "path": "workspace/region_wobble_mask.png",

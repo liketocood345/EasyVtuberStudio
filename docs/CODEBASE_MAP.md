@@ -3,7 +3,7 @@
 > **编制方式**：以 CodeGraph 索引为核心（`codegraph status` / `files` / `context` / `callers` / `callees` / `impact`），辅以仓库既有文档。  
 > **索引根**：`e:\easyvtuberstudio-develop`（**勿**用工作区根 `E:\`）。  
 > **编制日期**：2026-07-25（模块表已对齐；索引数值仍为上次快照，需 `codegraph init`/`sync` 后刷新）  
-> **索引快照**：504 files · 10,125 nodes · 22,391 edges · DB ~23 MB（`codegraph status`，2026-06-15）
+> **索引快照**：504 files · 10,125 nodes · 22,391 edges · DB ~23 MB（`codegraph status`，2026-06-15；地图章节 2026-11-01 更新 THA3 live 链）
 
 本图回答三件事：**仓库分区干什么**、**从哪进**、**改一条链路会牵动谁**。函数级 UI 对照见同目录实验下的 [CUSTOM_FUNCTION_INDEX.md](../face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/CUSTOM_FUNCTION_INDEX.md)。
 
@@ -241,7 +241,7 @@ sequenceDiagram
 
 ### 5.5 THA3 立绘链
 
-**`Tha3Source.tick`** → `mediapipe_pose_to_tha3_vector` → `Tha3Engine.render_pose` → `MainFrame.draw_cached_result_image`。
+**`Tha3Source.tick`** → OSF pacing + `_resolve_mocap_pose_for_render` + `resolve_scheduled_infer_pose` + `_latest_infer_input_snapshot` → `Tha3Engine.render_pose` → `_apply_infer_result` → `_publish_live_scene_character`（与 THA4 同套 live scene；`prepare_target_presentation` 不再截走上屏）。
 
 上游 vendored TRT 参考：`deps/tha3/ezvtuber_rt/ezvtb_rt/{core_trt,tha3,tha4_student}.py`（本项目主链未接 TensorRT）。
 

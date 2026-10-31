@@ -22,6 +22,7 @@ import threading
 import time
 import json
 import traceback
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional, List
@@ -36,22 +37,63 @@ import PIL.Image
 
 # #region agent log
 _AGENT_DEBUG_LOG_PATH = debug_log_path('d095ab')
+_E5_LOG_LOCK = threading.Lock()
+_E5_LOG_PATH = r"e:\.cursor\debug-e5b45c.log"
 
 
-def _e5_debug_log(location: str, message: str, data: dict, hypothesis_id: str = "") -> None:
+def _e5_rss_mb() -> float:
+    try:
+        class _PROCESS_MEMORY_COUNTERS_EX(ctypes.Structure):
+            _fields_ = [
+                ("cb", ctypes.c_ulong),
+                ("PageFaultCount", ctypes.c_ulong),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+                ("PrivateUsage", ctypes.c_size_t),
+            ]
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        k32.GetCurrentProcess.restype = ctypes.c_void_p
+        psapi.GetProcessMemoryInfo.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(_PROCESS_MEMORY_COUNTERS_EX), ctypes.c_ulong]
+        psapi.GetProcessMemoryInfo.restype = ctypes.c_bool
+        counters = _PROCESS_MEMORY_COUNTERS_EX()
+        counters.cb = ctypes.sizeof(counters)
+        if not psapi.GetProcessMemoryInfo(
+                k32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+            return -1.0
+        return round(float(counters.WorkingSetSize) / (1024.0 * 1024.0), 1)
+    except Exception:
+        return -1.0
+
+
+def _e5_debug_log(
+        location: str,
+        message: str,
+        data: dict,
+        hypothesis_id: str = "",
+        run_id: str = "keep-scaffold") -> None:
     # #region agent log
     try:
         payload = {
             "sessionId": "e5b45c",
-            "runId": "keep-scaffold",
+            "runId": run_id,
             "hypothesisId": hypothesis_id,
             "location": location,
             "message": message,
             "data": data,
             "timestamp": int(time.time() * 1000),
         }
-        with open(r"e:\.cursor\debug-e5b45c.log", "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        line = json.dumps(payload, ensure_ascii=False) + "\n"
+        with _E5_LOG_LOCK:
+            with open(_E5_LOG_PATH, "a", encoding="utf-8") as handle:
+                handle.write(line)
     except Exception:
         pass
     # #endregion
@@ -113,6 +155,11 @@ MOUTH_INFER_CAP_HZ_LABELS = (
 )
 MOUTH_INFER_CAP_HZ_DEFAULT = 30
 # bh-1 26.10.30 11:05 e
+POSE_SMOOTH_FRAME_VALUES = tuple(range(1, 11))
+POSE_SMOOTH_FRAME_LABELS = tuple(
+    "1 帧（关）/ 1 frame (Off)" if n == 1 else f"{n} 帧 / {n} frames"
+    for n in POSE_SMOOTH_FRAME_VALUES)
+POSE_SMOOTH_FRAME_DEFAULT = 1
 MOUTH_POSE_QUANT_STEP = 0.05
 # Event-driven Inf bypass: large mouth/wink deltas skip the uniform infer cap once.
 FAST_ACTION_MOUTH_DELTA = 0.18
@@ -1227,7 +1274,23 @@ class MainFrame(wx.Frame):
         self._dbg_e5_last_infer_mono = 0.0
         self._dbg_e5_live_delivers = 0
         self._dbg_e5_live_push = 0
+        self._dbg_e5_pose_n = 0
+        self._dbg_e5_pose_raw_max_sum = 0.0
+        self._dbg_e5_pose_smooth_max_sum = 0.0
+        self._dbg_e5_pose_spike_n = 0
+        self._dbg_e5_last_raw_pose = None
+        self._dbg_e5_last_smooth_pose = None
+        self._dbg_e5_interp_has_key = False
+        self._dbg_e5_mocap_mode = ""
+        self._dbg_e5_target_fps = False
+        self._dbg_e5_present_branch = ""
+        self._dbg_e5_session_start_mono = time.monotonic()
+        self._dbg_e5_ui_heartbeat_mono = self._dbg_e5_session_start_mono
+        self._dbg_e5_watchdog_stop = threading.Event()
+        self._dbg_e5_watchdog_last_stall_mono = 0.0
+        self._e5_start_ui_watchdog()
         # #endregion
+        self._pose_smooth_buffer: deque = deque(maxlen=10)
         self._last_transform_status_refresh_time = 0.0
         self._last_chrome_background_signature: Optional[str] = None
         self._cached_background_signature: Optional[str] = None
@@ -1759,6 +1822,17 @@ class MainFrame(wx.Frame):
                 log_once(
                     "output_stall_heal",
                     "Output stalled; reloading model or portrait...")
+            # #region agent log
+            try:
+                _e5_debug_log(
+                    "load_preview.py:_heal_output_stall_by_reload",
+                    "output_stall_heal",
+                    self._e5_collect_freeze_data(),
+                    hypothesis_id="H10",
+                    run_id="longrun-freeze")
+            except Exception:
+                pass
+            # #endregion
             self._maybe_heal_stuck_infer_worker()
             self._reset_infer_worker_runtime()
             if self.get_image_source_mode() == IMAGE_SOURCE_THA3:
@@ -1913,10 +1987,94 @@ class MainFrame(wx.Frame):
             body_z_index=converter.body_z_index,
             opposite=self.is_body_tilt_opposite_to_head_enabled())
 
+    def _coerce_pose_smooth_frames(self, value) -> int:
+        try:
+            frames = int(value)
+        except (TypeError, ValueError):
+            frames = POSE_SMOOTH_FRAME_DEFAULT
+        if frames not in POSE_SMOOTH_FRAME_VALUES:
+            return POSE_SMOOTH_FRAME_DEFAULT
+        return frames
+
+    def get_pose_smooth_frames(self) -> int:
+        choice = getattr(self, "pose_smooth_frames_choice", None)
+        if isinstance(choice, wx.Choice):
+            selection = choice.GetSelection()
+            if 0 <= selection < len(POSE_SMOOTH_FRAME_VALUES):
+                return int(POSE_SMOOTH_FRAME_VALUES[selection])
+        return self._coerce_pose_smooth_frames(
+            self.persistent_ui_state.get("pose_smooth_frames", POSE_SMOOTH_FRAME_DEFAULT))
+
+    def _e5_note_interp_apply(self, pre, post) -> None:
+        # #region agent log
+        try:
+            self._dbg_e5_mocap_mode = str(getattr(self, "mocap_input_mode", ""))
+        except Exception:
+            pass
+        # #endregion
+
+    def _reset_pose_smooth_buffer(self) -> None:
+        buf = getattr(self, "_pose_smooth_buffer", None)
+        if buf is not None:
+            buf.clear()
+        self._dbg_e5_last_raw_pose = None
+        self._dbg_e5_last_smooth_pose = None
+
+    def _smooth_mocap_pose(self, pose: List[float]) -> List[float]:
+        raw = [float(x) for x in pose]
+        frames = self.get_pose_smooth_frames()
+        last_raw = getattr(self, "_dbg_e5_last_raw_pose", None)
+        raw_max = 0.0
+        if last_raw is not None and len(last_raw) == len(raw):
+            raw_max = max(abs(a - b) for a, b in zip(raw, last_raw))
+        self._dbg_e5_last_raw_pose = raw
+        buf = getattr(self, "_pose_smooth_buffer", None)
+        if buf is None:
+            buf = deque(maxlen=10)
+            self._pose_smooth_buffer = buf
+        if buf and len(buf[-1]) != len(raw):
+            buf.clear()
+        if frames <= 1:
+            buf.clear()
+            averaged = list(raw)
+        else:
+            buf.append(raw)
+            while len(buf) > frames:
+                buf.popleft()
+            count = max(1, len(buf))
+            averaged = [
+                sum(sample[i] for sample in buf) / float(count)
+                for i in range(len(raw))]
+        last_smooth = getattr(self, "_dbg_e5_last_smooth_pose", None)
+        smooth_max = 0.0
+        if last_smooth is not None and len(last_smooth) == len(averaged):
+            smooth_max = max(abs(a - b) for a, b in zip(averaged, last_smooth))
+        self._dbg_e5_last_smooth_pose = averaged
+        # #region agent log
+        try:
+            self._dbg_e5_pose_n = int(getattr(self, "_dbg_e5_pose_n", 0)) + 1
+            self._dbg_e5_pose_raw_max_sum = float(
+                getattr(self, "_dbg_e5_pose_raw_max_sum", 0.0)) + raw_max
+            self._dbg_e5_pose_smooth_max_sum = float(
+                getattr(self, "_dbg_e5_pose_smooth_max_sum", 0.0)) + smooth_max
+            if raw_max >= 0.05:
+                self._dbg_e5_pose_spike_n = int(
+                    getattr(self, "_dbg_e5_pose_spike_n", 0)) + 1
+        except Exception:
+            pass
+        # #endregion
+        return averaged
+
+    def on_pose_smooth_frames_changed(self, event: wx.Event):
+        self._reset_pose_smooth_buffer()
+        self.save_persistent_ui_state()
+        event.Skip()
+
     def _resolve_mocap_pose_for_render(self, mediapipe_face_pose) -> List[float]:
         current_pose = self.pose_converter.convert(mediapipe_face_pose)
         current_pose = self.apply_negative_tilt_limit_to_pose(current_pose)
-        return self.apply_invert_tilt_mapping_to_pose(current_pose)
+        current_pose = self.apply_invert_tilt_mapping_to_pose(current_pose)
+        return self._smooth_mocap_pose(current_pose)
 
     def _refresh_pose_after_tilt_mapping_changed(self) -> None:
         self._invalidate_render_caches()
@@ -2593,6 +2751,7 @@ class MainFrame(wx.Frame):
     # EVS-DESIGN-AUDIT EVS-A026 END
     def on_close(self, event: wx.Event):
         self._is_closing = True
+        self._e5_stop_ui_watchdog()
         self._close_live_scene_presenter()
         self._osf_enum_generation = int(getattr(self, "_osf_enum_generation", 0)) + 1
         with self._infer_lock:
@@ -4066,6 +4225,17 @@ class MainFrame(wx.Frame):
                 "THA infer worker stuck; resetting async infer gate "
                 f"(>{MainFrame.INFER_WORKER_STUCK_TIMEOUT_SEC:.0f}s).",
                 file=sys.stderr)
+        # #region agent log
+        try:
+            _e5_debug_log(
+                "load_preview.py:_maybe_heal_stuck_infer_worker",
+                "infer_worker_heal",
+                self._e5_collect_freeze_data(),
+                hypothesis_id="H8",
+                run_id="longrun-freeze")
+        except Exception:
+            pass
+        # #endregion
         self._reset_infer_worker_runtime()
         self._schedule_infer_recovery_pose()
         return True
@@ -4110,17 +4280,16 @@ class MainFrame(wx.Frame):
         self._last_capture_present_time_ns = time.time_ns()
 
     def _advance_pose_interpolation_after_infer(self, inferred_pose: List[float]) -> None:
-        if self.is_openseeface_mocap_mode():
-            self.output_enhancement.pose_interpolation.seed_after_real_infer(inferred_pose)
-            return
+        # （THA3/OSF 也推进姿态插值，不再跳过）26.11.01 03:38 s
         self.output_enhancement.pose_interpolation.advance_after_infer(
             inferred_pose, self.get_output_frame_interpolation_multiplier())
+        # （THA3/OSF 也推进姿态插值，不再跳过）26.11.01 03:38 e
 
     def resolve_scheduled_infer_pose(self, current_pose: List[float]) -> List[float]:
-        if self.is_openseeface_mocap_mode():
-            return list(current_pose)
+        # （THA3/OSF 与 THA4 共用插值 resolve）26.11.01 03:38 s
         return self.output_enhancement.pose_interpolation.resolve_infer_pose(
             current_pose, self.get_output_frame_interpolation_multiplier())
+        # （THA3/OSF 与 THA4 共用插值 resolve）26.11.01 03:38 e
 
     def should_refresh_cached_affine(self) -> bool:
         now_ns = time.time_ns()
@@ -6825,6 +6994,7 @@ class MainFrame(wx.Frame):
             "mouth_infer_cap_kept_low": bool(
                 self.persistent_ui_state.get("mouth_infer_cap_kept_low", False)),
             "smooth_affine_30hz": smooth_affine_30hz,
+            "pose_smooth_frames": self.get_pose_smooth_frames(),
             "image_source_mode": self.get_image_source_mode(),
             "tha3_character_png": self.last_tha3_character_png,
             "tha3_model_variant": self.tha3_model_variant,
@@ -7078,6 +7248,15 @@ class MainFrame(wx.Frame):
             checkbox = getattr(self, "smooth_affine_30hz_checkbox", None)
             if isinstance(checkbox, wx.CheckBox):
                 checkbox.SetValue(enabled)
+        if "pose_smooth_frames" in data:
+            frames = self._coerce_pose_smooth_frames(data.get("pose_smooth_frames"))
+            choice = getattr(self, "pose_smooth_frames_choice", None)
+            if isinstance(choice, wx.Choice):
+                try:
+                    choice.SetSelection(POSE_SMOOTH_FRAME_VALUES.index(frames))
+                except ValueError:
+                    choice.SetSelection(0)
+            self._reset_pose_smooth_buffer()
         if "image_source_mode" in data:
             self.image_source_mode = normalize_image_source_mode(data["image_source_mode"])
         if "tha3_character_png" in data:
@@ -11032,6 +11211,8 @@ class MainFrame(wx.Frame):
             mouth_infer_cap_hz = MOUTH_INFER_CAP_HZ_DEFAULT
         mouth_infer_cap_hz = self._coerce_mouth_infer_cap_hz(mouth_infer_cap_hz)
         smooth_affine_30hz = bool(self.persistent_ui_state.get("smooth_affine_30hz", True))
+        pose_smooth_frames = self._coerce_pose_smooth_frames(
+            self.persistent_ui_state.get("pose_smooth_frames", POSE_SMOOTH_FRAME_DEFAULT))
         nn_super_resolution_mode = normalize_sr_mode(
             self.persistent_ui_state.get("nn_super_resolution_mode", NN_SR_OFF))
         nn_frame_interpolation = normalize_nn_frame_multiplier(
@@ -11354,6 +11535,33 @@ class MainFrame(wx.Frame):
                   "关 = 跟 GPU 推理上限（省 CPU）/ off follows infer cap")
         self.postprocess_panel_sizer.Add(
             smooth_affine_hint,
+            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
+
+        pose_smooth_label = wx.StaticText(
+            self.postprocess_panel,
+            label="姿态平滑 / Pose Smoothing")
+        self.postprocess_panel_sizer.Add(
+            pose_smooth_label,
+            wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.TOP, 4))
+        try:
+            pose_smooth_index = POSE_SMOOTH_FRAME_VALUES.index(pose_smooth_frames)
+        except ValueError:
+            pose_smooth_index = 0
+        self.pose_smooth_frames_choice = wx.Choice(
+            self.postprocess_panel,
+            choices=list(POSE_SMOOTH_FRAME_LABELS))
+        self.pose_smooth_frames_choice.SetSelection(pose_smooth_index)
+        self.pose_smooth_frames_choice.Bind(
+            wx.EVT_CHOICE, self.on_pose_smooth_frames_changed)
+        self.postprocess_panel_sizer.Add(
+            self.pose_smooth_frames_choice,
+            wx.SizerFlags().Expand().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
+        pose_smooth_hint = wx.StaticText(
+            self.postprocess_panel,
+            label="对输入姿态取最近 N 帧平均，减轻面捕跳动；1=关 / "
+                  "average last N mocap poses; 1=off")
+        self.postprocess_panel_sizer.Add(
+            pose_smooth_hint,
             wx.SizerFlags().Border(wx.LEFT | wx.RIGHT | wx.BOTTOM, 4))
 
         self._create_target_frame_rate_controls()
@@ -12814,16 +13022,16 @@ class MainFrame(wx.Frame):
                 or not self.is_mocap_sample_fresh()
                 or getattr(self, "_tha3_load_in_progress", False)):
             return
-        if self.get_image_source_mode() == IMAGE_SOURCE_THA3:
-            self.active_image_source.publish_live_pose(self)
-            return
+        # （THA3 与 THA4 共用 mocap→snapshot 输入链）26.11.01 03:44 s
         current_pose = self._resolve_mocap_pose_for_render(self.mediapipe_face_pose)
         pose = tuple(self.resolve_scheduled_infer_pose(current_pose))
+        self._e5_note_interp_apply(current_pose, pose)
         meta = (self._latest_face_pose_sequence, self._latest_face_sample_mono)
         self._latest_infer_input_pose = pose
         self._latest_infer_input_face_meta = meta
         self._latest_infer_input_snapshot = (pose, meta)
         self._worker_infer_cap_hz = self.get_mouth_infer_cap_hz()
+        # （THA3 与 THA4 共用 mocap→snapshot 输入链）26.11.01 03:44 e
 
     def _finish_mediapipe_detect(self, detection_result, sequence=0,
                                 sample_mono=0., completed_mono=0.) -> None:
@@ -13741,6 +13949,133 @@ class MainFrame(wx.Frame):
         self._maybe_log_present_stages(stages)
         return fg
 
+    def _e5_collect_freeze_data(self, extra: Optional[dict] = None) -> dict:
+        now = time.monotonic()
+        now_pc = time.perf_counter()
+        start = float(getattr(self, "_dbg_e5_session_start_mono", now) or now)
+        last_ui = float(getattr(self, "_dbg_e5_ui_heartbeat_mono", 0.0) or 0.0)
+        last_infer = float(getattr(self, "_dbg_e5_last_infer_mono", 0.0) or 0.0)
+        last_face = float(getattr(self, "_latest_face_publish_mono", 0.0) or 0.0)
+        busy_since = float(getattr(self, "_infer_worker_busy_since", 0.0) or 0.0)
+        tha3_active = False
+        tha3_pending = False
+        try:
+            source = getattr(self, "active_image_source", None)
+            tha3_active = bool(getattr(source, "_infer_active", False))
+            tha3_pending = getattr(source, "_pending_pose", None) is not None
+        except Exception:
+            pass
+        names = []
+        try:
+            names = [thread.name for thread in threading.enumerate()][:16]
+        except Exception:
+            names = []
+        gc_counts = (-1, -1, -1)
+        try:
+            import gc
+            gc_counts = tuple(gc.get_count())
+        except Exception:
+            pass
+        data = {
+            "uptime_s": round(now - start, 1),
+            "rss_mb": _e5_rss_mb(),
+            "threads": int(threading.active_count()),
+            "thread_names": names,
+            "gc": list(gc_counts),
+            "source": str(self.get_image_source_mode()) if hasattr(self, "get_image_source_mode") else "",
+            "ui_age_ms": round((now - last_ui) * 1000.0, 1) if last_ui > 0.0 else -1.0,
+            "infer_age_ms": round((now - last_infer) * 1000.0, 1) if last_infer > 0.0 else -1.0,
+            "mocap_age_ms": round((now_pc - last_face) * 1000.0, 1) if last_face > 0.0 else -1.0,
+            "worker_active": bool(getattr(self, "_infer_worker_active", False)),
+            "worker_busy_s": round(now - busy_since, 2) if busy_since > 0.0 else 0.0,
+            "infer_stuck": bool(self._infer_worker_stuck()) if hasattr(self, "_infer_worker_stuck") else False,
+            "tha3_active": bool(tha3_active),
+            "tha3_pending": bool(tha3_pending),
+            "cam_worker": bool(getattr(self, "_camera_capture_worker_active", False)),
+            "closing": bool(getattr(self, "_is_closing", False)),
+            "model": bool(self.is_model_loaded()) if hasattr(self, "is_model_loaded") else False,
+        }
+        if extra:
+            data.update(extra)
+        return data
+
+    def _e5_main_thread_stack(self, limit: int = 1800) -> str:
+        try:
+            ident = threading.main_thread().ident
+            frame = sys._current_frames().get(ident)
+            if frame is None:
+                return ""
+            return "".join(traceback.format_stack(frame))[:limit]
+        except Exception:
+            return ""
+
+    def _e5_start_ui_watchdog(self) -> None:
+        stop = getattr(self, "_dbg_e5_watchdog_stop", None)
+        if stop is None:
+            stop = threading.Event()
+            self._dbg_e5_watchdog_stop = stop
+        if getattr(self, "_dbg_e5_watchdog_thread", None) is not None:
+            return
+
+        def _watch():
+            _e5_debug_log(
+                "load_preview.py:ui_watchdog",
+                "watchdog_start",
+                {"pid": os.getpid()},
+                hypothesis_id="H6",
+                run_id="longrun-freeze")
+            while not stop.wait(1.0):
+                if getattr(self, "_is_closing", False):
+                    break
+                try:
+                    now = time.monotonic()
+                    last_ui = float(getattr(self, "_dbg_e5_ui_heartbeat_mono", 0.0) or 0.0)
+                    ui_age = (now - last_ui) if last_ui > 0.0 else 0.0
+                    last_infer = float(getattr(self, "_dbg_e5_last_infer_mono", 0.0) or 0.0)
+                    infer_age = (now - last_infer) if last_infer > 0.0 else 0.0
+                    last_face = float(getattr(self, "_latest_face_publish_mono", 0.0) or 0.0)
+                    mocap_age = (time.perf_counter() - last_face) if last_face > 0.0 else 0.0
+                    stall_ui = (
+                        ui_age >= 1.5
+                        and float(getattr(self, "_dbg_last_display_mono", 0.0) or 0.0) > 0.0)
+                    stall_infer = (
+                        infer_age >= 3.0
+                        and mocap_age < 0.8
+                        and bool(getattr(self, "is_model_loaded", lambda: False)()))
+                    if not (stall_ui or stall_infer):
+                        continue
+                    last_log = float(getattr(self, "_dbg_e5_watchdog_last_stall_mono", 0.0) or 0.0)
+                    if last_log > 0.0 and now - last_log < 5.0:
+                        continue
+                    self._dbg_e5_watchdog_last_stall_mono = now
+                    extra = {
+                        "kind": "ui" if stall_ui else "infer",
+                        "stack": self._e5_main_thread_stack() if stall_ui else "",
+                    }
+                    _e5_debug_log(
+                        "load_preview.py:ui_watchdog",
+                        "ui_watchdog_stall" if stall_ui else "infer_watchdog_stall",
+                        self._e5_collect_freeze_data(extra),
+                        hypothesis_id="H6" if stall_ui else "H8",
+                        run_id="longrun-freeze")
+                except Exception:
+                    pass
+            _e5_debug_log(
+                "load_preview.py:ui_watchdog",
+                "watchdog_stop",
+                {"pid": os.getpid()},
+                hypothesis_id="H6",
+                run_id="longrun-freeze")
+
+        thread = threading.Thread(target=_watch, name="e5-ui-watchdog", daemon=True)
+        self._dbg_e5_watchdog_thread = thread
+        thread.start()
+
+    def _e5_stop_ui_watchdog(self) -> None:
+        stop = getattr(self, "_dbg_e5_watchdog_stop", None)
+        if stop is not None:
+            stop.set()
+
     def _agent_debug_flush_present_stats(self, *, motion_active: bool) -> None:
         """1s e5b45c snapshot: Inf vs live-push vs display-timer leftover."""
         # #region agent log
@@ -13774,12 +14109,22 @@ class MainFrame(wx.Frame):
             "layer_blend": bool(self.is_layer_blend_enabled()),
             "display_interval_ms": int(self.display_timer.GetInterval())
             if getattr(self, "display_timer", None) is not None else -1,
+            "pose_n": int(getattr(self, "_dbg_e5_pose_n", 0)),
+            "pose_smooth_n": int(self.get_pose_smooth_frames()),
+            "pose_spike_n": int(getattr(self, "_dbg_e5_pose_spike_n", 0)),
+            "mocap_mode": str(getattr(self, "_dbg_e5_mocap_mode", "") or getattr(self, "mocap_input_mode", "")),
+            "present_branch": str(getattr(self, "_dbg_e5_present_branch", "")),
         }
+        try:
+            data.update(self._e5_collect_freeze_data())
+        except Exception:
+            pass
         _e5_debug_log(
             "load_preview.py:present_stats",
             "inf_live_display_1s",
             data,
-            hypothesis_id="keep")
+            hypothesis_id="H6-H10",
+            run_id="keep-scaffold")
         self._dbg_display_ticks = 0
         self._dbg_display_timer_ms = 0.0
         self._dbg_capture_panel_ms = 0.0
@@ -13790,6 +14135,10 @@ class MainFrame(wx.Frame):
         self._dbg_e5_finish_n = 0
         self._dbg_e5_live_delivers = 0
         self._dbg_e5_live_push = 0
+        self._dbg_e5_pose_n = 0
+        self._dbg_e5_pose_raw_max_sum = 0.0
+        self._dbg_e5_pose_smooth_max_sum = 0.0
+        self._dbg_e5_pose_spike_n = 0
         _agent_debug_ndjson(
             "character_model_mediapipe_puppeteer_load_preview.py:present_stats",
             "present_1s_snapshot",
@@ -13976,7 +14325,9 @@ class MainFrame(wx.Frame):
             return "no_face"
 
         current_pose = self._resolve_mocap_pose_for_render(self.mediapipe_face_pose)
-        self._latest_infer_input_pose = tuple(self.resolve_scheduled_infer_pose(current_pose))
+        infer_pose = self.resolve_scheduled_infer_pose(current_pose)
+        self._e5_note_interp_apply(current_pose, infer_pose)
+        self._latest_infer_input_pose = tuple(infer_pose)
         self._latest_infer_input_face_meta = (self._latest_face_pose_sequence, self._latest_face_sample_mono)
         self._latest_infer_input_snapshot = (self._latest_infer_input_pose, self._latest_infer_input_face_meta)
         self._worker_infer_cap_hz = self.get_mouth_infer_cap_hz()
@@ -14219,36 +14570,48 @@ class MainFrame(wx.Frame):
         _dbg_now = time.monotonic()
         _dbg_last = float(getattr(self, "_dbg_last_display_mono", 0.0) or 0.0)
         if _dbg_last > 0.0:
+            _dbg_gap_ms = (_dbg_now - _dbg_last) * 1000.0
             self._dbg_display_gap_sum_ms = float(
-                getattr(self, "_dbg_display_gap_sum_ms", 0.0)) + (_dbg_now - _dbg_last) * 1000.0
+                getattr(self, "_dbg_display_gap_sum_ms", 0.0)) + _dbg_gap_ms
             self._dbg_display_gap_n = int(getattr(self, "_dbg_display_gap_n", 0)) + 1
             try:
                 from longrun_diag import note_display_gap_ms, note_hour_mark
-                note_display_gap_ms((_dbg_now - _dbg_last) * 1000.0)
+                note_display_gap_ms(_dbg_gap_ms)
                 note_hour_mark()
             except Exception:
                 pass
+            if _dbg_gap_ms >= 500.0:
+                try:
+                    _e5_debug_log(
+                        "load_preview.py:on_display_timer",
+                        "display_gap_stall",
+                        self._e5_collect_freeze_data({"gap_ms": round(_dbg_gap_ms, 1)}),
+                        hypothesis_id="H6",
+                        run_id="longrun-freeze")
+                except Exception:
+                    pass
         self._dbg_last_display_mono = _dbg_now
+        self._dbg_e5_ui_heartbeat_mono = _dbg_now
         # #endregion
         # bh-1 26.10.31 21:55 s
         # Live/ULW present reads last_output_wx_image; apply the infer mailbox
         # on this UI tick instead of waiting for a coalesced CallAfter.
         self._flush_async_pose_infer()
         # bh-1 26.10.31 21:55 e
+        # （THA3 与 THA4 同样在 display tick 刷 mailbox）26.11.01 03:44 s
+        if self.get_image_source_mode() == IMAGE_SOURCE_THA3:
+            flush = getattr(self.active_image_source, "_flush_infer_result", None)
+            if callable(flush):
+                flush(self)
+        # （THA3 与 THA4 同样在 display tick 刷 mailbox）26.11.01 03:44 e
         self.poll_layer_gif_playback_side_effects()
         self._maybe_heal_stuck_infer_worker()
         if self.is_model_loaded():
             self.update_display_transform_state()
         pipe = getattr(self, "output_enhancement", None)
-        if self.get_image_source_mode()==IMAGE_SOURCE_THA3:
-            prepare=getattr(self.active_image_source,"prepare_target_presentation",None)
-            if prepare is not None and prepare(self):
-                # #region agent log
-                self._e5_end_display_tick(_dbg_t0, False)
-                # #endregion
-                return
         if self._try_present_live_scene():
             # #region agent log
+            self._dbg_e5_present_branch = "live"
             self._e5_end_display_tick(_dbg_t0, False)
             # #endregion
             return
