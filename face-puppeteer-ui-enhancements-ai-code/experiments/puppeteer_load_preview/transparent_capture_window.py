@@ -20,6 +20,7 @@ from __future__ import annotations
 # EVS-DESIGN-AUDIT FILE END
 
 import ctypes
+import json
 import os
 import queue
 import threading
@@ -61,6 +62,8 @@ WM_KEYDOWN = 0x0100
 WM_SETCURSOR = 0x0020
 WM_SETICON = 0x0080
 WM_ACTIVATE = 0x0006
+WM_CANCELMODE = 0x001F
+WM_CAPTURECHANGED = 0x0215
 WA_INACTIVE = 0
 
 ICON_SMALL = 0
@@ -409,6 +412,142 @@ def _build_border_ring_rgba(
     return numpy.ascontiguousarray(out, dtype=numpy.uint8)
 
 
+# 偶发：开启后全屏点击被拦截。下面只在异常时落盘，不改变命中、置顶或捕获行为。
+_AGENT_LOG_PATH = r"e:\.cursor\debug-1f9650.log"
+_AGENT_LOG_LOCK = threading.Lock()
+_AGENT_LAST_MONO: dict = {}
+
+
+def _agent_debug_log(hypothesis_id, location, message, data, min_interval_s=0.0) -> None:
+    # #region agent log
+    try:
+        now = time.monotonic()
+        payload = {
+            "sessionId": "1f9650",
+            "runId": "intermittent-scaffold",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        line = json.dumps(payload, ensure_ascii=False) + "\n"
+        with _AGENT_LOG_LOCK:
+            if min_interval_s > 0.0:
+                last = _AGENT_LAST_MONO.get(message, 0.0)
+                if now - last < min_interval_s:
+                    return
+                _AGENT_LAST_MONO[message] = now
+            with open(_AGENT_LOG_PATH, "a", encoding="utf-8") as handle:
+                handle.write(line)
+    except Exception:
+        pass
+    # #endregion
+
+
+def _agent_screen_metrics() -> dict:
+    try:
+        return {
+            "vx": int(user32.GetSystemMetrics(76)),
+            "vy": int(user32.GetSystemMetrics(77)),
+            "vw": int(user32.GetSystemMetrics(78)),
+            "vh": int(user32.GetSystemMetrics(79)),
+            "sw": int(user32.GetSystemMetrics(0)),
+            "sh": int(user32.GetSystemMetrics(1)),
+        }
+    except Exception:
+        return {}
+
+
+def _agent_size_covers_screen(width: int, height: int) -> bool:
+    screen = _agent_screen_metrics()
+    sw = int(screen.get("sw") or 0)
+    sh = int(screen.get("sh") or 0)
+    vw = int(screen.get("vw") or 0)
+    vh = int(screen.get("vh") or 0)
+    if sw <= 0 or sh <= 0:
+        return False
+    if width >= int(sw * 0.9) or height >= int(sh * 0.9):
+        return True
+    return vw > 0 and vh > 0 and width * height >= int(vw * vh * 0.75)
+
+
+def _agent_window_rect(hwnd) -> list:
+    rect = wintypes.RECT()
+    try:
+        if not hwnd or not user32.GetWindowRect(wintypes.HWND(int(hwnd)), ctypes.byref(rect)):
+            return []
+    except Exception:
+        return []
+    return [int(rect.left), int(rect.top), int(rect.right - rect.left), int(rect.bottom - rect.top)]
+
+
+def _agent_note_covering_windows(reason: str, hwnd: int = 0, *, only_if_covering: bool = False, min_interval_s: float = 0.0) -> None:
+    # #region agent log
+    try:
+        if min_interval_s > 0.0:
+            now = time.monotonic()
+            with _AGENT_LOG_LOCK:
+                last = _AGENT_LAST_MONO.get("cover-scan", 0.0)
+                if now - last < min_interval_s:
+                    return
+                _AGENT_LAST_MONO["cover-scan"] = now
+        screen = _agent_screen_metrics()
+        varea = max(1, int(screen.get("vw") or 0) * int(screen.get("vh") or 0))
+        parea = max(1, int(screen.get("sw") or 0) * int(screen.get("sh") or 0))
+        found = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def _visit(window, _unused):
+            try:
+                if not user32.IsWindowVisible(window):
+                    return True
+                rect = wintypes.RECT()
+                if not user32.GetWindowRect(window, ctypes.byref(rect)):
+                    return True
+                width = int(rect.right - rect.left)
+                height = int(rect.bottom - rect.top)
+                area = max(0, width) * max(0, height)
+                getter = getattr(user32, "GetWindowLongPtrW", None) or user32.GetWindowLongW
+                style = int(getter(window, GWL_EXSTYLE))
+                topmost = bool(style & 0x8)
+                if area < int(varea * 0.75) and not (topmost and area >= int(parea * 0.9)):
+                    return True
+                title = ctypes.create_unicode_buffer(256)
+                cls = ctypes.create_unicode_buffer(128)
+                user32.GetWindowTextW(window, title, 256)
+                user32.GetClassNameW(window, cls, 128)
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(window, ctypes.byref(pid))
+                found.append({
+                    "hwnd": int(window),
+                    "pid": int(pid.value),
+                    "title": title.value,
+                    "class": cls.value,
+                    "rect": [int(rect.left), int(rect.top), width, height],
+                    "topmost": topmost,
+                    "click_through": bool(style & WS_EX_TRANSPARENT),
+                    "layered": bool(style & WS_EX_LAYERED),
+                })
+            except Exception:
+                return True
+            return True
+
+        user32.EnumWindows(_visit, 0)
+        self_rect = _agent_window_rect(hwnd)
+        self_covers = bool(self_rect) and _agent_size_covers_screen(self_rect[2], self_rect[3])
+        if only_if_covering and not found and not self_covers:
+            return
+        _agent_debug_log(
+            "E",
+            "transparent_capture_window.py:cover",
+            reason,
+            {"screen": screen, "self_hwnd": int(hwnd or 0), "self_rect": self_rect, "self_covers": self_covers, "covering": found[:8]})
+    except Exception:
+        pass
+    # #endregion
+
+
 class _DesktopOverlayWindow:
     """Layered popup for true desktop alpha; hidden from window capture lists."""
 
@@ -441,6 +580,7 @@ class _DesktopOverlayWindow:
         self._on_deactivate = on_deactivate
         self._editing = False
         self._dragging_window = False
+        self._agent_buttonless_logged = False
         self._drag_anchor = (0, 0)
         self._width = max(1, int(width))
         self._height = max(1, int(height))
@@ -519,6 +659,22 @@ class _DesktopOverlayWindow:
                 except Exception:
                     pass
             return False, 0
+        if msg == WM_CANCELMODE or msg == WM_CAPTURECHANGED:
+            if self._editing or self._dragging_window:
+                # #region agent log
+                _agent_debug_log(
+                    "C",
+                    "transparent_capture_window.py:_handle_message",
+                    "capture-released-by-system",
+                    {
+                        "msg": int(msg),
+                        "editing": bool(self._editing),
+                        "dragging": bool(self._dragging_window),
+                        "new_capture": int(lparam) if int(msg) == WM_CAPTURECHANGED else 0,
+                        "rect": _agent_window_rect(self._hwnd),
+                    })
+                # #endregion
+            return False, 0
         if msg == WM_LBUTTONDOWN:
             self._on_left_down(lparam)
             return True, 0
@@ -568,10 +724,26 @@ class _DesktopOverlayWindow:
             user32.SetCapture(hwnd)
         except Exception:
             pass
+        self._agent_buttonless_logged = False
 
     def _on_mouse_move(self, wparam: int, lparam: int) -> None:
         if self._destroyed or not self._hwnd:
             return
+        if (self._editing or self._dragging_window) and not (int(wparam) & MK_LBUTTON):
+            if not self._agent_buttonless_logged:
+                self._agent_buttonless_logged = True
+                # #region agent log
+                _agent_debug_log(
+                    "C",
+                    "transparent_capture_window.py:_on_mouse_move",
+                    "buttonless-move-while-captured",
+                    {
+                        "hwnd": int(self._hwnd),
+                        "editing": bool(self._editing),
+                        "dragging": bool(self._dragging_window),
+                        "rect": _agent_window_rect(self._hwnd),
+                    })
+                # #endregion
         if self._editing:
             x, y = self._lparam_to_xy(lparam)
             if self._on_edit_motion is not None:
@@ -601,6 +773,7 @@ class _DesktopOverlayWindow:
         was_editing = self._editing
         self._editing = False
         self._dragging_window = False
+        self._agent_buttonless_logged = False
         if was_editing and self._on_edit_end is not None:
             try:
                 self._on_edit_end()
@@ -662,6 +835,21 @@ class _DesktopOverlayWindow:
         self._hwnd = int(hwnd)
         _overlay_instances[self._hwnd] = self
         self._apply_window_icon()
+        # #region agent log
+        _agent_debug_log(
+            "A",
+            "transparent_capture_window.py:_create_window",
+            "overlay-created",
+            {
+                "hwnd": int(self._hwnd),
+                "title": self._window_title,
+                "size": [int(self._width), int(self._height)],
+                "exstyle": int(self._exstyle),
+                "click_through": bool(self._exstyle & WS_EX_TRANSPARENT),
+                "layered": bool(self._exstyle & WS_EX_LAYERED),
+                "screen": _agent_screen_metrics(),
+            })
+        # #endregion
 
     def _apply_window_icon(self) -> None:
         if not self._icon_path or not self._hwnd:
@@ -753,6 +941,20 @@ class _DesktopOverlayWindow:
             width,
             height,
             SWP_NOACTIVATE)
+        if _agent_size_covers_screen(width, height):
+            # #region agent log
+            _agent_debug_log(
+                "A",
+                "transparent_capture_window.py:set_geometry",
+                "overlay-covers-screen",
+                {
+                    "hwnd": int(self._hwnd or 0),
+                    "title": self._window_title,
+                    "rect": [int(x), int(y), int(width), int(height)],
+                    "resized": bool(resized),
+                    "click_through": bool(self._exstyle & WS_EX_TRANSPARENT),
+                })
+            # #endregion
 
     def update_rgba(
             self,
@@ -1092,6 +1294,9 @@ class TransparentCaptureWindow:
         if self._border is not None and self._border.is_valid():
             self._border.show()
         _raise_overlay_topmost(int(self._overlay._hwnd or 0))
+        # #region agent log
+        _agent_note_covering_windows("overlay-shown", hwnd=int(self._overlay._hwnd or 0))
+        # #endregion
 
     def _host_hide(self) -> None:
         if self._border is not None:
@@ -1115,6 +1320,18 @@ class TransparentCaptureWindow:
         rgba = numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
         height, width = int(rgba.shape[0]), int(rgba.shape[1])
         if width != self._width or height != self._height:
+            # #region agent log
+            _agent_debug_log(
+                "B",
+                "transparent_capture_window.py:_host_apply_frame_rgba",
+                "frame-size-changed",
+                {
+                    "from": [int(self._width), int(self._height)],
+                    "to": [width, height],
+                    "covers_screen": _agent_size_covers_screen(width, height),
+                },
+                min_interval_s=1.0)
+            # #endregion
             self._width = width
             self._height = height
             self._sync_visible_geometry(force=True)
@@ -1122,6 +1339,13 @@ class TransparentCaptureWindow:
             from output_enhancement.rgba_ops import sanitize_transparent_rgb
             rgba = sanitize_transparent_rgb(rgba)
         self._overlay.update_rgba(rgba, premultiplied_bgra=premultiplied_bgra)
+        # #region agent log
+        _agent_note_covering_windows(
+            "frame-cover-scan",
+            hwnd=int(self._overlay._hwnd or 0),
+            only_if_covering=True,
+            min_interval_s=10.0)
+        # #endregion
         self._last_presented_signature = frame_signature
         if self._on_frame_presented is not None:
             self._on_frame_presented()
@@ -1243,7 +1467,14 @@ class TransparentCaptureWindow:
             rgba: numpy.ndarray,
             *,
             frame_signature: Optional[tuple] = None,
-            premultiplied_bgra: Optional[numpy.ndarray] = None) -> None:
+            premultiplied_bgra: Optional[numpy.ndarray] = None,
+            owned: bool = False) -> None:
+        """Post one frame to the ULW host thread.
+
+        owned=True (EVS-PERF 2.3): the caller hands over freshly made arrays
+        and never writes into them again, so the two defensive full-frame
+        copies are skipped. The host thread only reads them.
+        """
         if self._destroyed or not self.is_valid():
             return
         try:
@@ -1258,11 +1489,11 @@ class TransparentCaptureWindow:
                 if frame_hash == self._last_frame_hash:
                     return
                 self._last_frame_hash = frame_hash
-            rgba_copy = numpy.array(rgba, dtype=numpy.uint8, order="C", copy=True)
+            rgba_copy = numpy.array(rgba, dtype=numpy.uint8, order="C", copy=not owned)
             premul_copy = None
             if premultiplied_bgra is not None:
                 premul_copy = numpy.array(
-                    premultiplied_bgra, dtype=numpy.uint8, order="C", copy=True)
+                    premultiplied_bgra, dtype=numpy.uint8, order="C", copy=not owned)
             self._host.post_frame(
                 rgba_copy,
                 frame_signature=frame_signature,

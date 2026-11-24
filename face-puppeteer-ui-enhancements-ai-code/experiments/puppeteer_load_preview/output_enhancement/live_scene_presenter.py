@@ -15,6 +15,10 @@ class LiveScenePresenter:
         self._callback=callback;self._condition=threading.Condition()
         self._packet=None;self._closed=False;self.last_error=None
         self.render_ms=deque(maxlen=120);self.completed=0
+        # EVS-PERF 0.2: scene frames re-render the same character at the scene
+        # clock (GIF/wobble/bindings). Out counts scene frames (EVS-A044);
+        # character_frames counts deliveries that carried a new model frame.
+        self.character_frames=0;self._last_character=None
         self._thread=threading.Thread(target=self._run,daemon=True,name='live-scene-present')
         self._thread.start()
     def offer(self,snapshot,rgba,hz):
@@ -34,7 +38,7 @@ class LiveScenePresenter:
                 # Geometry/springs are prepared in order; only independent pixels
                 # overlap. At most two frames exist in flight, delivered in order.
                 if pending:
-                    snapshot,stamp,period,job=pending[0]
+                    snapshot,stamp,period,job,character=pending[0]
                     if job.done() and now>=stamp+period and now>=last_delivered+period:
                         pending.popleft();output=job.result()
                         self.render_ms.append((now-stamp)*1000.)
@@ -43,6 +47,8 @@ class LiveScenePresenter:
                         if now-snapshot.stamp<=.75:
                             serial+=1;last_delivered=now
                             self._callback(output,serial,stamp);self.completed+=1
+                            if character is not self._last_character:
+                                self._last_character=character;self.character_frames+=1
                         continue
                 snapshot,rgba,hz=packet;period=1./hz
                 if now>=due and len(pending)<2:
@@ -50,12 +56,12 @@ class LiveScenePresenter:
                     self.renderer.submit_snapshot(snapshot)
                     prepared=self.renderer._prepare(rgba,start)
                     job=self.renderer._pool.submit(self.renderer._render,prepared)
-                    pending.append((snapshot,start,period,job))
+                    pending.append((snapshot,start,period,job,rgba))
                     due=start+period
                     continue
                 wake=due if len(pending)<2 else now+.002
                 if pending:
-                    snapshot,stamp,present_period,job=pending[0]
+                    snapshot,stamp,present_period,job,_=pending[0]
                     ready=max(stamp+present_period,last_delivered+present_period)
                     wake=min(wake,ready if job.done() else now+.002)
                 with self._condition:
@@ -64,7 +70,7 @@ class LiveScenePresenter:
         except Exception as exc:
             self.last_error=repr(exc)
         finally:
-            for _,_,_,job in pending:job.cancel()
+            for _,_,_,job,_ in pending:job.cancel()
             self.renderer.close()
     def close(self):
         with self._condition:

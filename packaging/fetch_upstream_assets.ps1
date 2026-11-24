@@ -7,12 +7,12 @@ $mapping=@{mediapipe_task='mediapipe';openseeface='openseeface';tha3_models='tha
 if(-not $PackageIds.Count) { $PackageIds=@('mediapipe_task','openseeface','tha3_models','tha4_teacher_training','ezvtb_nn_weights') }
 $arguments=@('install','--root',$PortableRoot)
 foreach($id in $PackageIds) {
-    if(-not $mapping.ContainsKey($id)) { throw ('Unknown resource package: '+$id) }
+    if(-not $mapping.ContainsKey($id)) { throw ('未知的资源包 / Unknown resource package: '+$id) }
     $arguments+=@('--module',$mapping[$id])
 }
 # bh-6 26.10.31 16:10 s
 $fetchExit = Invoke-IsolatedPythonFile $python (Join-Path $PSScriptRoot 'resource_modules.py') $arguments
-if(-not ($fetchExit -eq 0)) { throw 'Resource module download/integrity verification failed' }
+if(-not ($fetchExit -eq 0)) { throw '资源模块下载或完整性校验失败 / Resource module download/integrity verification failed' }
 # bh-6 26.10.31 16:10 e
 & (Join-Path $PSScriptRoot 'reconcile_portable_layout.ps1') -PortableRoot $PortableRoot | Out-Null
 

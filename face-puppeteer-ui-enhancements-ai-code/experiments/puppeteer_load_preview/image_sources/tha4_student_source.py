@@ -27,6 +27,9 @@ class Tha4StudentSource:
         if hasattr(main_frame, "_reset_infer_worker_runtime"):
             main_frame._reset_infer_worker_runtime()
         with main_frame._model_render_lock:
+            runtime = getattr(main_frame, "_tha4_infer_runtime", None)
+            if runtime is not None:
+                runtime.reset("source stopped")  # drops the CUDA Graph (GPU pool)
             main_frame.poser = None
             main_frame.character_model = None
             main_frame.torch_source_image = None

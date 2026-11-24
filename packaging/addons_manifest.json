@@ -84,8 +84,8 @@
     {
       "id": "output_enhancement",
       "folder": "output_enhancement",
-      "label": "Output enhancement (NN SR + RIFE ONNX + onnxruntime)",
-      "size_hint_mb": 800,
+      "label": "Output enhancement (NN SR + RIFE ONNX + onnxruntime; TensorRT on NVIDIA GPUs)",
+      "size_hint_mb": 2500,
       "required_for": [
         "nn_super_resolution",
         "nn_rife"

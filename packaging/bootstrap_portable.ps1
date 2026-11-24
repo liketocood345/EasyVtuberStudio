@@ -1,4 +1,4 @@
-param([string]$PortableRoot='', [switch]$Quiet, [switch]$ForceRebuildRuntime,
+﻿param([string]$PortableRoot='', [switch]$Quiet, [switch]$ForceRebuildRuntime,
       [switch]$MouseStudentOnly, [switch]$Tha3Only)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'addon_paths.ps1')
@@ -19,12 +19,13 @@ Set-CommonRuntimeBindings $PortableRoot
 # a Poetry/system environment. THA3's package link is shipped with the bundle.
 $mode=if($Tha3Only){'tha3'}elseif($MouseStudentOnly){'student'}else{'face'}
 & $python -I (Join-Path $PSScriptRoot 'probe_portable_runtime.py') --root $PortableRoot --mode $mode --configure-sources
-if($LASTEXITCODE -ne 0) { throw 'Cannot write folder-local source paths' }
+if($LASTEXITCODE -ne 0) { throw '无法写入本目录内的源码路径 / Cannot write folder-local source paths' }
 & $python -I -m pip check
-if($LASTEXITCODE -ne 0) { throw "Dependency consistency check failed: $relative" }
+if($LASTEXITCODE -ne 0) { throw "依赖一致性检查失败 / Dependency consistency check failed: $relative" }
 & $python -I (Join-Path $PSScriptRoot 'probe_portable_runtime.py') --root $PortableRoot --mode $mode --report (Join-Path $PortableRoot "workspace/diagnostics/runtime-$mode.json")
-if($LASTEXITCODE -ne 0) { throw "Local runtime import check failed: $relative" }
+if($LASTEXITCODE -ne 0) { throw "本地运行环境导入检查失败 / Local runtime import check failed: $relative" }
 Set-Content -LiteralPath (Join-Path $PortableRoot 'workspace/.portable_bootstrap_done') -Value (Get-Date -Format o) -Encoding UTF8
+Write-Host "便携环境就绪：$relative；Python 本体和依赖都留在 $PortableRoot 内"
 Write-Host "Portable environment ready: $relative; Python base and dependencies stay inside $PortableRoot"
 
 # dep-007 / hotspot #6: do not leak robocopy 1 (successful copy) to callers.

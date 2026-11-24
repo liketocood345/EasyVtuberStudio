@@ -27,9 +27,9 @@ def _numpy_rgba_to_wx_image(rgba: numpy.ndarray) -> wx.Image:
     if rgba.shape[0] != 512 or rgba.shape[1] != 512 or rgba.shape[2] != 4:
         raise ValueError(f"Unexpected THA3 frame shape: {rgba.shape}")
     bgra = rgba.astype(numpy.uint8, copy=False)
-    rgb = cv2.cvtColor(bgra, cv2.COLOR_BGRA2RGBA)
-    alpha = rgb[:, :, 3].tobytes()
-    return wx.Image(512, 512, rgb[:, :, 0:3].tobytes(), alpha)
+    # EVS-PERF 1.5: contiguous extraction (same bytes as strided slice.tobytes()).
+    return wx.Image(512, 512, cv2.cvtColor(bgra, cv2.COLOR_BGRA2RGB).tobytes(),
+                    cv2.extractChannel(bgra, 3).tobytes())
 
 
 def _load_png_rgba(path: str) -> numpy.ndarray:

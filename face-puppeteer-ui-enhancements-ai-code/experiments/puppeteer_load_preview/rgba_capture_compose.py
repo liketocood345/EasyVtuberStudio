@@ -77,17 +77,29 @@ def compose_character_rgba_from_keyframe(
         antialias_factor=antialias_factor)
 
 
+_OPAQUE_PLANES: dict = {}
+
+
 def _straight_rgba_to_premultiplied_bgra(rgba: numpy.ndarray) -> numpy.ndarray:
-    """Straight RGBA -> premultiplied BGRA (OpenCV path; releases GIL)."""
+    """Straight RGBA -> premultiplied BGRA (OpenCV path; releases GIL).
+
+    EVS-PERF 2.3: one 4-channel multiply by (a, a, a, 255) replaces
+    split + 3 multiplies + merge (6 passes -> 4). Same OpenCV kernel and
+    scale per element, so the output is bit-identical (checked over all
+    256x256 colour/alpha pairs); the alpha lane is a*255/255 == a.
+    """
     rgba = numpy.ascontiguousarray(rgba, dtype=numpy.uint8)
     if rgba.ndim != 3 or rgba.shape[2] != 4:
         raise ValueError(f"expected HxWx4 RGBA, got {rgba.shape}")
     bgra = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA)
-    b, g, r, a = cv2.split(bgra)
-    b = cv2.multiply(b, a, scale=1.0 / 255.0)
-    g = cv2.multiply(g, a, scale=1.0 / 255.0)
-    r = cv2.multiply(r, a, scale=1.0 / 255.0)
-    return cv2.merge([b, g, r, a])
+    alpha = cv2.extractChannel(bgra, 3)
+    opaque = _OPAQUE_PLANES.get(alpha.shape)
+    if opaque is None:
+        if len(_OPAQUE_PLANES) > 8:
+            _OPAQUE_PLANES.clear()
+        opaque = numpy.full(alpha.shape, 255, dtype=numpy.uint8)
+        _OPAQUE_PLANES[alpha.shape] = opaque
+    return cv2.multiply(bgra, cv2.merge([alpha, alpha, alpha, opaque]), scale=1.0 / 255.0)
 
 
 def rgba_has_color(rgba: numpy.ndarray) -> bool:

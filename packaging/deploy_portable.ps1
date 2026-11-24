@@ -32,15 +32,21 @@ $ProgressPreference = "SilentlyContinue"
 Initialize-DeploySession $PortableRoot
 Write-DeployLog "DEPLOY start: $PortableRoot"
 
-function Write-Step([string]$Message) {
+# zh/en: $Message is Chinese, $English the English line under it.
+function Write-Step([string]$Message, [string]$English = "") {
     Write-Host ""
     Write-Host "==> $Message"
-    Write-DeployLog $Message
+    if ($English) {
+        Write-Host "    $English"
+        Write-DeployLog "$Message / $English"
+    } else {
+        Write-DeployLog $Message
+    }
 }
 
 function Assert-ScriptSucceeded([string]$StepLabel) {
     if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-        throw "$StepLabel failed (exit=$LASTEXITCODE)"
+        throw "步骤失败 / Step failed: $StepLabel (exit=$LASTEXITCODE)"
     }
 }
 
@@ -81,20 +87,20 @@ function Resolve-DeployPackageIds {
 try {
     Write-Host ""
     Write-Host "============================================================"
-    Write-Host " EasyVtuberStudio - DEPLOY (install tiers)"
-    Write-Host " Tiers: basic_run, openseeface, face_puppeteer, tha3_models, tha4_training, output_enhancement"
+    Write-Host " EasyVtuberStudio 部署（安装档位） / DEPLOY (install tiers)"
+    Write-Host " 档位 / Tiers: basic_run, openseeface, face_puppeteer, tha3_models, tha4_training, output_enhancement"
     Write-Host "============================================================"
 
     $selected = @(Resolve-DeployPackageIds | Select-Object -Unique)
     $allowed=@('basic_run','mouse_student','openseeface','face_puppeteer','tha3_models','tha4_training','output_enhancement')
-    foreach($id in $selected) { if($allowed -notcontains $id) { throw "Unknown deploy package: $id" } }
+    foreach($id in $selected) { if($allowed -notcontains $id) { throw "未知的部署包 / Unknown deploy package: $id" } }
     if ($selected.Count -eq 0) {
-        Write-Host "No packages selected."
+        Write-Host "未选择任何包。 / No packages selected."
         exit 1
     }
 
     Write-Host ""
-    Write-Host "Selected: $($selected -join ', ')"
+    Write-Host "已选 / Selected: $($selected -join ', ')"
     Write-DeployLog "Selected: $($selected -join ', ')"
 
     Ensure-DeployLayoutDirectories $PortableRoot
@@ -117,7 +123,7 @@ try {
     $verifyTha4StudentScript = Join-Path $PSScriptRoot "verify_tha4_student.ps1"
 
     if (-not (Test-Path $fetchScript)) {
-        throw "Missing packaging\fetch_upstream_assets.ps1 under $PortableRoot"
+        throw "缺少文件 / Missing packaging\fetch_upstream_assets.ps1 under $PortableRoot"
     }
 
     $installFace = $selected -contains "face_puppeteer"
@@ -133,11 +139,11 @@ try {
 
     if ($installMouseStudent -and -not $SkipRuntime) {
         if (-not $ForceRebuildRuntime -and (Test-LocalPython $PortableRoot $studentPython) -and (Test-PythonImports $studentPython)) {
-            Write-Step "mouse student: already installed; skipping runtime bootstrap"
+            Write-Step "basic_run：已安装，跳过运行环境安装" "mouse student: already installed; skipping runtime bootstrap"
         } else {
-            Write-Step "mouse student: minimal Python runtime (runtime/venvs/common; base profile, no teacher extras)"
+            Write-Step "basic_run：最小 Python 运行环境（runtime/venvs/common；base 档，不含 teacher 附加包）" "mouse student: minimal Python runtime (runtime/venvs/common; base profile, no teacher extras)"
             if (-not (Test-Path $bootstrapScript)) {
-                throw "Missing packaging\bootstrap_portable.ps1"
+                throw "缺少文件 / Missing packaging\bootstrap_portable.ps1"
             }
             & $bootstrapScript -PortableRoot $PortableRoot -ForceRebuildRuntime:$ForceRebuildRuntime -MouseStudentOnly
             Assert-ScriptSucceeded "Mouse student runtime bootstrap"
@@ -145,93 +151,93 @@ try {
     }
 
     if ($installOsf -and -not $SkipUpstream) {
-        Write-Step "openseeface: facetracker binary + models"
+        Write-Step "openseeface：facetracker 程序 + 模型" "openseeface: facetracker binary + models"
         & $fetchScript -PortableRoot $PortableRoot -PackageIds @("openseeface")
         Assert-ScriptSucceeded "OpenSeeFace install"
     } elseif ($installOsf) {
-        Write-Step "openseeface: Skipped (-SkipUpstream)"
+        Write-Step "openseeface：已跳过（-SkipUpstream）" "openseeface: Skipped (-SkipUpstream)"
     }
 
     if ($installFace) {
-        Write-Step "face_puppeteer: MediaPipe .task"
+        Write-Step "face_puppeteer：MediaPipe .task 模型文件" "face_puppeteer: MediaPipe .task"
         & $fetchScript -PortableRoot $PortableRoot -PackageIds @("mediapipe_task")
         Assert-ScriptSucceeded "MediaPipe task install"
 
         if (-not $SkipRuntime) {
             if (-not $ForceRebuildRuntime -and (Test-FacePuppeteerRuntimeReady -PortableRoot $PortableRoot -ScriptRoot $PSScriptRoot)) {
-                Write-Step "face_puppeteer: already installed; skipping runtime bootstrap"
+                Write-Step "face_puppeteer：已安装，跳过运行环境安装" "face_puppeteer: already installed; skipping runtime bootstrap"
             } else {
-                Write-Step "face_puppeteer: Python runtime (runtime/venvs/common)"
+                Write-Step "face_puppeteer：Python 运行环境（runtime/venvs/common）" "face_puppeteer: Python runtime (runtime/venvs/common)"
                 if (-not (Test-Path $bootstrapScript)) {
-                    throw "Missing packaging\bootstrap_portable.ps1"
+                    throw "缺少文件 / Missing packaging\bootstrap_portable.ps1"
                 }
                 & $bootstrapScript -PortableRoot $PortableRoot -ForceRebuildRuntime:$ForceRebuildRuntime
                 Assert-ScriptSucceeded "Runtime bootstrap"
             }
         } else {
-            Write-Step "face_puppeteer: Skipped runtime (-SkipRuntime)"
+            Write-Step "face_puppeteer：已跳过运行环境（-SkipRuntime）" "face_puppeteer: Skipped runtime (-SkipRuntime)"
         }
     }
 
     if ($installTha3 -and -not $SkipRuntime) {
-        Write-Step 'tha3_models: shared local THA3 Python environment'
+        Write-Step 'tha3_models：共用的本地 THA3 Python 环境' 'tha3_models: shared local THA3 Python environment'
         & $bootstrapScript -PortableRoot $PortableRoot -Tha3Only -ForceRebuildRuntime:$ForceRebuildRuntime
         Assert-ScriptSucceeded 'THA3 runtime bootstrap'
     }
     if ($installTha3 -and -not $SkipUpstream) {
         if(-not $installFace) {
-            Write-Step 'tha3_models: camera face landmark asset for its own runtime'
+            Write-Step 'tha3_models：THA3 自带运行环境所需的摄像头面部关键点模型' 'tha3_models: camera face landmark asset for its own runtime'
             & $fetchScript -PortableRoot $PortableRoot -PackageIds @('mediapipe_task')
             Assert-ScriptSucceeded 'THA3 face landmark asset'
         }
-        Write-Step "tha3_models: THA3 portrait weights"
+        Write-Step "tha3_models：THA3 模型权重" "tha3_models: THA3 portrait weights"
         & $fetchScript -PortableRoot $PortableRoot -PackageIds @("tha3_models")
         Assert-ScriptSucceeded "THA3 models install"
     } elseif ($installTha3) {
-        Write-Step "tha3_models: Skipped (-SkipUpstream)"
+        Write-Step "tha3_models：已跳过（-SkipUpstream）" "tha3_models: Skipped (-SkipUpstream)"
     }
 
     if ($installTha4 -and -not $SkipUpstream) {
-        Write-Step "tha4_training: teacher weights + pose dataset"
+        Write-Step "tha4_training：Teacher 权重 + 姿态数据集" "tha4_training: teacher weights + pose dataset"
         & (Join-Path $PSScriptRoot 'bootstrap_tha4_teacher.ps1') -PortableRoot $PortableRoot
         Assert-ScriptSucceeded "THA4 training pack install"
     } elseif ($installTha4) {
-        Write-Step "tha4_training: Skipped (-SkipUpstream)"
+        Write-Step "tha4_training：已跳过（-SkipUpstream）" "tha4_training: Skipped (-SkipUpstream)"
     }
 
     if ($installEnhancement) {
         if ((Test-OutputEnhancementInstalled -PortableRoot $PortableRoot -ScriptRoot $PSScriptRoot)) {
             $probePy = Get-MouseStudentPythonExe -PortableRoot $PortableRoot
             if ($probePy -and (Test-OutputEnhancementPipImports -PythonExe $probePy)) {
-                Write-Step "output_enhancement: already installed; refreshing layout marker only"
+                Write-Step "output_enhancement：已安装，只刷新目录标记" "output_enhancement: already installed; refreshing layout marker only"
             } else {
-                Write-Step "output_enhancement: NN SR/RIFE runtime + data layout"
+                Write-Step "output_enhancement：NN 超分 / RIFE 运行环境 + 数据目录" "output_enhancement: NN SR/RIFE runtime + data layout"
             }
         } else {
-            Write-Step "output_enhancement: NN SR/RIFE runtime + data layout"
+            Write-Step "output_enhancement：NN 超分 / RIFE 运行环境 + 数据目录" "output_enhancement: NN SR/RIFE runtime + data layout"
         }
         $enhanceScript = Join-Path $PSScriptRoot "bootstrap_output_enhancement.ps1"
         if (-not (Test-Path $enhanceScript)) {
-            throw "Missing packaging\bootstrap_output_enhancement.ps1"
+            throw "缺少文件 / Missing packaging\bootstrap_output_enhancement.ps1"
         }
         & $enhanceScript -PortableRoot $PortableRoot
         Assert-ScriptSucceeded "output_enhancement bootstrap"
     }
 
-    Write-Step "Reconcile layout + verification"
+    Write-Step "整理目录结构 + 校验" "Reconcile layout + verification"
     if (Test-Path $reconcileScript) {
         & $reconcileScript -PortableRoot $PortableRoot
     }
 
     if ($Tha4StudentOnly -or $MouseStudentOnly -or ($installMouseStudent -and -not $installTha3 -and -not $installTha4 -and -not $installFace)) {
         if (-not (Test-Path (Join-Path $PSScriptRoot "verify_mouse_student.ps1"))) {
-            throw "Missing packaging\verify_mouse_student.ps1"
+            throw "缺少文件 / Missing packaging\verify_mouse_student.ps1"
         }
         & (Join-Path $PSScriptRoot "verify_mouse_student.ps1") -PortableRoot $PortableRoot -Strict
         Assert-ScriptSucceeded "Mouse student verification"
     } elseif ($installFace -and -not $installTha3 -and -not $installTha4) {
         if (-not (Test-Path $verifyTha4StudentScript)) {
-            throw "Missing packaging\verify_tha4_student.ps1"
+            throw "缺少文件 / Missing packaging\verify_tha4_student.ps1"
         }
         & $verifyTha4StudentScript -PortableRoot $PortableRoot -Strict
         Assert-ScriptSucceeded "THA4 student verification"
@@ -252,14 +258,18 @@ try {
     Set-Content -Path $marker -Value ((Get-Date -Format o) + "`npackages=" + ($selected -join ",")) -Encoding UTF8
 
     Write-Host ""
-    Write-Host "DEPLOY complete."
-    Write-Host "  Installed: $($selected -join ', ')"
+    Write-Host "部署完成 / DEPLOY complete."
+    Write-Host "  已安装 / Installed: $($selected -join ', ')"
+    Write-Host "  基础（鼠标 + Student）：装好 [1] basic_run 或面捕档 [2]/[3] 后运行 EasyVtuberStudio.exe"
     Write-Host "  Basic (Mouse + Student): EasyVtuberStudio.exe after [1] basic_run or face capture tier [2]/[3]"
+    Write-Host "  面捕：装 [2] openseeface 或 [3] face_puppeteer（MediaPipe）"
     Write-Host "  Face capture: install [2] openseeface OR [3] face_puppeteer (MediaPipe)"
+    Write-Host "  THA3：在程序里切换模式（需要 [4] tha3_models）"
     Write-Host "  THA3 portrait:  switch mode in app (needs tha3_models tier [4])"
     if ($installTha4) {
-        Write-Host "  THA4 training:  addons\tha4_training\THA4Train.exe"
+        Write-Host "  THA4 训练 / THA4 training:  addons\tha4_training\THA4Train.exe"
     } else {
+        Write-Host "  THA4 训练：运行 DEPLOY.bat 选 [5]"
         Write-Host "  THA4 training:  run DEPLOY.bat and choose tier [5]"
     }
     Write-Host ""
@@ -274,7 +284,8 @@ try {
 } catch {
     Write-DeployFailure $_
     Write-Host ""
-    Write-Host "Log: $(Join-Path $PortableRoot 'workspace\deploy.log')"
+    Write-Host "日志 / Log: $(Join-Path $PortableRoot 'workspace\deploy.log')"
+    Write-Host "提示：在 EasyVtuberStudio.exe 所在目录运行 DEPLOY.bat；保持联网；[1] 档预留约 4 GB 磁盘。"
     Write-Host "Tips: run DEPLOY.bat from the folder containing EasyVtuberStudio.exe; keep internet on; reserve ~4 GB disk for tier [1]."
     exit 1
 }

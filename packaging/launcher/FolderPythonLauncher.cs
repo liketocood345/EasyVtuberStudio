@@ -60,7 +60,24 @@ internal static class FolderPythonLauncher {
                     if (e.Data != null) lock (writeLock) File.AppendAllText(log, e.Data + Environment.NewLine, Encoding.UTF8);
                 };
                 child.OutputDataReceived += write; child.ErrorDataReceived += write;
-                child.Start(); child.BeginOutputReadLine(); child.BeginErrorReadLine();
+                // bh-6 26.11.03 14:05 s
+                int tries = 0;
+                for (;;) {
+                    try {
+                        child.Start();
+                        break;
+                    } catch (System.ComponentModel.Win32Exception ex) {
+                        tries++;
+                        if (tries >= 3) {
+                            throw new Exception(
+                                "Could not start folder Python. If the install is on a network or USB disk, wait and retry, or copy it to a local drive.\n\n" + ex.Message,
+                                ex);
+                        }
+                        System.Threading.Thread.Sleep(400);
+                    }
+                }
+                // bh-6 26.11.03 14:05 e
+                child.BeginOutputReadLine(); child.BeginErrorReadLine();
                 child.WaitForExit(); return child.ExitCode;
             }
         } catch (Exception error) {

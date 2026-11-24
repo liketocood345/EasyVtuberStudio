@@ -7,6 +7,7 @@ from torch.nn.functional import affine_grid
 
 from tha4.shion.core.module_factory import ModuleFactory
 from tha4.nn.siren.vanilla.siren import SirenArgs, Siren
+from tha4.nn.image_processing_util import evs_autocast_key, evs_cached_constant
 
 
 class SirenFaceMorpher00Args:
@@ -36,12 +37,10 @@ class SirenFaceMorpher00(Module):
         device = pose.device
 
         if position is None:
-            h, w = self.args.image_size, self.args.image_size
-            identity = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device=device).unsqueeze(0)
-            position = affine_grid(identity, [1, 1, h, w], align_corners=False) \
-                .view(1, h * w, 2)
-            position = torch.transpose(position, dim0=1, dim1=2).view(1, 2, h, w) \
-                .repeat(n, 1, 1, 1)
+            # EVS-PERF Phase 3: constant per (n, device, autocast); see evs_cached_constant.
+            position = evs_cached_constant(
+                self, ("position_grid", int(n), device, evs_autocast_key()),
+                lambda: self._build_position_grid(n, device))
 
         h, w = position.shape[2], position.shape[3]
         pose_image = pose.view(n, p, 1, 1).repeat(1, 1, h, w)
@@ -49,6 +48,14 @@ class SirenFaceMorpher00(Module):
         siren_input = torch.cat([position, pose_image], dim=1)
 
         return self.siren.forward(siren_input)
+
+    def _build_position_grid(self, n: int, device: torch.device) -> Tensor:
+        h, w = self.args.image_size, self.args.image_size
+        identity = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device=device).unsqueeze(0)
+        position = affine_grid(identity, [1, 1, h, w], align_corners=False) \
+            .view(1, h * w, 2)
+        return torch.transpose(position, dim0=1, dim1=2).view(1, 2, h, w) \
+            .repeat(n, 1, 1, 1)
 
 
 class SirenFaceMorpher00Factory(ModuleFactory):

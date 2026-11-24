@@ -95,6 +95,11 @@
       "typing-extensions",
       "urllib3",
       "werkzeug"
+    ],
+    "trt": [
+      "nvidia-cuda-runtime-cu11",
+      "tensorrt-cu11-bindings",
+      "tensorrt-cu11-libs"
     ]
   },
   "artifacts": {
@@ -557,6 +562,30 @@
       "filename": "wxpython-4.2.5-cp310-cp310-win_amd64.whl",
       "url": "https://files.pythonhosted.org/packages/6c/48/9d861888d3f9ff6d0559fe6578020d65fb5f5f8821be384a33d9331cfb4e/wxpython-4.2.5-cp310-cp310-win_amd64.whl",
       "sha256": "74fc76f8d22226e607d7072278cc09052da0cda508dea14a9933b014a4e5aeeb",
+      "origin": "pypi-release-api"
+    },
+    "tensorrt-cu11-libs": {
+      "name": "tensorrt-cu11-libs",
+      "version": "10.13.0.35",
+      "filename": "tensorrt_cu11_libs-10.13.0.35-py2.py3-none-win_amd64.whl",
+      "url": "https://pypi.nvidia.com/tensorrt-cu11-libs/tensorrt_cu11_libs-10.13.0.35-py2.py3-none-win_amd64.whl",
+      "sha256": "5b811646aabc94b5311c29fecace523f0f4028210a17f77304e4dfb475f32277",
+      "origin": "nvidia-pypi-index"
+    },
+    "tensorrt-cu11-bindings": {
+      "name": "tensorrt-cu11-bindings",
+      "version": "10.13.0.35",
+      "filename": "tensorrt_cu11_bindings-10.13.0.35-cp310-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/30/2f/b07adfffbdd3048f42c8db45ba0fbe81d6ddef0eaef11fd068ae018eb758/tensorrt_cu11_bindings-10.13.0.35-cp310-none-win_amd64.whl",
+      "sha256": "f97055d4a38d5c18c1c28888daa7b18a1ce22396f983103987902fb072f82510",
+      "origin": "pypi-release-api"
+    },
+    "nvidia-cuda-runtime-cu11": {
+      "name": "nvidia-cuda-runtime-cu11",
+      "version": "11.8.89",
+      "filename": "nvidia_cuda_runtime_cu11-11.8.89-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/48/ae/09f335dfbca630ae213e53d2a9294540620453fe2b37e7489ff05817a525/nvidia_cuda_runtime_cu11-11.8.89-py3-none-win_amd64.whl",
+      "sha256": "f60c9fdaed8065b38de8097867240efc5556a8a710007146daeb9082334a6e63",
       "origin": "pypi-release-api"
     }
   },

@@ -13,13 +13,13 @@
     },
     {
       "path": "DEPLOY.bat",
-      "size_bytes": 3470,
-      "sha256": "14dc5a8b7aace766f94da3ae275721bddaf7d10547007bd4ef064e5312982e6f"
+      "size_bytes": 5463,
+      "sha256": "cb5aae0f6aeffce158caf785d3111502829d5a454a2fe4243f520ec2d68d3c89"
     },
     {
       "path": "EasyVtuberStudio.exe",
-      "size_bytes": 68096,
-      "sha256": "8a3511d52fe6037e5389b2a4635ac56e3ace61b553dd2ad919650ad8134a0b63"
+      "size_bytes": 68608,
+      "sha256": "1175b2c2dcda73acdb4597b3aca2a517bbaf501e4d6dd929e8b6bd382393cb67"
     },
     {
       "path": "LICENSE",
@@ -218,8 +218,8 @@
     },
     {
       "path": "deps/pip/runtime-artifacts.json",
-      "size_bytes": 26790,
-      "sha256": "c3cb29bfcc190e47664422d3dc7d5b91fbe1696f4618c81321053da106b0cb0c"
+      "size_bytes": 28325,
+      "sha256": "f4b29add5517c572e85bb55c36380dc0837c65db8995fbd927d24fd9b1bd548c"
     },
     {
       "path": "deps/pip/upstream-baselines.json",
@@ -713,8 +713,8 @@
     },
     {
       "path": "docs/CHANGELOG.md",
-      "size_bytes": 21733,
-      "sha256": "56c65d5c7b10882f4cba4feafd77a4c50d3203f0930d892d3931a8caddb58137"
+      "size_bytes": 32110,
+      "sha256": "69b361eafaa5cfcfc2db06a087e8ad0b31de54f21468b721838ecf41bf66a76e"
     },
     {
       "path": "docs/CODEBASE_MAP.md",
@@ -728,8 +728,8 @@
     },
     {
       "path": "docs/DOC_INDEX.md",
-      "size_bytes": 5018,
-      "sha256": "746b15eda81d339dc2727986ef9e126e0e7c9701cc0f0e04d1aa0c81a271ffa2"
+      "size_bytes": 5171,
+      "sha256": "a4ed60109d327a2f2d2bc5bc864537f14a6d0b408840986b522beeea65ad70ca"
     },
     {
       "path": "docs/FORK_ROOT.md",
@@ -978,8 +978,8 @@
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/agent_runtime_diagnostics.py",
-      "size_bytes": 17722,
-      "sha256": "34fcc8ae4a8f1c22d2d3aedd832fc2d1cdd7dabb5df6ec5fbdd30ebb4a4fd770"
+      "size_bytes": 18059,
+      "sha256": "ab4ad083702ca85a0effd3fcbcb67cd3bbb755e4724801b598c8d838d72a776f"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/app_diag_log.py",
@@ -1032,14 +1032,24 @@
       "sha256": "0e2afb87f4a0ac151de0568a8b884f375b525437e217b35dcb1cd5ed23dcaf10"
     },
     {
+      "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/bench_tha4_infer.py",
+      "size_bytes": 15731,
+      "sha256": "b47812d8fcab65750fb2498eda1ca9634a4850bef8d35465a1dc5cba7ca99959"
+    },
+    {
+      "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/bench_ui_thread_paths.py",
+      "size_bytes": 9959,
+      "sha256": "1129a764b5de4d31414039464676742f62d5cc4bd1aeefc32e5bd7b6b8bb61c6"
+    },
+    {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/character_edge_postprocess.py",
       "size_bytes": 7348,
       "sha256": "7c617c4fa54da4e89e3bd6d6256ff70e46bfead1322dc633471a1707f29e3da9"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/character_model_mediapipe_puppeteer_load_preview.py",
-      "size_bytes": 722851,
-      "sha256": "6a21b901a8700787aacad7fe7f9ff58dc141289f1dac63691faef6bc652e8fde"
+      "size_bytes": 731745,
+      "sha256": "8a29297ac4493552fc8e77744413d7a82920e2970e7421cf91d01ccc73aae608"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/deps/README.md",
@@ -1118,13 +1128,13 @@
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/image_sources/tha3_source.py",
-      "size_bytes": 29353,
-      "sha256": "f4cec37d7b3834a111a9834edfdb45f950a01275bf65f69829020696a4d4d80c"
+      "size_bytes": 29880,
+      "sha256": "b5d96475656e0809240f18be9aa50f4246978d52bef7ac701d8d546afaed881a"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/image_sources/tha4_student_source.py",
-      "size_bytes": 2333,
-      "sha256": "e605fc9849b109967da5383d6db4c4a85cbcf23ac5d529db0b33da7bf5d5404d"
+      "size_bytes": 2526,
+      "sha256": "b05cf6fe72f23ac5cf9f51d7d915c4669a37aeb2f24fd88b5697aacd1696f70e"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/layer_hotkey_registry.py",
@@ -1233,8 +1243,8 @@
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/output_enhancement/live_scene_presenter.py",
-      "size_bytes": 3685,
-      "sha256": "ff5b4e2ab0bdda8fb55bda5fb857d71fddcd242a72f518a6794b60c5da8ba702"
+      "size_bytes": 4157,
+      "sha256": "8cc0ef023033d175a5eac4e4c0b0b5d5981f53f86d9d023667a5d59b320ff99e"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/output_enhancement/onnx_frame_contract.py",
@@ -1292,6 +1302,16 @@
       "sha256": "20409c62601eb8fd49ed8cfd175836f5443b14422f7955459421171461fedc7c"
     },
     {
+      "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/output_enhancement/tha4_infer_runtime.py",
+      "size_bytes": 20346,
+      "sha256": "8609b6089ae33e9acee25cae347332d1dacb1576cc5fa7e4ee747fe3b5a58765"
+    },
+    {
+      "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/output_enhancement/tha4_trt.py",
+      "size_bytes": 10825,
+      "sha256": "bda9cda53c3b8c04f55059b8aadc44a27ef8cbfbb1bce1e8b08539806605fa1b"
+    },
+    {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/output_enhancement/tha_infer.py",
       "size_bytes": 2227,
       "sha256": "11854a382a0bab73214cade5d54d9eb3778f5d2df09ec5365a84d73880d497b7"
@@ -1312,19 +1332,24 @@
       "sha256": "28d24a0aa27f2c0faa9c1e3b352cc60ab0b54da88ec9dcc747e8eef065e32bcd"
     },
     {
+      "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/perf_diag.py",
+      "size_bytes": 1836,
+      "sha256": "16f1d59142ba8cdf41dbbd900805f677183876d7ffcfcd1df77ad99de3dffa7b"
+    },
+    {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/portable_bootstrap.py",
       "size_bytes": 3037,
       "sha256": "84c3fc8b31a5320997b40d8fcd4f918466eb204443f68c56bb18a6af18fb8ae4"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/portable_paths.py",
-      "size_bytes": 16465,
-      "sha256": "f46973803979a87363c020be46f4f1ae03fd8f3158258c1b781b897bd541c6f5"
+      "size_bytes": 21038,
+      "sha256": "d2eb885d88d388a9408f49c0243a06b64b1c5299c08ebc1d888a94d5894580f3"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/portable_process_env.py",
-      "size_bytes": 1364,
-      "sha256": "52085643e759f5ff8f4bfdaf150819dc60adc3b1fff11a92250d3a2a680844aa"
+      "size_bytes": 1602,
+      "sha256": "02562f74c258d9684359b6a2ff043b5e51753bfb06e4b693bc4bcf27f0cb64d2"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/present_compose_cache.py",
@@ -1343,13 +1368,13 @@
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/region_wobble_layer_ui.py",
-      "size_bytes": 45763,
-      "sha256": "49fb889eabf1119703cd5312ea52424b9ae8047fcc11dbca359bc68c135ca73f"
+      "size_bytes": 47283,
+      "sha256": "47c2987974c70dcb5535e9bc4aa13c55719839b452d68245f23f014ff135221d"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/rgba_capture_compose.py",
-      "size_bytes": 3695,
-      "sha256": "932c2988252befad9928753ee00fc0524282696b702a053e64ea254b4a4456d1"
+      "size_bytes": 4183,
+      "sha256": "0d8af4e550aaae1b1f43e2e3f008ec31ceebb6d6e3853014a7d9d6c067e224e8"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/run_load_preview_puppeteer.bat - \u5feb\u6377\u65b9\u5f0f.lnk",
@@ -1438,8 +1463,8 @@
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/smoke_tha3_output.png",
-      "size_bytes": 114825,
-      "sha256": "faa90cfffb91466caed5d9ec58cd7f0d442ca6ae0894b9c001501cd411d59b37"
+      "size_bytes": 173565,
+      "sha256": "5111ca230aeb4e918d479916cc426e36d1aadf7ef539cb5a82e26f1adeb9f2c8"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/smoke_tha3_preview.py",
@@ -1483,8 +1508,8 @@
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/tha3_engine.py",
-      "size_bytes": 14389,
-      "sha256": "cf87fbc8ea73875595ccf68b7acb0446ad3f23e7c334c0628e1deab8bda3088d"
+      "size_bytes": 14463,
+      "sha256": "276ac4358040381dc4bb93a0bf9ec167cf81723a5b344bf344c1616d7a4d1bff"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/tha3_paths.py",
@@ -1498,8 +1523,8 @@
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/transparent_capture_window.py",
-      "size_bytes": 46333,
-      "sha256": "a9f77aed585fb637aa666eb698ddb6c12e359a96043c93271c13102d5582949f"
+      "size_bytes": 55919,
+      "sha256": "3a4a59375d0d203b0a23989832897c786156cda547e1b73fe56236d43ce7752b"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/experiments/puppeteer_load_preview/ui_alignment_monitor.py",
@@ -1788,8 +1813,8 @@
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/talking-head-anime-4-demo/src/tha4/nn/image_processing_util.py",
-      "size_bytes": 2334,
-      "sha256": "8b585467c503fb3052edd5bf0c77d0221972cc8fde605ba9a02ed0ddf7429314"
+      "size_bytes": 4623,
+      "sha256": "39c9caa62166cb8decc52fce7ed8012b9bc0cdfe1c89c6f49a2d4be6752fc123"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/talking-head-anime-4-demo/src/tha4/nn/init_function.py",
@@ -1848,8 +1873,8 @@
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/talking-head-anime-4-demo/src/tha4/nn/siren/face_morpher/siren_face_morpher_00.py",
-      "size_bytes": 2036,
-      "sha256": "f6ac2a0eee39fb7783d5366cb014fcd8ba53d2c689aba3cf382c9fcd838c80d6"
+      "size_bytes": 2448,
+      "sha256": "60e4498693273edb66c286ecce04bf3ea4573dfcadf4d15db367cc373bee79c4"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/talking-head-anime-4-demo/src/tha4/nn/siren/face_morpher/siren_face_morpher_00_trainer.py",
@@ -1868,8 +1893,8 @@
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/talking-head-anime-4-demo/src/tha4/nn/siren/morpher/siren_morpher_03.py",
-      "size_bytes": 5585,
-      "sha256": "d5c5aa50788765d81b061584bc1cc0543ab49041e41f62e63edba0aa34fdaf5a"
+      "size_bytes": 6005,
+      "sha256": "62641745f359c2d1be53cd8396fb4d8234b1e7ef096a7eeeeaaf2e6b8fe411f6"
     },
     {
       "path": "face-puppeteer-ui-enhancements-ai-code/talking-head-anime-4-demo/src/tha4/nn/siren/morpher/siren_morpher_03_trainer.py",
@@ -2358,13 +2383,13 @@
     },
     {
       "path": "packaging/addon_paths.ps1",
-      "size_bytes": 17416,
-      "sha256": "de0e393d1859687802ff22099ad2c63a14831fb1bbe02f4fd9e3d8b2e7375a8c"
+      "size_bytes": 19231,
+      "sha256": "e092ab1fed37940f695a9c1109fbb2c889855bced7b2608364e33447ee956a62"
     },
     {
       "path": "packaging/addons_manifest.json",
-      "size_bytes": 3433,
-      "sha256": "e98f5538e6eba9d31f6547ee69c757f95aa8cd519278af62e8e27d44aaa5955a"
+      "size_bytes": 3459,
+      "sha256": "b7c90fbc78a5fde4db699bddedee1e571da9c8bbd844fb5c1191c1301c74f8a7"
     },
     {
       "path": "packaging/antlr_wheel.py",
@@ -2383,13 +2408,13 @@
     },
     {
       "path": "packaging/bootstrap_output_enhancement.ps1",
-      "size_bytes": 1548,
-      "sha256": "c630c0717f668498db93ab7425a110137893223cce58ef0d9f0bd3ca20138912"
+      "size_bytes": 3785,
+      "sha256": "52f18ba34922cf71c981568d0eccec75a9b2810f366d3fbbd3372fb3e35b076f"
     },
     {
       "path": "packaging/bootstrap_portable.ps1",
-      "size_bytes": 2499,
-      "sha256": "086f58f41f293e0451f449922fd2002fb85fab2fe6f3c71d4c19a8c574f14e48"
+      "size_bytes": 2709,
+      "sha256": "9377293b9d084ac8bd52496f44606f3b420be1ff1b1348660f61bc7d19e55ca2"
     },
     {
       "path": "packaging/bootstrap_portable_v2.ps1",
@@ -2398,8 +2423,8 @@
     },
     {
       "path": "packaging/bootstrap_tha4_teacher.ps1",
-      "size_bytes": 463,
-      "sha256": "67172197447cdba7cae9fa256b5c84ac2c5ef309ab637dce45679b306095e73d"
+      "size_bytes": 502,
+      "sha256": "5dae5584e4d9d1ed3ba07d035cd8b652ab7f329083fa11f854811697abcdb3f8"
     },
     {
       "path": "packaging/build_github_zip.ps1",
@@ -2433,8 +2458,8 @@
     },
     {
       "path": "packaging/core_release.py",
-      "size_bytes": 8300,
-      "sha256": "a19b0a1d69d1b4109c96ee475320a09ae11e626c34cbd277da1b925b45964581"
+      "size_bytes": 8589,
+      "sha256": "918c9eb653f52939bc23281ea1fe2d328d7eae64c75e63faca23a09d05993793"
     },
     {
       "path": "packaging/core_scope.json",
@@ -2443,23 +2468,23 @@
     },
     {
       "path": "packaging/deploy_common.ps1",
-      "size_bytes": 3673,
-      "sha256": "362edaf2bb14914a47087293995c57773cfbdab0aca6a86b8d093eb23b5d2311"
+      "size_bytes": 3726,
+      "sha256": "b89cfd1363d0c98e829778197d34df60a5773cb9047aa6502c4d988c0e81e78f"
     },
     {
       "path": "packaging/deploy_menu.ps1",
-      "size_bytes": 7281,
-      "sha256": "4ef2109dfad5ff0e3b470cf35f2a6f6b02c736c38ba676069e155a401c9f8ca0"
+      "size_bytes": 9472,
+      "sha256": "0c78f79b16e61b835d3531a912972a4ca18c7e6bf8ae4ed7d4b0067b064d035f"
     },
     {
       "path": "packaging/deploy_portable.ps1",
-      "size_bytes": 12818,
-      "sha256": "a2056f40a8ab8e19f62c5e4591c9ef519b1863bea0df257ceb8232cc0558bf0e"
+      "size_bytes": 14774,
+      "sha256": "4ad7bf03d03578f1acd98b34d1baea50ac0be9ca813b296d8f939f46caaacea1"
     },
     {
       "path": "packaging/deploy_prompts.ps1",
-      "size_bytes": 2578,
-      "sha256": "fae2297922d82f7dc5c3f6bc7b13805b4fa20d9a3c50d3759ba3f1e9bb3ee503"
+      "size_bytes": 3793,
+      "sha256": "5399bf24aa1d56547f3e0a769ce23fcecd9757aa89385d19c38412debc929402"
     },
     {
       "path": "packaging/download_portable_assets.ps1",
@@ -2488,8 +2513,8 @@
     },
     {
       "path": "packaging/fetch_upstream_assets.ps1",
-      "size_bytes": 1223,
-      "sha256": "a61cafb9dffac5126d20097091182b4e095944b8ecad88139f33b85447cf8b34"
+      "size_bytes": 1289,
+      "sha256": "784987b39b1698f5a7f1f600a868a369edaad22e07f81e239251cfaeee9732e8"
     },
     {
       "path": "packaging/fetch_verified_wheels.py",
@@ -2513,13 +2538,13 @@
     },
     {
       "path": "packaging/install_teacher_in_root.ps1",
-      "size_bytes": 3076,
-      "sha256": "295f48162cb00890f3db9f637e9fda60a8bc8ad465e6eb3b3f4ebf644f2ccfa6"
+      "size_bytes": 3533,
+      "sha256": "458c88106eccb1aab068931e2581c9c9c8de0a1a7b73499012b27d1f73327547"
     },
     {
       "path": "packaging/launcher/FolderPythonLauncher.cs",
-      "size_bytes": 4221,
-      "sha256": "44687d7c4dd6255cada23d8c54d5ce9cee133d012e8a2d7589a369dd791cf43d"
+      "size_bytes": 4973,
+      "sha256": "902ad35e787dd48a3b7c51d53700536458a5865799d74a1d67b85cf1df8e44fd"
     },
     {
       "path": "packaging/launcher/launch_face_puppeteer.py",
@@ -2558,8 +2583,8 @@
     },
     {
       "path": "packaging/portable_environment.ps1",
-      "size_bytes": 11120,
-      "sha256": "f834863896bb044efeb5d7ba04d9f389655004c139cb50228ad43fc6429b416b"
+      "size_bytes": 11614,
+      "sha256": "a6b48ad135261743adfdd68e174983359fc7d8c95b47ecb31c82409849a3a4dc"
     },
     {
       "path": "packaging/probe_mouse_student_runtime.py",
@@ -2573,8 +2598,8 @@
     },
     {
       "path": "packaging/reconcile_portable_layout.ps1",
-      "size_bytes": 5295,
-      "sha256": "06df61795504e2869a3b14409670b74dff592e8511b9f4c323252980735dd74b"
+      "size_bytes": 5527,
+      "sha256": "dbfa7682fb7d6276defc01ebf78e09ffee1b5cf2e226948636d119a822d01357"
     },
     {
       "path": "packaging/repair_capture_dependencies.ps1",
@@ -2638,8 +2663,8 @@
     },
     {
       "path": "packaging/verify_deploy.ps1",
-      "size_bytes": 7650,
-      "sha256": "a39a301b0b19df639fc7cc357d79f04a43901cc0646986d9a300ef365af28662"
+      "size_bytes": 9249,
+      "sha256": "561942faf8022955e912b08c02fadc943a349fefe449f0c33abf9878c6f96d9f"
     },
     {
       "path": "packaging/verify_environment_baseline.ps1",
@@ -2663,8 +2688,8 @@
     },
     {
       "path": "packaging/verify_mouse_student.ps1",
-      "size_bytes": 3117,
-      "sha256": "f112cd4f5c1092bb4532a695c22264317f82e966c3cadd085eb61eab90f98abf"
+      "size_bytes": 3688,
+      "sha256": "a10a12e83c7da064f6bafff959bfb910967a9e941dbfbe3b70c674e857cdc456"
     },
     {
       "path": "packaging/verify_portable.ps1",
@@ -2673,8 +2698,8 @@
     },
     {
       "path": "packaging/verify_tha4_student.ps1",
-      "size_bytes": 3114,
-      "sha256": "e37336266ec2fe4c21fb657e3709638190735cccda220597fbe464e573f35f71"
+      "size_bytes": 3486,
+      "sha256": "c3694a2f26609eb465b260b71ee574000a8e11cf99c8efd6b4d3968ecc688f7a"
     },
     {
       "path": "poetry/README.md",
@@ -2723,8 +2748,8 @@
     },
     {
       "path": "scripts/launch/THA4Train.exe",
-      "size_bytes": 68096,
-      "sha256": "76fcd0991d79492458b361de58ac7b4ede4df7ea737f0056c8da4dd8852dbcb1"
+      "size_bytes": 68608,
+      "sha256": "d1fa4fad1289eec127edc17cb542e2d103a4a91694aa475182fb988cd7c5ddf1"
     },
     {
       "path": "scripts/launch/THA4_Distill.bat",
