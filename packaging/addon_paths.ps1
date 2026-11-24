@@ -1,4 +1,4 @@
-# Shared add-on path helpers (single source: packaging/addons_manifest.json)
+﻿# Shared add-on path helpers (single source: packaging/addons_manifest.json)
 $ErrorActionPreference = "Stop"
 
 function Resolve-PortableRoot {
@@ -8,11 +8,12 @@ function Resolve-PortableRoot {
     )
     $candidate = $PortableRoot.TrimEnd('\', '/')
     if ([string]::IsNullOrWhiteSpace($candidate)) {
-        throw "PortableRoot is empty. Run DEPLOY.bat from the extracted ZIP folder."
+        throw "PortableRoot 为空。请在解压后的目录运行 DEPLOY.bat。 / PortableRoot is empty. Run DEPLOY.bat from the extracted ZIP folder."
     }
     if (-not (Test-Path -LiteralPath $candidate)) {
         throw @(
-            "Portable root not found: $candidate"
+            "找不到便携根目录 / Portable root not found: $candidate"
+            "请在包含 EasyVtuberStudio.exe 和 DEPLOY.bat 的目录运行 DEPLOY.bat。"
             "Run DEPLOY.bat from the folder that contains EasyVtuberStudio.exe and DEPLOY.bat."
         ) -join "`n"
     }
@@ -85,7 +86,7 @@ function Get-AddonsManifest {
     param([string]$ScriptRoot = $PSScriptRoot)
     $path = Get-AddonsManifestPath -ScriptRoot $ScriptRoot
     if (-not (Test-Path $path)) {
-        throw "Missing packaging/addons_manifest.json"
+        throw "缺少文件 / Missing packaging/addons_manifest.json"
     }
     return Get-Content $path -Raw | ConvertFrom-Json
 }
@@ -109,7 +110,7 @@ function Get-AddonRecord {
     )
     $record = @($Manifest.addons | Where-Object { $_.id -eq $AddonId } | Select-Object -First 1)
     if (-not $record) {
-        throw "Unknown addon id: $AddonId"
+        throw "未知的附加组件 ID / Unknown addon id: $AddonId"
     }
     return $record
 }
@@ -249,6 +250,36 @@ function Test-OrtHasDirectML {
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = "SilentlyContinue"
     & $PythonExe -c "import onnxruntime as o, sys; sys.exit(0 if 'DmlExecutionProvider' in o.get_available_providers() else 1)" 2>$null | Out-Null
+    $ok = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $prevEap
+    return $ok
+}
+
+# f-058 / EVS-PERF 3.4: TensorRT 10 needs an NVIDIA GPU with compute capability
+# >= 7.5 (Turing or newer). Probed with the target runtime's own torch.
+function Test-TensorRTCapableGpu {
+    param([Parameter(Mandatory = $true)][string]$PythonExe)
+    if (-not (Test-Path -LiteralPath $PythonExe)) { return $false }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    & $PythonExe -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() and torch.cuda.get_device_capability(0) >= (7, 5) else 1)" 2>$null | Out-Null
+    $ok = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $prevEap
+    return $ok
+}
+
+# True when tensorrt_bindings imports and matches the version pinned in the
+# shipped recipe (deps/pip/runtime-artifacts.json, profile 'trt').
+function Test-TensorRTImport {
+    param([Parameter(Mandatory = $true)][string]$PythonExe, [string]$PortableRoot = "")
+    if (-not (Test-Path -LiteralPath $PythonExe)) { return $false }
+    $recipe = if ($PortableRoot) { Join-Path $PortableRoot 'deps/pip/runtime-artifacts.json' } else { '' }
+    $code = "import json, sys, tensorrt_bindings as t; r = sys.argv[1]; " +
+            "want = json.load(open(r, encoding='utf-8'))['artifacts']['tensorrt-cu11-bindings']['version'] if r else t.__version__; " +
+            "sys.exit(0 if t.__version__ == want else 1)"
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    & $PythonExe -c $code $recipe 2>$null | Out-Null
     $ok = ($LASTEXITCODE -eq 0)
     $ErrorActionPreference = $prevEap
     return $ok

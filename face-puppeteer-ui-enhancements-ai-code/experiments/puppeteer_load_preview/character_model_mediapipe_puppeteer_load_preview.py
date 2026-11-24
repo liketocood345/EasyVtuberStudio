@@ -34,11 +34,13 @@ if _EXPERIMENT_DIR not in sys.path:
 from portable_process_env import install_local_environment, debug_log_path
 install_local_environment()
 import PIL.Image
+from perf_diag import PERF_DIAG, append_line as _diag_append_line
+from longrun_diag import note_display_gap_ms as _lr_note_display_gap_ms, note_hour_mark as _lr_note_hour_mark
 
 # #region agent log
 _AGENT_DEBUG_LOG_PATH = debug_log_path('d095ab')
-_E5_LOG_LOCK = threading.Lock()
-_E5_LOG_PATH = r"e:\.cursor\debug-e5b45c.log"
+# EVS-PERF 0.1: was hard-coded e:\.cursor\debug-e5b45c.log; now portable + size-capped.
+_E5_LOG_PATH = debug_log_path('e5b45c')
 
 
 def _e5_rss_mb() -> float:
@@ -90,10 +92,7 @@ def _e5_debug_log(
             "data": data,
             "timestamp": int(time.time() * 1000),
         }
-        line = json.dumps(payload, ensure_ascii=False) + "\n"
-        with _E5_LOG_LOCK:
-            with open(_E5_LOG_PATH, "a", encoding="utf-8") as handle:
-                handle.write(line)
+        _diag_append_line(_E5_LOG_PATH, json.dumps(payload, ensure_ascii=False) + "\n")
     except Exception:
         pass
     # #endregion
@@ -359,6 +358,7 @@ from output_enhancement.pose_interpolation import POSE_FRAME_INTERP_OFF as FRAME
 from output_enhancement.config import (
     INFER_BACKEND_LABELS,
     INFER_BACKEND_PYTORCH,
+    INFER_BACKEND_TRT,
     INFER_BACKEND_VALUES,
     NN_FRAME_INTERP_LABELS,
     NN_FRAME_INTERP_OFF,
@@ -388,6 +388,7 @@ from output_enhancement.config import (
 from output_enhancement.paths import find_repo_root, is_output_enhancement_installed
 from output_enhancement.slow_task import run_slow_task
 from output_enhancement.tha_infer import apply_poser_precision
+from output_enhancement.tha4_infer_runtime import Tha4InferRuntime
 from rgba_capture_compose import (
     compose_character_rgba_from_keyframe,
     scale_rgba,
@@ -972,14 +973,15 @@ class WebcamPreviewPopupFrame(wx.Frame):
         draw_x = (panel_size.x - draw_w) // 2
         draw_y = (panel_size.y - draw_h) // 2
         # #region agent log
-        try:
-            import json as _json, time as _time
-            _now = _time.monotonic()
-            if _now - float(getattr(self, "_dbg_popup_paint_log_mono", 0.0) or 0.0) >= 2.0:
-                self._dbg_popup_paint_log_mono = _now
-                open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix-dshow", "hypothesisId": "J", "location": "WebcamPreviewPopupFrame.on_paint_preview_panel", "message": "webcam popup paint scale", "data": {"panel": [int(panel_size.x), int(panel_size.y)], "bitmap": [int(source_size.x), int(source_size.y)], "draw": [int(draw_w), int(draw_h)]}, "timestamp": int(_time.time() * 1000)}) + "\n")
-        except Exception:
-            pass
+        if PERF_DIAG:  # EVS-PERF 0.1: opt-in hot-path diagnostics
+            try:
+                import json as _json, time as _time
+                _now = _time.monotonic()
+                if _now - float(getattr(self, "_dbg_popup_paint_log_mono", 0.0) or 0.0) >= 2.0:
+                    self._dbg_popup_paint_log_mono = _now
+                    open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix-dshow", "hypothesisId": "J", "location": "WebcamPreviewPopupFrame.on_paint_preview_panel", "message": "webcam popup paint scale", "data": {"panel": [int(panel_size.x), int(panel_size.y)], "bitmap": [int(source_size.x), int(source_size.y)], "draw": [int(draw_w), int(draw_h)]}, "timestamp": int(_time.time() * 1000)}) + "\n")
+            except Exception:
+                pass
         # #endregion
         if draw_w == source_size.x and draw_h == source_size.y:
             dc.DrawBitmap(source_bitmap, draw_x, draw_y, True)
@@ -1182,6 +1184,9 @@ class MainFrame(wx.Frame):
         self.video_capture = video_capture
         self.pose_converter = pose_converter
         self.device = device
+        # EVS-PERF Phase 3: THA4 eager/CUDA-Graph render runtime; guarded by _model_render_lock.
+        self._tha4_infer_runtime = Tha4InferRuntime(device)
+        self._tha4_graph_logged_status = None
 
         self.source_image_bitmap = wx.Bitmap(MainFrame.SOURCE_PREVIEW_SIZE, MainFrame.SOURCE_PREVIEW_SIZE)
         self.result_image_bitmap = wx.Bitmap(1, 1)
@@ -1378,6 +1383,10 @@ class MainFrame(wx.Frame):
         self._pending_infer_face_meta = (0, 0.)
         self._worker_infer_cap_hz = 30
         self._worker_tha_fp16 = False
+        # EVS-PERF 3.4 / f-058: THA4 Student TensorRT is opt-in via the NN backend
+        # choice; read on the UI thread, consumed by the infer worker.
+        self._worker_tha4_trt = False
+        self._tha4_trt_logged_state = None
         self._completed_infer_result = None
         self._infer_result_apply_scheduled = False
         self._pending_infer_pose: Optional[List[float]] = None
@@ -1391,6 +1400,8 @@ class MainFrame(wx.Frame):
         # MediaPipe face detection runs on a dedicated worker thread (latest-wins)
         # so the heavy detect_for_video call never blocks the wx UI/render thread.
         self._mediapipe_lock = threading.Lock()
+        # EVS-PERF 1.6: the detect worker lingers on this condition between jobs.
+        self._mediapipe_job_cond = threading.Condition(self._mediapipe_lock)
         from mocap_frame_rate import MocapFrameRatePolicy
         self._mocap_rate = MocapFrameRatePolicy()
         self._mediapipe_input_generation = 0
@@ -3971,20 +3982,21 @@ class MainFrame(wx.Frame):
                 reference_pose, current_pose)
             if spiked:
                 # #region agent log
-                now_mono = time.perf_counter()
-                last_log = float(getattr(self, "_dbg_fast_action_log_mono", 0.0))
-                if now_mono - last_log >= 0.25:
-                    self._dbg_fast_action_log_mono = now_mono
-                    _agent_debug_ndjson(
-                        "should_infer_pose:fast_action",
-                        "fast_action_infer_bypass",
-                        {
-                            "kind": spike_kind,
-                            "mag": round(spike_mag, 4),
-                            "cap_hz": int(self.get_effective_infer_cap_hz()),
-                        },
-                        hypothesis_id="FA",
-                        run_id="scale-fast-action")
+                if PERF_DIAG:  # EVS-PERF 0.1: opt-in hot-path diagnostics
+                    now_mono = time.perf_counter()
+                    last_log = float(getattr(self, "_dbg_fast_action_log_mono", 0.0))
+                    if now_mono - last_log >= 0.25:
+                        self._dbg_fast_action_log_mono = now_mono
+                        _agent_debug_ndjson(
+                            "should_infer_pose:fast_action",
+                            "fast_action_infer_bypass",
+                            {
+                                "kind": spike_kind,
+                                "mag": round(spike_mag, 4),
+                                "cap_hz": int(self.get_effective_infer_cap_hz()),
+                            },
+                            hypothesis_id="FA",
+                            run_id="scale-fast-action")
                 # #endregion
                 return True
             now_ns = time.time_ns()
@@ -4971,6 +4983,7 @@ class MainFrame(wx.Frame):
         # bh-1 26.10.30 12:52 e
 
     def _sync_output_enhancement_config(self) -> None:
+        self._worker_tha4_trt = self.get_nn_infer_backend() == INFER_BACKEND_TRT
         pipe = getattr(self, "output_enhancement", None)
         if pipe is None:
             return
@@ -5132,8 +5145,11 @@ class MainFrame(wx.Frame):
                     return
                 self._cached_present_rgba = rgba
                 premul = _straight_rgba_to_premultiplied_bgra(rgba)
+                # EVS-PERF 2.3: rgba is this frame's fresh presenter output and
+                # premul is new; neither is written again (_cached_present_rgba
+                # readers only read), so hand them over without copies.
                 capture.update_frame_rgba(rgba, frame_signature=("live-scene", id(presenter), serial),
-                                          premultiplied_bgra=premul)
+                                          premultiplied_bgra=premul, owned=True)
                 # #region agent log
                 self._dbg_e5_live_delivers = int(getattr(self, "_dbg_e5_live_delivers", 0)) + 1
                 # #endregion
@@ -10568,11 +10584,12 @@ class MainFrame(wx.Frame):
             # Do the grab on a background worker (latest-wins) and only read the
             # most recent frame so a stalled grab never blocks the UI.
             self._ensure_window_capture_worker()
+            # EVS-PERF 1.2: no defensive copy. Workers publish a fresh array per
+            # frame and never write into it; consumers here only read (preview,
+            # cvtColor for MediaPipe, _last_good_webcam_bgr_frame, snapshots).
+            # Treat the returned frame as read-only.
             with self._window_capture_lock:
-                frame = self._window_capture_latest_frame
-                if frame is None:
-                    return None
-                return frame.copy()
+                return self._window_capture_latest_frame
 
         if self.video_source_kind == "camera":
             # VideoCapture.read() can block the camera driver for minutes; keep it
@@ -10584,7 +10601,7 @@ class MainFrame(wx.Frame):
                     return None
                 self._last_read_capture_sample_mono = self._camera_capture_sample_mono
                 self._last_read_capture_frame_token = ("camera", self._mediapipe_input_generation, self._camera_worker_frame_serial)
-                return frame.copy()
+                return frame  # EVS-PERF 1.2: read-only, see window branch above
 
         if self.video_source_kind == "image":
             if not self._image_file_path:
@@ -10644,25 +10661,26 @@ class MainFrame(wx.Frame):
             if not self._face_landmarker_init_in_progress and not self._face_landmarker_init_failed:
                 self._init_face_landmarker_async()
             # #region agent log
-            try:
-                _now = time.monotonic()
-                if _now - float(getattr(self, "_dbg_mp_vs_skip_mono", 0.0) or 0.0) >= 2.0:
-                    self._dbg_mp_vs_skip_mono = _now
-                    import json as _json
-                    open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
-                        "sessionId": "86a17c",
-                        "runId": "post-fix-agent-cmd",
-                        "hypothesisId": "H3",
-                        "location": "load_preview.py:_maybe_pose_from_evs_capture",
-                        "message": "pose-from-video-source waiting landmarker",
-                        "data": {
-                            "init_busy": bool(self._face_landmarker_init_in_progress),
-                            "init_failed": bool(self._face_landmarker_init_failed),
-                        },
-                        "timestamp": int(time.time() * 1000),
-                    }) + "\n")
-            except Exception:
-                pass
+            if PERF_DIAG:  # EVS-PERF 0.1: opt-in hot-path diagnostics
+                try:
+                    _now = time.monotonic()
+                    if _now - float(getattr(self, "_dbg_mp_vs_skip_mono", 0.0) or 0.0) >= 2.0:
+                        self._dbg_mp_vs_skip_mono = _now
+                        import json as _json
+                        open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                            "sessionId": "86a17c",
+                            "runId": "post-fix-agent-cmd",
+                            "hypothesisId": "H3",
+                            "location": "load_preview.py:_maybe_pose_from_evs_capture",
+                            "message": "pose-from-video-source waiting landmarker",
+                            "data": {
+                                "init_busy": bool(self._face_landmarker_init_in_progress),
+                                "init_failed": bool(self._face_landmarker_init_failed),
+                            },
+                            "timestamp": int(time.time() * 1000),
+                        }) + "\n")
+                except Exception:
+                    pass
             # #endregion
             return
         if not self.should_process_mediapipe(time_now):
@@ -10784,14 +10802,15 @@ class MainFrame(wx.Frame):
         try:
             panel_hwnd = int(panel.GetHandle() or 0)
             # #region agent log
-            try:
-                import json as _json, time as _time
-                _now = _time.monotonic()
-                if _now - float(getattr(self, "_dbg_osf_dock_log_mono", 0.0) or 0.0) >= 2.0:
-                    self._dbg_osf_dock_log_mono = _now
-                    open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix", "hypothesisId": "C", "location": "load_preview.py:_sync_openseeface_preview_window", "message": "osf dock into capture panel", "data": {"panel_hwnd": panel_hwnd, "preview_hwnd": int(self._osf_runtime.get_preview_hwnd() or 0), "box": [int(client_x), int(client_y), int(box_w), int(box_h)]}, "timestamp": int(_time.time() * 1000)}) + "\n")
-            except Exception:
-                pass
+            if PERF_DIAG:  # EVS-PERF 0.1: opt-in hot-path diagnostics
+                try:
+                    import json as _json, time as _time
+                    _now = _time.monotonic()
+                    if _now - float(getattr(self, "_dbg_osf_dock_log_mono", 0.0) or 0.0) >= 2.0:
+                        self._dbg_osf_dock_log_mono = _now
+                        open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({"sessionId": "86a17c", "runId": "post-fix", "hypothesisId": "C", "location": "load_preview.py:_sync_openseeface_preview_window", "message": "osf dock into capture panel", "data": {"panel_hwnd": panel_hwnd, "preview_hwnd": int(self._osf_runtime.get_preview_hwnd() or 0), "box": [int(client_x), int(client_y), int(box_w), int(box_h)]}, "timestamp": int(_time.time() * 1000)}) + "\n")
+                except Exception:
+                    pass
             # #endregion
             # bh-5 26.10.29 21:02 s
             self._osf_runtime.hide_preview_window()
@@ -11149,20 +11168,23 @@ class MainFrame(wx.Frame):
 
         preview_width = max(1, int(preview_width))
         preview_height = max(1, int(preview_height))
-        rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
-        if mirror:
-            rgb_frame = cv2.flip(rgb_frame, 1)
-        frame_h, frame_w = rgb_frame.shape[:2]
+        # EVS-PERF 1.2: BGR->RGB after the resize (a channel permutation commutes
+        # with per-channel INTER_AREA). Flip stays before the resize: INTER_AREA
+        # is not mirror-symmetric at e.g. 1280->192 (+-1 on ~0.1% pixels), and
+        # this order keeps the preview bit-identical to the former code.
+        frame_h, frame_w = bgr_frame.shape[:2]
         if frame_w <= 0 or frame_h <= 0:
             return self.webcam_capture_bitmap
+        if mirror:
+            bgr_frame = cv2.flip(bgr_frame, 1)
 
         scale = min(preview_width / frame_w, preview_height / frame_h)
         scaled_w = max(1, int(round(frame_w * scale)))
         scaled_h = max(1, int(round(frame_h * scale)))
-        resized_frame = cv2.resize(
-            rgb_frame,
+        resized_frame = cv2.cvtColor(cv2.resize(
+            bgr_frame,
             (scaled_w, scaled_h),
-            interpolation=cv2.INTER_AREA)
+            interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2RGB)
         if scaled_w == preview_width and scaled_h == preview_height:
             output_frame = resized_frame
         else:
@@ -12425,27 +12447,28 @@ class MainFrame(wx.Frame):
                 target_offset_y = (latest_motion.center_y - neutral_motion.center_y) * self.move_y_gain_spin.GetValue()
                 target_scale = self.compute_target_scale(latest_motion.face_size, neutral_motion.face_size)
                 # #region agent log
-                now_mono = time.perf_counter()
-                last_log = float(getattr(self, "_dbg_scale_live_log_mono", 0.0))
-                if now_mono - last_log >= 0.35:
-                    self._dbg_scale_live_log_mono = now_mono
-                    raw_delta = float(latest_motion.face_size) - float(neutral_motion.face_size)
-                    _agent_debug_ndjson(
-                        "update_display_transform_state:live",
-                        "scale_live_sample",
-                        {
-                            "mocap": (
-                                "osf" if self.is_openseeface_mocap_mode()
-                                else ("mouse" if self.is_mouse_audio_mocap_mode() else "mp")),
-                            "latest_face_size": round(float(latest_motion.face_size), 5),
-                            "neutral_face_size": round(float(neutral_motion.face_size), 5),
-                            "raw_delta": round(raw_delta, 5),
-                            "curve_delta": round(raw_delta, 5),
-                            "approaching_ui": raw_delta >= 0.0,
-                            "target_scale": round(float(target_scale), 4),
-                        },
-                        hypothesis_id="S3",
-                        run_id="post-fix")
+                if PERF_DIAG:  # EVS-PERF 0.1: opt-in hot-path diagnostics
+                    now_mono = time.perf_counter()
+                    last_log = float(getattr(self, "_dbg_scale_live_log_mono", 0.0))
+                    if now_mono - last_log >= 0.35:
+                        self._dbg_scale_live_log_mono = now_mono
+                        raw_delta = float(latest_motion.face_size) - float(neutral_motion.face_size)
+                        _agent_debug_ndjson(
+                            "update_display_transform_state:live",
+                            "scale_live_sample",
+                            {
+                                "mocap": (
+                                    "osf" if self.is_openseeface_mocap_mode()
+                                    else ("mouse" if self.is_mouse_audio_mocap_mode() else "mp")),
+                                "latest_face_size": round(float(latest_motion.face_size), 5),
+                                "neutral_face_size": round(float(neutral_motion.face_size), 5),
+                                "raw_delta": round(raw_delta, 5),
+                                "curve_delta": round(raw_delta, 5),
+                                "approaching_ui": raw_delta >= 0.0,
+                                "target_scale": round(float(target_scale), 4),
+                            },
+                            hypothesis_id="S3",
+                            run_id="post-fix")
                 # #endregion
                 tilt_limit = max(0.0, self.tilt_limit_spin.GetValue())
                 head_roll_delta = (self.latest_head_roll_deg if self.latest_head_roll_deg is not None else 0.0) \
@@ -12602,76 +12625,77 @@ class MainFrame(wx.Frame):
                     # bh-5 26.10.30 13:08 e
                 # bh-5 26.10.30 12:52 e
             # #region agent log
-            try:
-                _now = time.monotonic()
-                if _now - float(getattr(self, "_dbg_osf_cam_log_mono", 0.0) or 0.0) >= 2.0:
-                    self._dbg_osf_cam_log_mono = _now
-                    import json as _json
-                    _pipe = getattr(self, "output_enhancement", None)
-                    _actual_nn = ""
-                    try:
-                        _actual_nn = str(_pipe.pipeline.actual_nn_backend_name())
-                    except Exception:
+            if PERF_DIAG:  # EVS-PERF 0.1: opt-in hot-path diagnostics
+                try:
+                    _now = time.monotonic()
+                    if _now - float(getattr(self, "_dbg_osf_cam_log_mono", 0.0) or 0.0) >= 2.0:
+                        self._dbg_osf_cam_log_mono = _now
+                        import json as _json
+                        _pipe = getattr(self, "output_enhancement", None)
                         _actual_nn = ""
-                    _mean = None
-                    if self._last_good_webcam_bgr_frame is not None:
                         try:
-                            _mean = round(float(self._last_good_webcam_bgr_frame.reshape(-1)[::96].mean()), 2)
+                            _actual_nn = str(_pipe.pipeline.actual_nn_backend_name())
                         except Exception:
-                            _mean = None
-                    _model_hz = None
-                    _source_hz = None
-                    try:
-                        _model_hz = round(float(_pipe.get_model_rate_limit_hz()), 2)
-                        _source_hz = round(float(_pipe.get_source_rate_limit_hz()), 2)
-                    except Exception:
-                        pass
-                    open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
-                        "sessionId": "86a17c",
-                        "runId": "post-fix-inf10",
-                        "hypothesisId": "F",
-                        "location": "load_preview.py:update_capture_panel:osf",
-                        "message": "osf capture panel camera paint",
-                        "data": {
-                            "kind": self.video_source_kind,
-                            "has_capture": self.video_capture is not None,
-                            "api": str(getattr(self, "current_video_capture_api", None)),
-                            "live_source": bool(self.video_source_kind == "camera" and self.video_capture is not None),
-                            "paint_live": bool(
-                                self._last_good_webcam_bgr_frame is not None
-                                and (_now - float(
-                                    getattr(self, "_last_good_webcam_bgr_mono", 0.0) or 0.0)) <= 0.4
-                                and float(_mean or 0.0) >= 2.0),
-                            "last_good_age": round(
-                                _now - float(getattr(self, "_last_good_webcam_bgr_mono", 0.0) or 0.0), 3),
-                            "luma": _mean,
-                            "opening": bool(getattr(self, "_osf_preview_camera_opening", False)),
-                            "osf_running": bool(getattr(self._osf_runtime.status, "process_running", False)),
-                            "osf_packets": int(getattr(self._osf_runtime.status, "packets_received", 0) or 0),
-                            "inf_fps": round(float(getattr(self, "_inference_fps", 0.0) or 0.0), 2),
-                            "in_fps": round(float(getattr(self, "_input_fps", 0.0) or 0.0), 2),
-                            "source": str(self.get_image_source_mode()),
-                            "nn_ui": str(self.get_nn_infer_backend()),
-                            "nn_actual": _actual_nn,
-                            "rife": int(self.get_nn_frame_interpolation_multiplier()),
-                            "rife_eff": int(_pipe.pipeline._effective_nn_multiplier()) if _pipe is not None else 0,
-                            "mouth_cap": int(self.get_mouth_infer_cap_hz()),
-                            "model_hz": _model_hz,
-                            "source_hz": _source_hz,
-                            "tha_ms": round(float(getattr(self, "_dbg_last_tha_ms", 0.0) or 0.0), 2),
-                            "target_fps": bool(self.is_target_frame_rate_enabled()),
-                            "warmup_busy": bool(getattr(self, "_enhancement_warmup_busy", False)),
-                            "dual_channel": bool(
-                                self.video_capture is not None
-                                and getattr(self._osf_runtime.status, "process_running", False)),
-                            "pose_from_vs": bool(getattr(self, "_osf_pose_from_video_source", False)),
-                            "has_mp_pose": self.mediapipe_face_pose is not None,
-                            "landmarker": self.face_landmarker is not None,
-                        },
-                        "timestamp": int(time.time() * 1000),
-                    }) + "\n")
-            except Exception:
-                pass
+                            _actual_nn = ""
+                        _mean = None
+                        if self._last_good_webcam_bgr_frame is not None:
+                            try:
+                                _mean = round(float(self._last_good_webcam_bgr_frame.reshape(-1)[::96].mean()), 2)
+                            except Exception:
+                                _mean = None
+                        _model_hz = None
+                        _source_hz = None
+                        try:
+                            _model_hz = round(float(_pipe.get_model_rate_limit_hz()), 2)
+                            _source_hz = round(float(_pipe.get_source_rate_limit_hz()), 2)
+                        except Exception:
+                            pass
+                        open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                            "sessionId": "86a17c",
+                            "runId": "post-fix-inf10",
+                            "hypothesisId": "F",
+                            "location": "load_preview.py:update_capture_panel:osf",
+                            "message": "osf capture panel camera paint",
+                            "data": {
+                                "kind": self.video_source_kind,
+                                "has_capture": self.video_capture is not None,
+                                "api": str(getattr(self, "current_video_capture_api", None)),
+                                "live_source": bool(self.video_source_kind == "camera" and self.video_capture is not None),
+                                "paint_live": bool(
+                                    self._last_good_webcam_bgr_frame is not None
+                                    and (_now - float(
+                                        getattr(self, "_last_good_webcam_bgr_mono", 0.0) or 0.0)) <= 0.4
+                                    and float(_mean or 0.0) >= 2.0),
+                                "last_good_age": round(
+                                    _now - float(getattr(self, "_last_good_webcam_bgr_mono", 0.0) or 0.0), 3),
+                                "luma": _mean,
+                                "opening": bool(getattr(self, "_osf_preview_camera_opening", False)),
+                                "osf_running": bool(getattr(self._osf_runtime.status, "process_running", False)),
+                                "osf_packets": int(getattr(self._osf_runtime.status, "packets_received", 0) or 0),
+                                "inf_fps": round(float(getattr(self, "_inference_fps", 0.0) or 0.0), 2),
+                                "in_fps": round(float(getattr(self, "_input_fps", 0.0) or 0.0), 2),
+                                "source": str(self.get_image_source_mode()),
+                                "nn_ui": str(self.get_nn_infer_backend()),
+                                "nn_actual": _actual_nn,
+                                "rife": int(self.get_nn_frame_interpolation_multiplier()),
+                                "rife_eff": int(_pipe.pipeline._effective_nn_multiplier()) if _pipe is not None else 0,
+                                "mouth_cap": int(self.get_mouth_infer_cap_hz()),
+                                "model_hz": _model_hz,
+                                "source_hz": _source_hz,
+                                "tha_ms": round(float(getattr(self, "_dbg_last_tha_ms", 0.0) or 0.0), 2),
+                                "target_fps": bool(self.is_target_frame_rate_enabled()),
+                                "warmup_busy": bool(getattr(self, "_enhancement_warmup_busy", False)),
+                                "dual_channel": bool(
+                                    self.video_capture is not None
+                                    and getattr(self._osf_runtime.status, "process_running", False)),
+                                "pose_from_vs": bool(getattr(self, "_osf_pose_from_video_source", False)),
+                                "has_mp_pose": self.mediapipe_face_pose is not None,
+                                "landmarker": self.face_landmarker is not None,
+                            },
+                            "timestamp": int(time.time() * 1000),
+                        }) + "\n")
+                except Exception:
+                    pass
             # #endregion
             if self._capture_frame_serial % 12 == 0:
                 self.refresh_mocap_input_mode_ui()
@@ -12811,6 +12835,7 @@ class MainFrame(wx.Frame):
             self._pending_mediapipe_job = (mediapipe_image, time_ms, frame_buffer,
                 self._mediapipe_job_sequence, stamp, self._mediapipe_input_generation)
             if self._mediapipe_worker_active:
+                self._mediapipe_job_cond.notify_all()
                 return
             self._mediapipe_worker_active = True
             self._mediapipe_worker_generation += 1
@@ -12823,10 +12848,23 @@ class MainFrame(wx.Frame):
     # 面捕推理在 worker；回 UI 需保持 wx.CallAfter 与生命周期检查，重载/切源不能重用已销毁控件。尚未运行重入/长时回归。
     # 历史 bug 热点 #1,#2,#5：仅为回归关联，非声称本次故障已复现。
     # EVS-DESIGN-AUDIT EVS-A034 END
+    MEDIAPIPE_WORKER_LINGER_SEC = 1.0
+
     def _mediapipe_detect_worker(self, generation: int) -> None:
         try:
             while not self._is_closing:
                 with self._mediapipe_lock:
+                    # EVS-PERF 1.6: wait briefly for the next frame instead of
+                    # exiting; at 30 fps the worker was re-created every frame.
+                    deadline = time.monotonic() + MainFrame.MEDIAPIPE_WORKER_LINGER_SEC
+                    while (self._pending_mediapipe_job is None and not self._is_closing
+                           and generation == self._mediapipe_worker_generation):
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0.0:
+                            break
+                        self._mediapipe_job_cond.wait(remaining)
+                    if generation != self._mediapipe_worker_generation:
+                        return
                     job = self._pending_mediapipe_job
                     self._pending_mediapipe_job = None
                     if job is None:
@@ -13074,37 +13112,37 @@ class MainFrame(wx.Frame):
         if self.neutral_face_screen_motion is None:
             self.apply_neutral_calibration(face_screen_motion, calibration_time=self.last_face_detected_time)
 
-        if HEAD_X in self.rotation_value_labels:
-            self.set_text_ctrl_if_changed(self.rotation_value_labels[HEAD_X], "%0.2f" % euler_angles[0])
-        if HEAD_Y in self.rotation_value_labels:
-            self.set_text_ctrl_if_changed(self.rotation_value_labels[HEAD_Y], "%0.2f" % euler_angles[1])
-        if HEAD_Z in self.rotation_value_labels:
-            self.set_text_ctrl_if_changed(self.rotation_value_labels[HEAD_Z], "%0.2f" % euler_angles[2])
+        # EVS-PERF 1.3: the three read-only angle boxes repainted on every
+        # detection (~30 Hz). Keep the latest text; on_ui_anim_timer shows it at
+        # <= 10 Hz (the last value is always shown, at most ~100 ms later).
+        self._pending_head_angle_text = (
+            "%0.2f" % euler_angles[0], "%0.2f" % euler_angles[1], "%0.2f" % euler_angles[2])
 
         self.mediapipe_face_pose = MediaPipeFacePose(blendshape_params, xform_matrix)
         # Scale-curve preview is repainted by on_ui_anim_timer (25 fps cap).
         self._scale_curve_dirty = True
         # #region agent log
-        try:
-            if bool(getattr(self, "_osf_pose_from_video_source", False)):
-                _now = time.monotonic()
-                if _now - float(getattr(self, "_dbg_mp_vs_pose_mono", 0.0) or 0.0) >= 2.0:
-                    self._dbg_mp_vs_pose_mono = _now
-                    import json as _json
-                    open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
-                        "sessionId": "86a17c",
-                        "runId": "post-fix-agent-cmd",
-                        "hypothesisId": "H4",
-                        "location": "load_preview.py:update_mediapipe_face_pose",
-                        "message": "pose from video source applied",
-                        "data": {
-                            "blend_n": len(blendshape_params),
-                            "inf_fps": round(float(getattr(self, "_inference_fps", 0.0) or 0.0), 2),
-                        },
-                        "timestamp": int(time.time() * 1000),
-                    }) + "\n")
-        except Exception:
-            pass
+        if PERF_DIAG:  # EVS-PERF 0.1: opt-in hot-path diagnostics
+            try:
+                if bool(getattr(self, "_osf_pose_from_video_source", False)):
+                    _now = time.monotonic()
+                    if _now - float(getattr(self, "_dbg_mp_vs_pose_mono", 0.0) or 0.0) >= 2.0:
+                        self._dbg_mp_vs_pose_mono = _now
+                        import json as _json
+                        open(debug_log_path('86a17c'), "a", encoding="utf-8").write(_json.dumps({
+                            "sessionId": "86a17c",
+                            "runId": "post-fix-agent-cmd",
+                            "hypothesisId": "H4",
+                            "location": "load_preview.py:update_mediapipe_face_pose",
+                            "message": "pose from video source applied",
+                            "data": {
+                                "blend_n": len(blendshape_params),
+                                "inf_fps": round(float(getattr(self, "_inference_fps", 0.0) or 0.0), 2),
+                            },
+                            "timestamp": int(time.time() * 1000),
+                        }) + "\n")
+            except Exception:
+                pass
         # #endregion
 
         return True
@@ -13670,50 +13708,88 @@ class MainFrame(wx.Frame):
         if self.poser is None or self.torch_source_image is None:
             return None
 
-        pose = torch.tensor(pose_list, device=self.device, dtype=self.poser.get_dtype())
-
         if wx.IsMainThread():
             self._worker_tha_fp16 = self.get_tha_infer_fp16_enabled()
+            self._worker_tha4_trt = self.get_nn_infer_backend() == INFER_BACKEND_TRT
         use_half = bool(self._worker_tha_fp16)
+        trt_model = self.character_model if self._worker_tha4_trt else None
         # （THA4 每帧 isnan().any() GPU sync 把 Inf 卡在 7-8）26.10.30 14:24 s
-        _pose_t0 = time.perf_counter()
+        # EVS-PERF Phase 3 (2026-11-24): same model ops and output (bit-exact in
+        # bench_tha4_infer.py); pinned readback, and a CUDA Graph replay once a
+        # worker-thread trial on this model passes (max_diff <= 4, not slower).
+        # numpy_image is a reused pinned buffer: consumed below under this lock.
+        runtime = self._tha4_infer_runtime
         try:
-            with torch.no_grad():
-                if use_half and torch.cuda.is_available():
-                    with torch.cuda.amp.autocast(dtype=torch.float16):
-                        output_image = self.poser.pose(self.torch_source_image, pose)[0].float()
-                else:
-                    output_image = self.poser.pose(self.torch_source_image, pose)[0].float()
+            numpy_image = runtime.render_rgba(
+                self.poser, self.torch_source_image, pose_list, use_half,
+                allow_prepare=not wx.IsMainThread(), trt_model=trt_model)
         except Exception:
             if use_half:
                 self._tha_infer_fp16_fallback = True
+                self._worker_tha_fp16 = False
                 self._warn_enhancement_once(
                     "FP16 inference unstable; falling back to FP32 for this session.")
-                with torch.no_grad():
-                    output_image = self.poser.pose(self.torch_source_image, pose)[0].float()
+                numpy_image = runtime.render_rgba(
+                    self.poser, self.torch_source_image, pose_list, False, allow_prepare=False,
+                    trt_model=trt_model)
             else:
                 raise
-
-        with torch.no_grad():
-            output_image = torch.clip((output_image + 1.0) / 2.0, 0.0, 1.0)
-            output_image = convert_linear_to_srgb(output_image)
-
-            c, h, w = output_image.shape
-            output_image = 255.0 * torch.transpose(output_image.reshape(c, h * w), 0, 1).reshape(h, w, c)
-            output_image = output_image.byte()
-        self._dbg_tha_pose_ms = (time.perf_counter() - _pose_t0) * 1000.0
-
-        _cpu_t0 = time.perf_counter()
-        numpy_image = output_image.detach().cpu().numpy()
-        self._dbg_tha_cpu_ms = (time.perf_counter() - _cpu_t0) * 1000.0
+        self._dbg_tha_pose_ms = runtime.last_launch_ms
+        self._dbg_tha_cpu_ms = runtime.last_wait_ms
+        self._log_tha4_graph_status_once(runtime)
         _wx_t0 = time.perf_counter()
+        # EVS-PERF 1.5: contiguous channel extraction gives the same bytes as the
+        # strided slice.tobytes() in ~1/10 of the time (3.4 -> 0.3 ms at 512^2),
+        # on the infer worker's critical path inside _model_render_lock.
         wx_image = wx.ImageFromBuffer(numpy_image.shape[1],
                                   numpy_image.shape[0],
-                                  numpy_image[:, :, 0:3].tobytes(),
-                                  numpy_image[:, :, 3].tobytes())
+                                  cv2.cvtColor(numpy_image, cv2.COLOR_RGBA2RGB).tobytes(),
+                                  cv2.extractChannel(numpy_image, 3).tobytes())
         self._dbg_tha_wx_ms = (time.perf_counter() - _wx_t0) * 1000.0
         # （THA4 每帧 isnan().any() GPU sync 把 Inf 卡在 7-8）26.10.30 14:24 e
         return wx_image
+
+    def _log_tha4_trt_status_once(self, runtime: Tha4InferRuntime) -> None:
+        """One diag line per TensorRT state change (f-057: slow-task visibility)."""
+        trt = runtime.status().get("trt") or {}
+        state = trt.get("state")
+        signature = (state, trt.get("engine_fp16"), len(trt.get("attempts") or ()))
+        if state in (None, "off", "next", "trial") or signature == self._tha4_trt_logged_state:
+            return
+        self._tha4_trt_logged_state = signature
+        if state == "building":
+            message = ("THA4 TensorRT: building %s engine (one-time, ~30-60 s; PyTorch renders meanwhile)"
+                       % ("FP16" if trt.get("engine_fp16") else "FP32"))
+        elif state == "active":
+            message = ("THA4 TensorRT enabled: %s engine %.2f ms vs PyTorch %.2f ms; vs FP32 mean %.3f "
+                       "(PyTorch %.3f), >4px %.3f%% (PyTorch %.3f%%)" % (
+                           "FP16" if trt.get("engine_fp16") else "FP32", trt.get("trt_ms", 0.0),
+                           trt.get("eager_ms", 0.0), trt.get("trt_vs_fp32", {}).get("mean", 0.0),
+                           trt.get("pytorch_vs_fp32", {}).get("mean", 0.0),
+                           trt.get("trt_vs_fp32", {}).get("px4_pct", 0.0),
+                           trt.get("pytorch_vs_fp32", {}).get("px4_pct", 0.0)))
+        else:
+            reasons = "; ".join("%s: %s" % ("FP16" if a.get("engine_fp16") else "FP32", a.get("reason"))
+                                for a in trt.get("attempts") or ())
+            message = "THA4 TensorRT not used (PyTorch kept): %s%s" % (
+                trt.get("reason", ""), (" [" + reasons + "]") if reasons else "")
+        log_once("tha4_trt:%s" % (signature,), message)
+
+    def _log_tha4_graph_status_once(self, runtime: Tha4InferRuntime) -> None:
+        """One diag line per CUDA Graph trial outcome (enabled / rejected reason)."""
+        self._log_tha4_trt_status_once(runtime)
+        status = runtime.status()
+        if "prepare_ms" not in status:
+            return
+        signature = (status.get("enabled"), status.get("reason"), status.get("use_half"))
+        if signature == self._tha4_graph_logged_status:
+            return
+        self._tha4_graph_logged_status = signature
+        detail = ", ".join("%s=%s" % (k, status[k]) for k in (
+            "eager_ms", "graph_ms", "max_diff", "reserved_delta_mb", "prepare_ms", "use_half") if k in status)
+        log_once("tha4_cuda_graph:%s" % (signature,), "THA4 CUDA Graph %s%s (%s)" % (
+            "enabled" if status.get("enabled") else "not used",
+            "" if status.get("enabled") else ": " + str(status.get("reason")), detail))
 
     def draw_cached_result_image(
             self,
@@ -13933,18 +14009,19 @@ class MainFrame(wx.Frame):
         stages["compose_wh"] = (compose_w, compose_h, out_w, out_h)
         self._last_present_stages = stages
         # #region agent log
-        try:
-            total_ms = (
-                float(stages.get("stack_total", 0.0))
-                + float(stages.get("bg", 0.0))
-                + float(stages.get("upsample", 0.0))
-                + float(stages.get("chrome", 0.0)))
-            self._dbg_last_compose_ms = total_ms
-            from longrun_diag import note_compose_ms
-            note_compose_ms(total_ms, motion_active=bool(
-                getattr(self, "_dbg_last_motion_active", False)))
-        except Exception:
-            pass
+        if PERF_DIAG:  # EVS-PERF 0.1: opt-in hot-path diagnostics
+            try:
+                total_ms = (
+                    float(stages.get("stack_total", 0.0))
+                    + float(stages.get("bg", 0.0))
+                    + float(stages.get("upsample", 0.0))
+                    + float(stages.get("chrome", 0.0)))
+                self._dbg_last_compose_ms = total_ms
+                from longrun_diag import note_compose_ms
+                note_compose_ms(total_ms, motion_active=bool(
+                    getattr(self, "_dbg_last_motion_active", False)))
+            except Exception:
+                pass
         # #endregion
         self._maybe_log_present_stages(stages)
         return fg
@@ -14088,6 +14165,11 @@ class MainFrame(wx.Frame):
             self._update_output_fps_estimate_if_due()
         except Exception:
             pass
+        if not PERF_DIAG:
+            # EVS-PERF 0.1: the 1 Hz snapshot (thread list, gc, RSS, JSON, file
+            # append) ran on the UI thread unconditionally. Opt-in now; the
+            # always-on e5 watchdog thread still records UI/infer stalls.
+            return
         gap_n = int(getattr(self, "_dbg_display_gap_n", 0))
         data = {
             "motion_active": bool(motion_active),
@@ -14115,6 +14197,15 @@ class MainFrame(wx.Frame):
             "mocap_mode": str(getattr(self, "_dbg_e5_mocap_mode", "") or getattr(self, "mocap_input_mode", "")),
             "present_branch": str(getattr(self, "_dbg_e5_present_branch", "")),
         }
+        # EVS-PERF 0.2: Out counts scene frames; this counts new model frames on screen.
+        presenter = getattr(self, "_live_scene_presenter", None)
+        if presenter is not None:
+            chars, scenes = int(presenter.character_frames), int(presenter.completed)
+            prev = getattr(self, "_dbg_prev_live_counts", None)
+            if prev is not None and prev[0] is presenter:
+                data["out_char_unique_1s"] = chars - prev[1]
+                data["out_scene_1s"] = scenes - prev[2]
+            self._dbg_prev_live_counts = (presenter, chars, scenes)
         try:
             data.update(self._e5_collect_freeze_data())
         except Exception:
@@ -14575,9 +14666,8 @@ class MainFrame(wx.Frame):
                 getattr(self, "_dbg_display_gap_sum_ms", 0.0)) + _dbg_gap_ms
             self._dbg_display_gap_n = int(getattr(self, "_dbg_display_gap_n", 0)) + 1
             try:
-                from longrun_diag import note_display_gap_ms, note_hour_mark
-                note_display_gap_ms(_dbg_gap_ms)
-                note_hour_mark()
+                _lr_note_display_gap_ms(_dbg_gap_ms)
+                _lr_note_hour_mark()
             except Exception:
                 pass
             if _dbg_gap_ms >= 500.0:
@@ -14674,6 +14764,7 @@ class MainFrame(wx.Frame):
             return
         self._refresh_fps_display()
         self._poll_agent_cmd_terminal()
+        self._flush_head_angle_text()
         if self._scale_curve_dirty:
             self._scale_curve_dirty = False
             self.refresh_scale_curve_status()
@@ -14682,6 +14773,23 @@ class MainFrame(wx.Frame):
             window = self._get_basic_layer_window()
             if window is not None:
                 window.refresh_spine_diagram()
+
+    HEAD_ANGLE_TEXT_MIN_INTERVAL_SEC = 0.1
+
+    def _flush_head_angle_text(self) -> None:
+        """EVS-PERF 1.3: show the latest head angles at <= 10 Hz."""
+        pending = getattr(self, "_pending_head_angle_text", None)
+        if pending is None:
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_head_angle_text_shown_mono", 0.0) < MainFrame.HEAD_ANGLE_TEXT_MIN_INTERVAL_SEC:
+            return
+        self._pending_head_angle_text = None
+        self._head_angle_text_shown_mono = now
+        for name, text in zip((HEAD_X, HEAD_Y, HEAD_Z), pending):
+            control = self.rotation_value_labels.get(name)
+            if control is not None:
+                self.set_text_ctrl_if_changed(control, text)
 
     def on_infer_tick(self, event: Optional[wx.Event] = None):
         # #region agent log
@@ -14723,6 +14831,8 @@ class MainFrame(wx.Frame):
             return self._load_model_from_path_locked(character_model_json_file_name)
 
     def _load_model_from_path_locked(self, character_model_json_file_name: str) -> bool:
+        # Release the previous model's CUDA Graph before allocating the new model.
+        self._tha4_infer_runtime.reset("model reload")
         resolved_path = self.resolve_character_model_path(character_model_json_file_name)
         if not resolved_path or not os.path.isfile(resolved_path):
             invalid_path = character_model_json_file_name
@@ -14932,6 +15042,19 @@ if __name__ == "__main__":
         if splash is not None:
             pump_startup_splash(app)
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        if device.type == "cuda":
+            # EVS-PERF 4.2: creating the CUDA context costs ~0.5 s (RTX A4000,
+            # torch 1.13) and used to happen on the UI thread at the first model
+            # load (.to(device)). Start it now, overlapped with MainFrame setup.
+            # torch's lazy init is lock-protected: a UI thread that gets there
+            # first simply waits as before. Failures surface at real use.
+            def _warm_cuda_context(target=device):
+                try:
+                    torch.zeros(1, device=target)
+                except Exception:
+                    pass
+            threading.Thread(target=_warm_cuda_context, name="cuda-context-warmup",
+                             daemon=True).start()
         pose_converter = MediaPoseFacePoseConverter00()
         face_landmarker = None
         video_capture = None

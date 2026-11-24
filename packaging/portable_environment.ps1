@@ -7,7 +7,7 @@ function Get-ComponentRuntimeBinding([string]$Root,[string]$Component) {
     $property=$config.components.PSObject.Properties[$Component]
     if($null -eq $property) { return $null }
     $binding=$property.Value
-    if(-not $binding.python) { throw "Missing Python in component binding: $Component" }
+    if(-not $binding.python) { throw "组件绑定里缺少 Python / Missing Python in component binding: $Component" }
     [void](Assert-LocalChild $Root (Join-Path $Root $binding.python))
     return $binding
 }
@@ -19,7 +19,7 @@ function Get-ComponentPythonExecutable([string]$Root,[string]$Component,[string]
 function Assert-LocalChild([string]$Root,[string]$Path) {
     $rootPath=[IO.Path]::GetFullPath($Root).TrimEnd('\','/')
     $target=[IO.Path]::GetFullPath($Path)
-    if(-not $target.StartsWith($rootPath+'\',[StringComparison]::OrdinalIgnoreCase)) { throw "Path escapes portable folder: $target" }
+    if(-not $target.StartsWith($rootPath+'\',[StringComparison]::OrdinalIgnoreCase)) { throw "路径超出便携目录 / Path escapes portable folder: $target" }
     return $target
 }
 function Invoke-IsolatedPythonFile([string]$Python,[string]$Script,[string[]]$PythonArgs) {
@@ -107,7 +107,7 @@ function Get-LocalPythonBase([string]$Root) {
         Save-HttpsFile -Uri 'https://api.nuget.org/v3-flatcontainer/python/3.10.11/python.3.10.11.nupkg' -OutFile $archive
     }
     $expected='7c6f99b160a36a7e09492dfcff2b0a3a60bb5229ca44cdcc3ecb32871a6144d0'
-    if((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Python base archive hash mismatch; invalid cache retained for inspection' }
+    if((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'Python 本体压缩包哈希不符，无效缓存已保留供检查 / Python base archive hash mismatch; invalid cache retained for inspection' }
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $stage=Assert-LocalChild $Root (Join-Path $Root ('runtime/extract-'+[Guid]::NewGuid().ToString('N')))
     [IO.Compression.ZipFile]::ExtractToDirectory($archive,$stage)
@@ -115,7 +115,7 @@ function Get-LocalPythonBase([string]$Root) {
     Copy-Item -Path (Join-Path $stage 'tools/*') -Destination $base -Recurse -Force
     $stage=Assert-LocalChild $Root $stage
     Remove-Item -LiteralPath $stage -Recurse -Force
-    if(-not(Test-LocalPython $Root $python)) { throw 'Application-local Python failed validation' }
+    if(-not(Test-LocalPython $Root $python)) { throw '本目录内的 Python 校验失败 / Application-local Python failed validation' }
     return $python
 }
 function New-LocalPythonEnvironment([string]$Root,[string]$Relative,[switch]$Force) {
@@ -125,22 +125,22 @@ function New-LocalPythonEnvironment([string]$Root,[string]$Relative,[switch]$For
     if(-not $Force -and (Test-LocalPython $Root $python)) { return $python }
     if(Test-Path -LiteralPath $target) {
         $active=@(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($target+'\',[StringComparison]::OrdinalIgnoreCase) })
-        if($active.Count) { throw "Close the application before repairing $target" }
-        if((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Linked environment cannot be overwritten: $target" }
+        if($active.Count) { throw "请先关闭程序再修复 / Close the application before repairing $target" }
+        if((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "链接形式的环境不能覆盖 / Linked environment cannot be overwritten: $target" }
         $backup=Assert-LocalChild $Root ($target+'.before-local-'+[Guid]::NewGuid().ToString('N'))
         Move-Item -LiteralPath $target -Destination $backup
     }
     & $base -I -m venv $target
-    if($LASTEXITCODE -ne 0 -or -not(Test-LocalPython $Root $python)) { throw "Local environment creation failed: $target" }
+    if($LASTEXITCODE -ne 0 -or -not(Test-LocalPython $Root $python)) { throw "本地环境创建失败 / Local environment creation failed: $target" }
     return $python
 }
 function Install-LocalRequirements([string]$Root,[string]$Python,[string]$Requirements) {
     Initialize-LocalProcessEnvironment $Root
-    if(-not(Test-LocalPython $Root $Python)) { throw "External Python rejected: $Python" }
+    if(-not(Test-LocalPython $Root $Python)) { throw "拒绝使用本目录以外的 Python / External Python rejected: $Python" }
     if((Get-Content -LiteralPath $Requirements -Raw) -match '\.whl#sha256=') {
         $cached=Join-Path $Root ('workspace/asset_downloads/'+[IO.Path]::GetFileName($Requirements))
         & $Python -I (Join-Path $PSScriptRoot 'fetch_verified_wheels.py') --root $Root --requirements $Requirements --output $cached
-        if($LASTEXITCODE -ne 0) { throw "Verified wheel download failed: $Requirements" }
+        if($LASTEXITCODE -ne 0) { throw "校验过的 wheel 下载失败 / Verified wheel download failed: $Requirements" }
         $Requirements=$cached
     }
     $previousPreference=$ErrorActionPreference
@@ -149,7 +149,7 @@ function Install-LocalRequirements([string]$Root,[string]$Python,[string]$Requir
         & $Python -I -m pip install --require-virtualenv --prefer-binary --progress-bar off --timeout 30 --retries 3 -c (Join-Path $Root 'deps/pip/constraints.txt') -r $Requirements
         $installExit=$LASTEXITCODE
     } finally { $ErrorActionPreference=$previousPreference }
-    if($installExit -ne 0) { throw "Dependency installation failed: $Requirements (exit=$installExit)" }
+    if($installExit -ne 0) { throw "依赖安装失败 / Dependency installation failed: $Requirements (exit=$installExit)" }
 }
 function Get-LocalDownloadPython([string]$Root) {
     $python=New-LocalPythonEnvironment $Root 'runtime/download_venv'
@@ -161,18 +161,18 @@ function Get-LocalDownloadPython([string]$Root) {
     } finally { $ErrorActionPreference=$previousPreference }
     if(-not $clientReady) {
         & $python -I -m pip install --require-virtualenv 'huggingface_hub==2.2.0' | Out-Host
-        if($LASTEXITCODE -ne 0) { throw 'Cannot prepare folder-local Bucket download client' }
+        if($LASTEXITCODE -ne 0) { throw '无法准备本目录内的 Bucket 下载客户端 / Cannot prepare folder-local Bucket download client' }
     }
     return $python
 }
 
 function Install-LockedRuntime([string]$Root,[string]$Python,[string[]]$Profiles) {
     Initialize-LocalProcessEnvironment $Root
-    if(-not(Test-LocalPython $Root $Python)) { throw 'External runtime rejected' }
+    if(-not(Test-LocalPython $Root $Python)) { throw '拒绝使用本目录以外的运行环境 / External runtime rejected' }
     $arguments=@('--root',$Root,'--python',$Python)
     foreach($profile in $Profiles) { $arguments+=@('--profile',$profile) }
     $lockedExit = Invoke-IsolatedPythonFile $Python (Join-Path $PSScriptRoot 'locked_runtime.py') $arguments
-    if(-not ($lockedExit -eq 0)) { throw 'Hash-locked runtime install failed' }
+    if(-not ($lockedExit -eq 0)) { throw '哈希锁定的运行环境安装失败 / Hash-locked runtime install failed' }
 }
 function Set-CommonRuntimeBindings([string]$Root,[string[]]$Roles=@('app','basic_run','face_puppeteer','tha3_models','tha4_training')) {
     $path=Join-Path $Root 'runtime/bindings/components.json'

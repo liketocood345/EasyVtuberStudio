@@ -74,6 +74,45 @@ def _wx_bitmap_to_rgba(bitmap: wx.Bitmap) -> Optional[numpy.ndarray]:
     return out
 
 
+class _BufferedBitmapView(wx.Panel):
+    """Flicker-free stand-in for wx.StaticBitmap (2026-11-24).
+
+    The wobble preview is re-set every PREVIEW_ANIM_MS. A native StaticBitmap
+    erases its background before each redraw, which shows as flashing on
+    Windows. This panel paints through a back buffer without erasing. It keeps
+    the StaticBitmap calls used here (SetBitmap / GetBitmap) and is a normal
+    window for mouse events, capture and sizing.
+    """
+
+    def __init__(self, parent, bitmap: wx.Bitmap):
+        super().__init__(parent, style=wx.BORDER_NONE)
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self._bitmap = bitmap
+        self.Bind(wx.EVT_PAINT, self._on_paint)
+        self.SetInitialSize(bitmap.GetSize())
+
+    def SetBitmap(self, bitmap: wx.Bitmap) -> None:
+        self._bitmap = bitmap
+        self.Refresh(eraseBackground=False)
+
+    def GetBitmap(self) -> wx.Bitmap:
+        return self._bitmap
+
+    def _on_paint(self, event) -> None:
+        dc = wx.AutoBufferedPaintDC(self)
+        dc.SetBackground(wx.Brush(self.GetParent().GetBackgroundColour()))
+        dc.Clear()
+        bitmap = self._bitmap
+        if bitmap is not None and bitmap.IsOk():
+            dc.DrawBitmap(bitmap, 0, 0, True)
+
+
+def _set_label_if_changed(control, text: str) -> None:
+    # Re-setting identical text still repaints a native label every tick.
+    if control.GetLabel() != text:
+        control.SetLabel(text)
+
+
 def _rgba_to_bitmap(rgba: numpy.ndarray) -> wx.Bitmap:
     h, w = int(rgba.shape[0]), int(rgba.shape[1])
     rgb = numpy.ascontiguousarray(rgba[:, :, :3])
@@ -389,7 +428,7 @@ class RegionWobbleLayerPanel(wx.Panel):
         self.preview_scroll.SetMinSize((-1, PREVIEW_MIN_H))
         scroll_sizer = wx.BoxSizer(wx.VERTICAL)
         self.preview_scroll.SetSizer(scroll_sizer)
-        self.preview_bitmap = wx.StaticBitmap(self.preview_scroll, bitmap=wx.Bitmap(8, 8))
+        self.preview_bitmap = _BufferedBitmapView(self.preview_scroll, wx.Bitmap(8, 8))
         scroll_sizer.Add(self.preview_bitmap, 0, wx.ALL, 2)
         root.Add(self.preview_scroll, 1, wx.EXPAND | wx.ALL, 4)
 
@@ -708,7 +747,7 @@ class RegionWobbleLayerPanel(wx.Panel):
 
     def _update_guide_status(self, st) -> None:
         if st is None:
-            self.guide_status.SetLabel("射线: — · 点钉: —")
+            _set_label_if_changed(self.guide_status, "射线: — · 点钉: —")
             return
         idx = st._clamp_active()
         mask = st.mask
@@ -726,7 +765,7 @@ class RegionWobbleLayerPanel(wx.Panel):
             pin_n = 0
         pin_txt = f"区内点钉: {pin_n}"
         extra = f" · {self._status_msg}" if self._status_msg else ""
-        self.guide_status.SetLabel(f"{axis_txt} · {pin_txt}{extra}")
+        _set_label_if_changed(self.guide_status, f"{axis_txt} · {pin_txt}{extra}")
 
     def _event_image_xy(self, event: wx.MouseEvent) -> tuple[float, float]:
         """Map mouse event to preview-image pixel coordinates."""
@@ -782,7 +821,7 @@ class RegionWobbleLayerPanel(wx.Panel):
         rgba = still_preview_rgba(self.main_frame, target)
         self._base_rgba = rgba
         detail = still_preview_source_label(self.main_frame, target)
-        self.source_label.SetLabel(f"目标: {self._target_heading()} · {detail}")
+        _set_label_if_changed(self.source_label, f"目标: {self._target_heading()} · {detail}")
         st = self._active_state()
         self._update_guide_status(st)
         if rgba is None:

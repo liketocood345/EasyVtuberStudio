@@ -20,6 +20,7 @@
 | [READMEfrom-main.md](READMEfrom-main.md) | 上游 THA4 demo 原 README |
 | [FORK_ROOT.md](FORK_ROOT.md) | Git 远程、fork / develop 分工、同步命令 |
 | [HANDOVER.md](HANDOVER.md) | **Agent / 维护者主入口** |
+| [../evs-design/README.md](../evs-design/README.md) | **产品设计手册**（独立仓 `evs-design`；Agent 先读 `easyvtuberstudio-index.json`） |
 | [CODEBASE_MAP.md](CODEBASE_MAP.md) | **代码地图**：仓库分区、调用链、热点（CodeGraph 梳理） |
 | [BUG_HOTSPOT_CHECKLIST.md](BUG_HOTSPOT_CHECKLIST.md) | **新功能防复发**：历史 bug 热点 Top10 回归清单 |
 | [../plans/README.md](../plans/README.md) | 计划文档目录 |

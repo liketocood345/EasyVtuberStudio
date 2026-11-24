@@ -7,7 +7,7 @@ from torch.nn.functional import affine_grid, interpolate
 
 from tha4.shion.core.module_factory import ModuleFactory
 from tha4.shion.nn00.initialization_funcs import HeInitialization
-from tha4.nn.image_processing_util import GridChangeApplier
+from tha4.nn.image_processing_util import GridChangeApplier, evs_autocast_key, evs_cached_constant
 from tha4.nn.siren.vanilla.siren import SineLinearLayer
 
 
@@ -90,6 +90,12 @@ class SirenMorpher03(Module):
         self.grid_change_applier = GridChangeApplier()
 
     def get_position_grid(self, n: int, image_size: int, device: torch.device):
+        # EVS-PERF Phase 3: constant per (n, size, device, autocast); see evs_cached_constant.
+        return evs_cached_constant(
+            self, ("position_grid", int(n), int(image_size), device, evs_autocast_key()),
+            lambda: self._build_position_grid(n, image_size, device))
+
+    def _build_position_grid(self, n: int, image_size: int, device: torch.device):
         h, w = image_size, image_size
         identity = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], device=device).unsqueeze(0)
         position = affine_grid(identity, [1, 1, h, w], align_corners=False) \

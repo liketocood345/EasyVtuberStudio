@@ -10,6 +10,75 @@
 
 ---
 
+## 2026-11-25
+
+### 部署 · DEPLOY 提示改为中英双语
+
+- 范围：`DEPLOY.bat` 及它调用的 PowerShell 脚本里所有面向用户的文字，包括菜单、确认提示、步骤标题、`[OK]/[跳过/SKIP]/[缺失/MISSING]/[警告/WARN]` 校验行、错误和完成提示。涉及 `deploy_menu`、`deploy_prompts`、`deploy_portable`、`deploy_common`、`bootstrap_portable`、`bootstrap_output_enhancement`、`bootstrap_tha4_teacher`、`install_teacher_in_root`、`fetch_upstream_assets`、`portable_environment`、`reconcile_portable_layout`、`verify_deploy`、`verify_mouse_student`、`verify_tha4_student`、`addon_paths`。
+- 写法：中文在前。短句写成一行“中文 / English”，长句分两行。`DEPLOY complete.`、`DEPLOY failed:` 等原英文原样保留，排障文档和日志检索不受影响。附加组件的中文名放在 `deploy_menu.ps1`，`addons_manifest.json` 不变。
+- 编码：
+  - 加了中文的 `.ps1` 一律存为 UTF-8 带 BOM，否则 Windows PowerShell 5.1 会按系统 ANSI 码页读脚本。
+  - `DEPLOY.bat` 存为 UTF-8 不带 BOM（带 BOM 会破坏第一行）。只在批处理自己输出文字时切到代码页 65001；运行 PowerShell 之前恢复用户原来的代码页，结束时也恢复。这样部署过程中 pip、Python 等工具的输出解码方式和以前一样。
+- 不变：功能和退出码不变，菜单返回的包 ID 不变。pip、Python 辅助脚本（`locked_runtime.py`、`resource_modules.py` 等）自己的输出仍是英文。它们以 `-I` 运行，输出又被重定向；改成中文要同时改两端的编码，风险大于收益。出错时外层 PowerShell 会给出双语的失败说明。
+- 顺带修正：`verify_deploy.ps1` 缺 output_enhancement 运行环境时，原提示写成“[2] face_puppeteer”，应为 [3]。
+- 验证（Windows PowerShell 5.1.19041，本机）：
+  - 15 个脚本解析无错，都带 BOM。
+  - 菜单：输入 `136` 返回 `mouse_student, face_puppeteer, output_enhancement`；输入 `19` 报双语错误。
+  - 确认提示输入 `n`：取消，退出码 1。
+  - `verify_deploy` 全部附加组件通过；`verify_mouse_student`、`verify_tha4_student` 通过；空目录和不存在的目录走失败分支，提示为双语。
+  - 完整的 `deploy_portable.ps1 -PackageIds mouse_student,output_enhancement -Confirmed` 跑通，退出码 0，用时 26 s，`.deploy_complete` 已还原。
+  - `DEPLOY.bat` 副本（部署步骤换成桩脚本）从代码页 936 启动：输出字节为正确的 UTF-8；PowerShell 运行期间代码页是 936；结束后恢复为 936；退出码成功 0、失败 1。
+  - 未在真实控制台窗口里肉眼查看字体显示。
+
+## 2026-11-24
+
+### 性能 · THA4 推理加速（Phase 3，输出逐像素不变）
+
+基准：`experiments/puppeteer_load_preview/bench_tha4_infer.py`（RTX A4000 / torch 1.13.1，bai_450k，FP16；同进程交错跑，`ui` = 模拟 UI 线程抢 GIL）。报告在 `workspace/diagnostics/bench_tha4_infer_*.json`。
+
+| # | 改动 | idle | UI 负载 | 画质 |
+|---|------|------|---------|------|
+| P3-1 | THA4 SIREN 常量网格缓存（`tha4/nn/image_processing_util.py`、`siren_morpher_03.py`、`siren_face_morpher_00.py`）：位置网格/基础网格每帧重建 → 缓存；去掉每帧 3–4 次 `torch.tensor(..., device=cuda)` 带来的流同步 | 17.10 → 15.31 ms | 25.96 → 20.57 ms | max_diff 0 |
+| P3-2 | `output_enhancement/tha4_infer_runtime.py`：pinned 回读 + CUDA Graph 回放（worker 线程试跑通过才启用：max_diff ≤ 4 且不慢于 eager；失败保留 eager）；换模型/切精度/停源释放图 | 15.31 → 14.93 ms | 20.57 → 17.32 ms | max_diff 0 |
+| — | 合计（FP16） | **1.15×** | **1.50×**（p50 28.9 → 16.6 ms） | 与改动前参考帧逐像素一致 |
+| — | 合计（FP32 回退路径） | 1.12× | 1.45× | max_diff 0 |
+
+未采用：3.3 跳过未用输出（实测 0 收益，其余输出是计算主输出的中间量）；`sys.setswitchinterval(0.001)`（UI 负载下无可测差异）；ORT-DirectML（可导出 ONNX，FP32 12.78 ms，max_diff 18 未过 ≤ 4 画质关；该偏差是 SIREN 固有放大，见下节；TensorRT 见下节）。启动日志会出现一行 `THA4 CUDA Graph enabled (...)` 或未启用原因；`agent_runtime_diagnostics` 的 `graph` 字段在 THA4 下返回同一状态。真机（摄像头面捕）Inf 对比待测。
+
+### 性能 · UI 线程减负、诊断开关、启动（Phase 0 / 1 / 2 低风险 / 4，输出不变）
+
+基准：`experiments/puppeteer_load_preview/bench_ui_thread_paths.py`（旧实现原样对照，检查逐字节一致）。报告在 `workspace/diagnostics/bench_ui_thread_paths_*.json`。设计条目：evs-design **f-075**。
+
+| # | 改动 | 修改前 → 修改后 |
+|---|------|-----------------|
+| 0.1 | 新开关 `EVS_PERF_DIAG`（`perf_diag.py`；按用户要求**默认开**，`EVS_PERF_DIAG=0` 关闭）：1 Hz 呈现快照与 8 处热路径节流埋点受开关控制；e5 日志由 `e:\.cursor\debug-e5b45c.log` 改到 `workspace/diagnostics/debug-e5b45c.log`，16 MB 轮转；看门狗保持常开；`debug_log_path` 只建一次目录 | 关闭时快照 IO 0.31 ms/次 → 0（默认开时照旧约 0.31 ms/秒）；`debug_log_path` 0.37 → 0.003 ms |
+| 0.2 | `LiveScenePresenter.character_frames`：带新模型帧的上屏次数（Out 口径不变）；诊断 `out_char_unique_1s`，agent `live_char_frames` | 诊断项 |
+| 1.2 | 摄像头预览先 flip 再缩放后转色；取帧不再整帧复制 | 2.83 → 2.45 ms（逐字节一致）；省 0.50 ms 复制 |
+| 1.3 | 头部角度文本框 ≤ 10 Hz（`ui_anim_timer`） | 3.49 → 1.16 ms/秒 |
+| 1.5 | THA3 颜色转换移到推理 worker；THA3/THA4 构建 wx 图改连续通道抽取 | THA3 UI 3.36 → 0.14 ms；THA4 worker 3.10 → 0.14 ms（每推理帧） |
+| 1.6 | MediaPipe 检测 worker 空闲等待 1 s 再退出 | 派发 0.187 → 0.023 ms/帧；60 帧 1 个线程 |
+| 2.3 | 预乘 6 遍 → 4 遍；live-scene 投递 `owned=True` 省两份整帧复制 | 2.49 → 1.46 ms（全组合逐值一致）；省 0.86 ms |
+| 4.1 | 启动依赖探测成功结果落盘缓存（`workspace/cache/python_probe_cache.json`，环境签名 + 7 天，`EVS_PROBE_CACHE=0` 关闭） | 1.306 s → 0.007 s/次启动 |
+| 4.2 | 后台线程预建 CUDA 上下文 | UI 首次上卡 124 → 2 ms（模拟） |
+
+### 性能 · TensorRT 安装与 THA4 可选 TensorRT 路径（3.4）
+
+- **安装**：`deps/pip/runtime-artifacts.json` 新增 `trt` 档（`tensorrt-cu11-libs`/`-bindings 10.13.0.35` + `nvidia-cuda-runtime-cu11 11.8.89`，版本与 sha256 写死；libs 直接锁 pypi.nvidia.com 上的真实 wheel，不用会在安装时另行下载的源码壳）。已装入 `runtime\venvs\common`（约 1.7 GB，`pip check` 通过）。**已并入 DEPLOY [6] output_enhancement**：`bootstrap_output_enhancement.ps1` 在装完 DirectML 后，若该运行时的 torch 看到计算能力 ≥ 7.5 的 NVIDIA GPU，就按锁定档 `trt` 安装并校验导入；失败只警告，不影响 [6] 其余部分；`EVS_DEPLOY_SKIP_TENSORRT=1` 跳过。`verify_deploy.ps1` 报告 TensorRT 状态（可选项，不计失败）。菜单文字、`addons_manifest.json`（size_hint 800 → 2500 MB）同步更新。四个分支（新装 / 已装 / 跳过变量 / 无可用 GPU）都在本机实跑通过。
+- **启用**：后处理栏“推理后端”选 TensorRT 时，THA4 Student 先在 worker 上导出 ONNX，再由后台线程构建引擎（约 30–35 s/个，缓存 `workspace/cache/tha4_trt/`，期间 PyTorch 出画），试跑通过后热切换。否则保持 PyTorch，日志写明原因。SR/RIFE 在此选项下仍回落 DirectML（vendored `ezvtb_rt` 需要的 `tensorrt_rtx`+`pycuda` 未装）。新文件 `output_enhancement/tha4_trt.py`。
+- **画质关**：THA4 的 SIREN 会放大任何内核差异（PyTorch CPU 对 CUDA 同为 FP32 也有 max 18），“对 eager max_diff ≤ 4”对 TensorRT 不可能达到。改为：与 FP32 参考比，平均差和超 4 像素占比都不超过同精度设置下 PyTorch 路径的 1.25 倍（`EVS_THA4_TRT_GATE_FACTOR` 可调），且须比 eager 快。
+- **实测（bench `tensorrt` 变体，同进程交替）**：用户 FP16 设置下 FP16 引擎被否决（平均差 0.217 > 0.213，超 4 像素 1.84% > 1.66%；速度约 2.8×），改用 FP32 引擎：空闲 15.97 → 14.46 ms（1.10×），UI 负载 20.02 → 19.14 ms（1.05×），画质对 FP32 参考平均差 0.022（现用 FP16 为 0.17）。FP32 设置下：18.51 → 12.97 ms（1.42×），UI 负载 1.43×。
+- **修正**：`tha4/nn/image_processing_util.GridChangeApplier` 单位矩阵原按首帧精度缓存，跨精度复用会使输出依赖历史（FP16 偏移 max 88）。现按 dtype 分别缓存；PyTorch FP16/FP32 与改前参考帧逐像素一致。
+- **调试日志常开**：`EVS_PERF_DIAG` 默认开（`=0` 关闭）。
+
+### 修复（同日，用户实测反馈）
+
+- **THA3 角色面部不随面捕变化**（本轮 1.5 引入的回归）：`tha3_source._apply_infer_result` 函数后段残留一行局部 `import cv2`，使整个函数内的 `cv2` 成为局部名；新加的 `cv2.cvtColor` 在它之前执行，抛出 `UnboundLocalError`，推理结果全部没有应用。用户实测诊断：THA3 `infer_n` 约 28/s，`finish_n`/`live_push` 为 0。已删除该行。用真实 THA3 渲染 → worker 转换 → `_apply_infer_result` 复测：结果正常发布，wx 字节与原实现一致。另用 AST 扫描本轮所有改动文件，没有其他“局部 import 遮蔽”。
+- **简易区域晃动示意图频闪**：预览用原生 `wx.StaticBitmap`，每 50 ms 动画帧 `SetBitmap` 都先擦背景再画，Windows 上会闪。改为双缓冲面板 `_BufferedBitmapView`（`BG_STYLE_PAINT` + `AutoBufferedPaintDC`，不擦背景），对外接口不变。每帧重设相同文字的两个状态标签也改为文字变化时才更新。实窗测试：连续换帧 9/9 绘制正确，鼠标捕获与坐标正常。闪烁的视觉消除需用户在整机确认。
+
+不做（理由见 f-075）：1.4 快照 generation 复用（实测 0.12 ms/tick，改写点难覆盖）、2.1/2.2/2.6、2.4（当前 AA=1.0 收益 0）、模型加载整体后台化（UI 部分仅约 40 ms）。整机摄像头场景 S1–S4、py-spy、30 分钟长跑待测。
+
+---
+
 ## 2026-11-01
 
 ### 发布 · THA3 与 THA4 同套 live 链 + 姿态平滑

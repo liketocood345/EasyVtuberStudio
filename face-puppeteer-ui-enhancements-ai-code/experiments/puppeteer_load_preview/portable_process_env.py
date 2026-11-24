@@ -27,7 +27,14 @@ def local_environment(root):
 def install_local_environment(root=None):
     os.environ.update(local_environment(root or root_from_source()))
 
+_DIAG_DIRECTORY = None
+
 def debug_log_path(session):
-    directory = root_from_source() / 'workspace/diagnostics'
-    directory.mkdir(parents=True, exist_ok=True)
+    # EVS-PERF 0.1: resolve the root and mkdir once (was per call, incl. hot paths).
+    global _DIAG_DIRECTORY
+    directory = _DIAG_DIRECTORY
+    if directory is None:
+        directory = root_from_source() / 'workspace/diagnostics'
+        directory.mkdir(parents=True, exist_ok=True)
+        _DIAG_DIRECTORY = directory
     return str(directory / ('debug-'+session+'.log'))

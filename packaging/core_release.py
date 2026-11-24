@@ -40,7 +40,12 @@ def candidates(root,scope):
             d=Path(directory)
             dirs[:]=[n for n in dirs if n not in ('__pycache__','.git','.codegraph','his','_internal','runtime','venv','workspace','release') and not (d/n).is_symlink() and not (getattr((d/n).lstat(),'st_file_attributes',0) & 0x400)]
             if rel=='addons': dirs[:]=[]
-            for n in files: found.add((d/n).relative_to(root).as_posix())
+            for n in files:
+                # Links never ship (RELEASE_BOUNDARIES): a file-type symlink that
+                # points at a directory is listed under files by os.walk.
+                f=d/n
+                if f.is_symlink() or (getattr(f.lstat(),'st_file_attributes',0) & 0x400): continue
+                found.add(f.relative_to(root).as_posix())
     for rel in scope['files']:
         if (root/rel).is_file(): found.add(rel)
     for pattern in scope['seed_files']:

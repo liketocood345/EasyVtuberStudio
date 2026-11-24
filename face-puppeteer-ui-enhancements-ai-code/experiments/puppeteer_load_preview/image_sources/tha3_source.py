@@ -420,6 +420,10 @@ class Tha3Source:
             last_render_start = t0
             rgba = engine.render_pose_numpy(pose)
             render_ms = (time.perf_counter() - t0) * 1000.0
+            if rgba is not None:
+                # EVS-PERF 1.5: engine returns BGRA; convert once here (worker,
+                # GIL released by OpenCV) instead of twice on the UI thread.
+                rgba = cv2.cvtColor(rgba, cv2.COLOR_BGRA2RGBA)
             schedule_apply = False
             with self._infer_lock:
                 if generation != int(self._infer_generation):
@@ -460,16 +464,19 @@ class Tha3Source:
             return
         if rgba is None or self.engine is None or not self.engine.is_loaded():
             return
-        from tha3_engine import _numpy_rgba_to_wx_image
-        wx_image = _numpy_rgba_to_wx_image(rgba)
+        # EVS-PERF 1.5: rgba is already RGBA (converted on the infer worker).
+        if rgba.shape != (512, 512, 4):
+            raise ValueError(f"Unexpected THA3 frame shape: {rgba.shape}")
+        # Contiguous channel extraction: same bytes as slice.tobytes(), ~10x faster.
+        wx_image = wx.Image(512, 512, cv2.cvtColor(rgba, cv2.COLOR_RGBA2RGB).tobytes(),
+                            cv2.extractChannel(rgba, 3).tobytes())
         self.last_pose = list(pose)
         main_frame.last_pose = list(pose)
         main_frame.last_output_wx_image = wx_image
         # #region agent log
         main_frame._dbg_e5_finish_n = int(getattr(main_frame, "_dbg_e5_finish_n", 0)) + 1
         # #endregion
-        import cv2
-        main_frame._last_tha3_rgba = cv2.cvtColor(rgba, cv2.COLOR_BGRA2RGBA)
+        main_frame._last_tha3_rgba = rgba
         main_frame.last_background_choice = main_frame.get_output_background_signature()
         try:
             main_frame.output_enhancement.keyframe_cache.invalidate_image()

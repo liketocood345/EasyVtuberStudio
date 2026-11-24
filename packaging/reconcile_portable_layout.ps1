@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [string]$PortableRoot
 )
@@ -31,7 +31,7 @@ function Ensure-Tha3PythonPackageLink {
 }
 
 Write-Host ""
-Write-Host "Reconciling portable layout: $PortableRoot"
+Write-Host "整理便携目录结构 / Reconciling portable layout: $PortableRoot"
 Write-Host ""
 
 $faceRecord = Get-AddonRecord -Manifest $manifest -AddonId "face_puppeteer"
@@ -52,7 +52,7 @@ $repoMediapipeLink = Resolve-PortableRootPath $PortableRoot "data/thirdparty/med
 if ($faceInstalled) {
     Ensure-JunctionLink -LinkPath $runtimeVenvLink -TargetPath $venvTarget | Out-Null
     Ensure-JunctionLink -LinkPath $repoMediapipeLink -TargetPath $mediapipeTarget | Out-Null
-    Write-Host "[OK] face_puppeteer links -> runtime\venv, data\thirdparty\mediapipe"
+    Write-Host "[OK] face_puppeteer 链接 / links -> runtime\venv, data\thirdparty\mediapipe"
 } else {
     Remove-PathForLayout $runtimeVenvLink
     $runtimeRoot = Join-Path $PortableRoot "runtime"
@@ -62,7 +62,7 @@ if ($faceInstalled) {
     }
     Remove-PathForLayout $repoMediapipeLink
     Ensure-Directory (Join-Path $PortableRoot "data\thirdparty")
-    Write-Host "[OK] face_puppeteer removed -> cleared runtime/mediapipe links"
+    Write-Host "[OK] face_puppeteer 未安装，已清理 runtime/mediapipe 链接 / removed -> cleared runtime/mediapipe links"
 }
 
 # --- tha3_models ---
@@ -70,11 +70,11 @@ $tha3Target = Get-AddonFolderAbsolute -PortableRoot $PortableRoot -AddonRecord $
 $depsModelsLink = Join-Path $PortableRoot "deps\tha3\models"
 if ($tha3Installed) {
     Ensure-JunctionLink -LinkPath $depsModelsLink -TargetPath $tha3Target | Out-Null
-    Write-Host "[OK] tha3_models link -> deps\tha3\models"
+    Write-Host "[OK] tha3_models 链接 / link -> deps\tha3\models"
 } else {
     Remove-PathForLayout $depsModelsLink
     Restore-Tha3ModelsReadme -PortableRoot $PortableRoot
-    Write-Host "[OK] tha3_models removed -> deps\tha3\models README restored"
+    Write-Host "[OK] tha3_models 未安装，已恢复 deps\tha3\models 说明文件 / removed -> deps\tha3\models README restored"
 }
 
 # --- tha4_training ---
@@ -87,12 +87,12 @@ $poseTarget = Join-Path $tha4AddonRoot "data/pose_dataset.pt"
 if ($tha4Installed) {
     Ensure-JunctionLink -LinkPath $demoTha4Link -TargetPath $tha4Target | Out-Null
     Ensure-FileJunctionLink -LinkPath $demoPoseLink -TargetPath $poseTarget | Out-Null
-    Write-Host "[OK] tha4_training links -> demo\data\tha4, pose_dataset.pt"
+    Write-Host "[OK] tha4_training 链接 / links -> demo\data\tha4, pose_dataset.pt"
 } else {
     Remove-PathForLayout $demoTha4Link
     Remove-PathForLayout $demoPoseLink
     Restore-Tha4TrainingPlaceholder -PortableRoot $PortableRoot
-    Write-Host "[OK] tha4_training removed -> demo placeholder restored"
+    Write-Host "[OK] tha4_training 未安装，已恢复 demo 占位文件 / removed -> demo placeholder restored"
 }
 
 # --- CORE demo mirrors (character_models, images, distill_examples) ---
@@ -117,5 +117,5 @@ if ($faceInstalled) {
 Ensure-Tha3PythonPackageLink
 
 Write-Host ""
-Write-Host "Layout reconcile complete."
+Write-Host "目录结构整理完成。 / Layout reconcile complete."
 Write-Host ""

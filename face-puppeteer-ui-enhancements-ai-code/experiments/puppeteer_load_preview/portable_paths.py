@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from tha3_paths import EXPERIMENT_DIR, find_repo_root, get_demo_root
@@ -83,6 +84,77 @@ def _resolved_python_key(python_exe: Path) -> str:
         return str(python_exe)
 
 
+# EVS-PERF 4.1: the subprocess probe (import torch, wx, ...) cost 1.3-5.3 s on
+# every launch because the cache above is per process. Successful probes are
+# also stored on disk, keyed by the resolved interpreter and a signature of the
+# environment (python.exe, pyvenv.cfg, site-packages directory and the probed
+# packages' __init__.py mtimes; pip install/uninstall changes the directory
+# mtime). Failures are never cached. TTL 7 days. EVS_PROBE_CACHE=0 disables.
+_PROBE_DISK_CACHE_TTL_SEC = 7 * 24 * 3600
+
+
+def _probe_disk_cache_path() -> Path:
+    return get_portable_root() / "workspace" / "cache" / "python_probe_cache.json"
+
+
+def _probe_environment_signature(python_exe: Path, require_mediapipe: bool) -> str | None:
+    try:
+        resolved = python_exe.resolve()
+        parts: list = [str(resolved), bool(require_mediapipe)]
+        stat = resolved.stat()
+        parts.append((stat.st_size, stat.st_mtime_ns))
+        packages = ("torch", "wx", "mediapipe" if require_mediapipe else "matplotlib")
+        seen_site = False
+        for env_dir in (resolved.parent, resolved.parent.parent):
+            cfg = env_dir / "pyvenv.cfg"
+            if cfg.is_file():
+                parts.append(("cfg", str(cfg), cfg.stat().st_mtime_ns))
+            site = env_dir / "Lib" / "site-packages"
+            if site.is_dir():
+                seen_site = True
+                parts.append(("site", str(site), site.stat().st_mtime_ns))
+                for name in packages:
+                    init = site / name / "__init__.py"
+                    parts.append((name, init.stat().st_mtime_ns if init.is_file() else None))
+        if not seen_site:
+            return None
+        return json.dumps(parts, default=str)
+    except OSError:
+        return None
+
+
+def _probe_disk_cache_hit(key: str, signature: str | None) -> bool:
+    if signature is None or os.environ.get("EVS_PROBE_CACHE", "1").strip() == "0":
+        return False
+    try:
+        data = json.loads(_probe_disk_cache_path().read_text("utf-8"))
+        entry = data.get(key) or {}
+        return (entry.get("signature") == signature and entry.get("ok") is True
+                and time.time() - float(entry.get("time", 0)) < _PROBE_DISK_CACHE_TTL_SEC)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+
+
+def _probe_disk_cache_store(key: str, signature: str | None) -> None:
+    if signature is None or os.environ.get("EVS_PROBE_CACHE", "1").strip() == "0":
+        return
+    path = _probe_disk_cache_path()
+    try:
+        try:
+            data = json.loads(path.read_text("utf-8"))
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        data[key] = {"ok": True, "signature": signature, "time": time.time()}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=1), "utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
 def python_probe_cached_ok(python_exe: Path, *, require_mediapipe: bool = False) -> bool:
     key = (_resolved_python_key(python_exe), bool(require_mediapipe))
     return _python_probe_cache.get(key) is True
@@ -93,6 +165,16 @@ def python_probe_cached_ok(python_exe: Path, *, require_mediapipe: bool = False)
 # 用 torch/wx/matplotlib 探测兼容环境，单候选 timeout=15 秒，按解析路径缓存。不是 UI 十秒预算内的轻量存在性检查，但避免建窗前反复重导入。
 # 历史 bug 热点 #2,#6：启动预检去重。
 # EVS-DESIGN-AUDIT EVS-A052 END
+def _log_python_probe_failure(python_exe: Path, detail: str) -> None:
+    try:
+        path = get_portable_root() / "workspace" / "launch.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write("python probe failed: " + str(python_exe) + "\n" + detail + "\n")
+    except Exception:
+        pass
+
+
 def _python_probe_ok(python_exe: Path, *, require_mediapipe: bool) -> bool:
     if not python_exe.is_file():
         return False
@@ -100,6 +182,11 @@ def _python_probe_ok(python_exe: Path, *, require_mediapipe: bool) -> bool:
     cached = _python_probe_cache.get(cache_key)
     if cached is not None:
         return cached
+    disk_key = "%s|%s" % cache_key
+    signature = _probe_environment_signature(python_exe, require_mediapipe)
+    if _probe_disk_cache_hit(disk_key, signature):
+        _python_probe_cache[cache_key] = True
+        return True
     # bh-6 26.10.29 19:40 s
     root = get_portable_root().resolve()
     modules = "torch, wx"
@@ -107,19 +194,45 @@ def _python_probe_ok(python_exe: Path, *, require_mediapipe: bool) -> bool:
         modules += ", mediapipe"
     else:
         modules += ", matplotlib"
-    try:
-        from portable_process_env import local_environment
-        result = subprocess.run(
-            [str(python_exe), "-I", "-c", f"import sys,pathlib; r=pathlib.Path(sys.argv[1]).resolve(); assert all(pathlib.Path(p).resolve().is_relative_to(r) for p in (sys.executable,sys.prefix,sys.base_prefix)); import {modules}", str(root)],
-            capture_output=True,
-            text=True,
-            timeout=_PYTHON_PROBE_TIMEOUT_SEC,
-            check=False,
-            env=local_environment(root),
-        )
-        ok = result.returncode == 0
-    except Exception:
-        ok = False
+    command = [
+        str(python_exe), "-I", "-c",
+        "import sys,pathlib; r=pathlib.Path(sys.argv[1]).resolve(); "
+        "assert all(pathlib.Path(p).resolve().is_relative_to(r) "
+        "for p in (sys.executable,sys.prefix,sys.base_prefix)); "
+        f"import {modules}",
+        str(root),
+    ]
+    last_detail = ""
+    ok = False
+    # bh-6 26.11.03 14:05 s
+    for attempt in range(3):
+        try:
+            from portable_process_env import local_environment
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=_PYTHON_PROBE_TIMEOUT_SEC,
+                check=False,
+                env=local_environment(root),
+            )
+            ok = result.returncode == 0
+            if ok:
+                break
+            last_detail = (result.stderr or result.stdout or "probe exit " + str(result.returncode)).strip()
+        except subprocess.TimeoutExpired:
+            last_detail = "runtime probe timed out after " + str(_PYTHON_PROBE_TIMEOUT_SEC) + "s"
+            ok = False
+        except Exception as exc:
+            last_detail = str(exc)
+            ok = False
+        if attempt < 2:
+            time.sleep(0.4)
+    if not ok:
+        _log_python_probe_failure(python_exe, last_detail[:2000])
+    else:
+        _probe_disk_cache_store(disk_key, signature)
+    # bh-6 26.11.03 14:05 e
     _python_probe_cache[cache_key] = ok
     # bh-6 26.10.29 19:40 e
     return ok
@@ -221,11 +334,16 @@ def get_mouse_student_venv_absolute(portable_root: Path | None = None) -> Path:
 # 历史 bug 热点 #2,#6：重复预检已压缩。
 # EVS-DESIGN-AUDIT EVS-A054 END
 def test_mouse_student_runtime(portable_root: Path | None = None) -> bool:
-    return resolve_portable_python_exe(
-        portable_root,
-        prefer_pythonw=False,
-        require_mediapipe=False,
-    ) is not None
+    # bh-6 26.11.03 14:05 s
+    try:
+        return resolve_portable_python_exe(
+            portable_root,
+            prefer_pythonw=False,
+            require_mediapipe=False,
+        ) is not None
+    except ValueError:
+        return False
+    # bh-6 26.11.03 14:05 e
 
 
 def get_tha4_mouse_student_missing_components(portable_root: Path | None = None) -> list[str]:

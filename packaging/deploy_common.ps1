@@ -38,7 +38,7 @@ function Write-DeployFailure {
         [string]$ErrorRecord
     }
     Write-Host ""
-    Write-Host "DEPLOY failed: $text" -ForegroundColor Red
+    Write-Host "部署失败 / DEPLOY failed: $text" -ForegroundColor Red
     Write-DeployLog "ERROR: $text"
     if ($ErrorRecord -is [System.Management.Automation.ErrorRecord] -and $ErrorRecord.ScriptStackTrace) {
         Write-DeployLog $ErrorRecord.ScriptStackTrace
@@ -78,7 +78,7 @@ function Invoke-PipUpgradePackages {
         [string]$Label = "pip install"
     )
     if (-not (Test-Path -LiteralPath $PythonExe)) {
-        throw "Python not found: $PythonExe"
+        throw "找不到 Python / Python not found: $PythonExe"
     }
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
@@ -94,6 +94,6 @@ function Invoke-PipUpgradePackages {
     $exitCode = $LASTEXITCODE
     $ErrorActionPreference = $prevEap
     if ($exitCode -ne 0) {
-        throw "pip install failed (exit=$exitCode): $($Packages -join ' ')"
+        throw "pip 安装失败 / pip install failed (exit=$exitCode): $($Packages -join ' ')"
     }
 }
